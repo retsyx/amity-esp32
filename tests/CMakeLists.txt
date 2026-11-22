@@ -224,6 +224,12 @@ if(AMITY_HOST_TESTS MATCHES "^(all|standalone)$")
             INCLUDES ${hub_includes}
             LIBS amity_model)
     endforeach()
+    amity_test(local_activity_step_test
+        SOURCES "${C}/amity_hub/hub.cpp" "${C}/amity_hub/hub_service.cpp" "${T}/local_activity_step_test.cpp"
+        INCLUDES ${hub_includes}
+        LIBS amity_model
+        SCENARIOS settings-commit ipc-full ipc-slots display-other-adapter source-other-adapter reaction-frame
+            authority-loss authority-kept lookup-waiter-first lookup-step-first route-commit)
     amity_test(activity_sequence_test
         SOURCES "${C}/amity_hub/hub.cpp" "${C}/amity_hub/hub_service.cpp" "${C}/ble_remote/remote_input.cpp"
             "${C}/ble_remote/siri_remote.cpp" "${T}/activity_sequence_test.cpp"

@@ -29,6 +29,13 @@
 #ifdef ESP_PLATFORM
 #include "driver/gpio.h"
 #endif
+// Owner-task invariants that host test builds check. A device never aborts on them.
+#ifdef ESP_PLATFORM
+#define OWNER_DEBUG_ASSERT(condition) ((void)0)
+#else
+#include <cassert>
+#define OWNER_DEBUG_ASSERT(condition) assert(condition)
+#endif
 
 namespace amity {
 namespace {
@@ -225,6 +232,27 @@ struct HubService::Impl : Adapter {
     std::atomic<int> reserved_target{-1};
     struct StepResult {system::OwnedIntent request;system::AdmissionResult result;};
     std::optional<StepResult> pending_step;bool step_pending=false;uint64_t shared_generation=1;
+    // The one local step continuation that must wait. It joins deferred
+    // behind the activity command whose planner dispatched it.
+    std::unique_ptr<Command> staged_step;
+    // A local step runs inside the activity planner, while the planner's
+    // execution state is live and resume_discovered() may be iterating
+    // deferred. Host builds check that the step touches neither.
+#ifndef ESP_PLATFORM
+    bool local_step_running=false;
+    struct LocalStepGuard {
+        Impl& owner;std::vector<const Command*> fifo;
+        explicit LocalStepGuard(Impl& impl):owner(impl){for(const auto& command:impl.deferred)fifo.push_back(command.get());owner.local_step_running=true;}
+        ~LocalStepGuard(){
+            owner.local_step_running=false;
+            std::vector<const Command*> after;for(const auto& command:owner.deferred)after.push_back(command.get());
+            assert(after==fifo&&"A local recipe step must not change the deferred FIFO");
+        }
+    };
+#else
+    struct LocalStepGuard {explicit LocalStepGuard(Impl&){}};
+#endif
+    void outside_local_step()const{OWNER_DEBUG_ASSERT(!local_step_running&&"A local recipe step must not re-enter owner state");}
     std::optional<system::OwnedIntent> shared_selection;
     // Retry owners whose latest normal selection could not enter transport.
     // A later ready capture also offers that selection: transport admission
@@ -366,6 +394,8 @@ struct HubService::Impl : Adapter {
         if(command.configuration_reservation&&!command.configuration_applied)--scoped_configurations;
         if(command.activity_reservation)--owner_activity_commands;
         if(command.selection_reservation)--activity_requests;
+        // A local recipe step is one bounded continuation outside the IPC slots.
+        if(command.local_activity_step)return;
         xSemaphoreGive(command.cleanup_reservation ? cleanup_slots : command_slots);
     }
 
@@ -483,6 +513,7 @@ struct HubService::Impl : Adapter {
         state.phase=KeyPhase::up;state.waiting=state.emitted=false;++state.instance;
     }
     void stop_holds(){
+        outside_local_step();
         auto& root=*this;
         for(size_t raw=0;raw<root.keys.size();++raw)root.stop_key(static_cast<uint8_t>(raw));
     }
@@ -491,6 +522,7 @@ struct HubService::Impl : Adapter {
         for(size_t raw=0;raw<pressed_owner.size();++raw)if(pressed_owner[raw]!=0xff)activity_hub.release_key(static_cast<uint8_t>(raw));
     }
     void apply_emergency_release(){
+        outside_local_step();
         const auto generation=key_generation.load();
         if(generation!=applied_key_generation){
             release_held_keys();
@@ -1005,8 +1037,8 @@ struct HubService::Impl : Adapter {
              step_pending))){
             deferred.push_back(std::move(command));return;
         }
-        if(!execute(*command)){deferred.push_back(std::move(command));return;}
-        free_reservation(*command);
+        if(!execute(*command)){deferred.push_back(std::move(command));splice_staged_step();return;}
+        free_reservation(*command);splice_staged_step();
     }
 
     bool resume_discovered() {
@@ -1052,9 +1084,12 @@ struct HubService::Impl : Adapter {
                 if(lookup_waiter&&!(command->discovery_sides&3u))lookup_blocked=false;
                 // Keep the semantic program counter in arrival order. Keys
                 // and received frames still advance independently past it.
-                i=deferred.insert(i,std::move(command));++i;continue;
+                i=deferred.insert(i,std::move(command));++i;
+                if(staged_step){const auto at=i-deferred.begin();splice_staged_step();i=deferred.begin()+at;}
+                continue;
             }
             free_reservation(*command);
+            if(staged_step){const auto at=i-deferred.begin();splice_staged_step();i=deferred.begin()+at;}
             if(lookup_waiter)lookup_blocked=false;
             if(owner_step)owner_blocked=false;
             if(activity)activity_blocked=false;
@@ -1068,6 +1103,7 @@ struct HubService::Impl : Adapter {
             a.switch_device==b.switch_device&&a.input==b.input;
     }
     void cancel_owner_activity(){
+        outside_local_step();
         ++activity_instance;activity_hub.cancel_activity();step_pending=false;pending_step.reset();
         for(auto& command:deferred)if(activity_request(*command)||command->local_activity_step)command->activity_canceled=true;
     }
@@ -1089,6 +1125,7 @@ struct HubService::Impl : Adapter {
         accepted_controller_boot=boot;
     }
     void establish_input_context(const system::OwnedAuthorization& auth){
+        outside_local_step();
         xSemaphoreTake(lock,portMAX_DELAY);
         const bool changed=!input_context_valid||input_link!=auth.link_id;
         if(changed&&input_context_valid)key_generation.fetch_add(1);
@@ -1139,40 +1176,52 @@ struct HubService::Impl : Adapter {
         activity_hub.owned_step_result(actual,result.result);
         return true;
     }
+    // A local recipe step runs now on this owner task. If it must wait for
+    // its lookup, an earlier activity frame or its own TX, the same
+    // continuation joins the deferred FIFO. Nothing here can refuse an
+    // admitted step without resolving it.
+    void run_local_step(const system::OwnedIntent& intent,const system::OwnedAuthorization& auth){
+        std::unique_ptr<Command> step(new(std::nothrow)ActionCommand{Kind::Owned});
+        if(!step){
+            ESP_LOGW(TAG,"Activity step not started: allocation failed action=%d adapter=%u",static_cast<int>(intent.kind),static_cast<unsigned>(intent.target.port.tentacle_id));
+            action_result({intent,{system::AdmissionCode::overloaded,"Original action could not be allocated"}});return;
+        }
+        step->action().owned=intent;step->action().auth=auth;step->action().activity_instance=activity_instance.load();
+        step->local_activity_step=true;step->owned_deferred=true;
+        if(!owner_activity_pending()&&!queued_owner_activity()){
+            LocalStepGuard guard(*this);
+            if(execute(*step))return;
+        }
+        OWNER_DEBUG_ASSERT(!staged_step&&"Only one local step waits at a time");
+        staged_step=std::move(step);
+    }
+    void splice_staged_step(){if(staged_step)deferred.push_back(std::move(staged_step));}
     system::OwnedDispatchResult dispatch_owned(system::OwnedIntent& intent) {
         using K=system::OwnedIntentKind;
         intent.config_revision=owned_config_revision;
         intent.activity_step=setting_activity&&intent.kind!=K::key_edges&&intent.kind!=K::context&&intent.kind!=K::discover;
         if(intent.kind==K::key_edges)return dispatch_key_edges(intent);
-        if(intent.activity_step){
-            if(step_pending)return false;
-            pending_step=StepResult{intent,{system::AdmissionCode::pending,{}}};step_pending=true;
-        }
-        const auto dispatched=[&](bool admitted,std::optional<bool> present={},bool pending=false){
-            if(!admitted&&intent.activity_step){step_pending=false;pending_step.reset();}
-            return system::OwnedDispatchResult{admitted,present,pending};
-        };
+        // Distribution carries selections and input edges. Original recipe
+        // steps execute only on this owner's adapters, one at a time.
+        if(intent.activity_step&&(step_pending||intent.target.port.octopus_id!=octopus||!adapter(intent.target.port.tentacle_id)))return false;
         if(intent.target.port.octopus_id==octopus){
-            auto* engine=adapter(intent.target.port.tentacle_id);if(!engine)return dispatched(false);
+            auto* engine=adapter(intent.target.port.tentacle_id);if(!engine)return false;
             system::OwnedAuthorization auth=activity_auth;
             if(local_coordinator.load()){auth.controller_id=owned_controller;auth.controller_boot=auth.owner_boot=local_boot;auth.config_revision=owned_config_revision;auth.link_id={};}
             if(intent.activity_step){
-                auto* request=new(std::nothrow)ActionCommand{Kind::Owned};if(!request)return dispatched(false);
-                request->action().owned=intent;request->action().auth=auth;request->action().activity_instance=activity_instance.load();request->local_activity_step=true;return dispatched(submit(request)==ESP_OK,{},true);
+                pending_step=StepResult{intent,{system::AdmissionCode::pending,{}}};step_pending=true;
+                run_local_step(intent,auth);return {true,{},true};
             }
             const auto result=engine->execute_owned(intent,auth);
             if(result.code==system::AdmissionCode::pending){
                 auto* request=new(std::nothrow)ActionCommand{Kind::Owned};if(!request)return false;
-                request->action().owned=intent;request->action().auth=auth;return dispatched(submit(request)==ESP_OK,{},true);
+                request->action().owned=intent;request->action().auth=auth;return {submit(request)==ESP_OK,{},true};
             }
             const bool admitted=result.code==system::AdmissionCode::accepted||result.code==system::AdmissionCode::overloaded||result.code==system::AdmissionCode::unresolved;
-            return dispatched(admitted,result.source_present);
+            return {admitted,result.source_present};
         }
-        // Distribution carries selections and input edges. Original recipe
-        // steps execute only on this owner's adapters.
-        if(intent.activity_step||intent.kind==K::power||intent.kind==K::source_input||intent.kind==K::switch_input||intent.kind==K::announce_active_source||intent.kind==K::query_audio||intent.kind==K::standby_wire)return dispatched(false);
-        const bool admitted=owned_sender&&owned_sender(intent);
-        return dispatched(admitted);
+        if(intent.kind==K::power||intent.kind==K::source_input||intent.kind==K::switch_input||intent.kind==K::announce_active_source||intent.kind==K::query_audio||intent.kind==K::standby_wire)return false;
+        return owned_sender&&owned_sender(intent);
     }
     bool activity_settling(uint64_t){return activity_hub.activity_pending()||step_pending||owner_activity_pending()||key_cleanup_roles;}
     void save_report(system::OwnedAdapterSnapshot report){
@@ -1189,6 +1238,7 @@ struct HubService::Impl : Adapter {
         return changed;
     }
     void publish(){
+        outside_local_step();
         std::vector<system::OwnedAdapterSnapshot> changed_reports;
         Snapshot notification;
         xSemaphoreTake(lock,portMAX_DELAY);
@@ -1319,10 +1369,6 @@ struct HubService::Impl : Adapter {
             refresh_configuration_revision(command.management().controller,command.management().config_revision);execution_enabled=true;
             finish(command.reply,{system::AdmissionCode::accepted,{}});return true;
         case K::OwnedFence:
-            if(step_pending&&pending_step&&pending_step->request.target.port.octopus_id!=octopus&&(!command.management().controller||pending_step->request.target.port.octopus_id==command.management().controller)){
-                last_activity_error="An Amity disconnected before the activity finished. Choose the activity again.";
-                action_result({pending_step->request,{system::AdmissionCode::unauthorized,last_activity_error}});
-            }
             if(!command.management().controller||command.management().controller==owned_controller)for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=adapter(id))if(!command.management().link||command.management().link==engine->received_link){engine->stop_holds();}
             finish(command.reply,{system::AdmissionCode::accepted,{}});return true;
         case K::AuthorityTransition:
@@ -1358,6 +1404,11 @@ struct HubService::Impl : Adapter {
                 system::CecPortRef{p.consortium,p.octopus,0,system::Side::front},false);
         }
         for(;;){
+            // The activity command that staged a waiting step splices it
+            // before returning. A device keeps any leftover step rather than
+            // wedge its recipe; host builds report the missing splice.
+            OWNER_DEBUG_ASSERT(!p.staged_step&&"A staged local step was not spliced");
+            p.splice_staged_step();
             if(p.pending_settings)p.complete_settings(uint64_t(esp_timer_get_time())/1000);
             if(p.maintenance_started)p.maintenance_applied.store(p.wires_idle());
             bool changed=p.receive_reports(),pending=false;
