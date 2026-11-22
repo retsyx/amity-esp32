@@ -97,10 +97,15 @@ function(amity_command_test name)
     set_tests_properties(${name} PROPERTIES LABELS ${AMITY_TEST_LABEL} TIMEOUT 600)
 endfunction()
 
-# Script tests are named after their file.
+# Script tests are named after their file. Standalone scripts run without
+# site-packages, like CI's bare interpreter, so they use only the standard library.
 function(amity_python_tests)
+    set(site)
+    if(AMITY_TEST_LABEL STREQUAL standalone)
+        set(site -S)
+    endif()
     foreach(script IN LISTS ARGN)
-        amity_command_test(${script} "${PYTHON3}" "${T}/${script}")
+        amity_command_test(${script} "${PYTHON3}" ${site} "${T}/${script}")
     endforeach()
 endfunction()
 
@@ -349,8 +354,7 @@ if(AMITY_HOST_TESTS MATCHES "^(all|standalone)$")
             "${T}/firmware_maintenance_test.cpp"
         INCLUDES "${T}/firmware_maintenance_fakes" "${C}/system_services/include" "${C}/config_store/include"
             "${C}/amity_system/include")
-    amity_python_tests(release_hardware_test.py update_bundle_test.py production_profile_test.py
-        release_scripts_test.py)
+    amity_python_tests(release_hardware_test.py update_bundle_test.py release_scripts_test.py)
 
     # Setup tool
     amity_command_test(provisioning_go_test "${GO}" test ./...)
@@ -360,7 +364,8 @@ if(AMITY_HOST_TESTS MATCHES "^(all|standalone)$")
         ENVIRONMENT "GOCACHE=${ROOT}/.cache/go-build;GOMODCACHE=${ROOT}/.cache/go-mod")
 endif()
 
-# Tests that read ESP-IDF sources, managed components or firmware build output.
+# Tests that read ESP-IDF sources, managed components or firmware build output,
+# or need the SDK's Python packages.
 if(AMITY_HOST_TESTS MATCHES "^(all|sdk)$")
     set(AMITY_TEST_LABEL sdk)
     set(json "${ROOT}/managed_components/espressif__cjson/cJSON")
@@ -433,7 +438,7 @@ if(AMITY_HOST_TESTS MATCHES "^(all|sdk)$")
         membership_removal_api_test.py controller_api_surface_test.py system_peer_record_test.py
         network_diagnostics_test.py lwip_tcp_timer_test.py configuration_snapshot_web_test.py json_memory_test.py
         consortium_tls_tcp_test.py consortium_tls_credentials_test.py web_tls_identity_test.py
-        homekit_crypto_test.py)
+        homekit_crypto_test.py production_profile_test.py)
     # These configure and build one shared host Mbed TLS tree.
     set_tests_properties(consortium_tls_tcp_test.py consortium_tls_credentials_test.py web_tls_identity_test.py
         homekit_crypto_test.py PROPERTIES RESOURCE_LOCK host_mbedtls)
