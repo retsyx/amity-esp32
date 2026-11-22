@@ -548,7 +548,6 @@ extern "C" void app_main() {
     const bool awaiting_first_setup=!passive_member&&membership.role==amity::consortium::RuntimeStartup::unclaimed;
     const bool passive_startup=passive_member||awaiting_first_setup;
     original_interfaces_enabled.store(false);
-    if(passive_member)ble_remote_set_controller_enabled(false);
     // Fresh boards need the shared Matter BLE setup host to choose the main
     // role. HTTP/HomeKit/remote input remain absent until enrollment commits.
     ESP_ERROR_CHECK(amity_matter_set_controller_enabled(!passive_member));

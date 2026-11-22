@@ -14,7 +14,7 @@ mkdir -p "$out"
   "$root/tests/ble_transport_test.cpp" "$root/components/ble_remote/hid_keyboard.cpp" \
   "$root/components/ble_remote/siri_remote.cpp" "$root/components/ble_remote/remote_input.cpp" \
   "$root/components/ble_remote/gatt_layout.cpp" -o "$out/ble_transport_test"
-for scenario in actuator-startup actuator-input actuator-reconnect actuator-connected actuator-queued-unpair actuator-pending-unpair \
+for scenario in \
   unpair-privacy unpair-privacy-cancel unpair-privacy-error unpair-privacy-connected \
   pairing-cleanup-privacy pairing-cleanup-privacy-error pairing-disconnected-privacy pairing-disconnected-before-security \
   pairing-resolved-identity-error pairing-resolved-random-error \

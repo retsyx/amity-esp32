@@ -67,11 +67,6 @@ esp_err_t ble_remote_pair(const uint8_t address[6], uint8_t address_type);
 esp_err_t ble_remote_unpair(void);
 void ble_remote_get_status(ble_remote_status_t *status);
 
-// Added devices are actuator-only. Disable before start or on durable join;
-// cancels live setup/reconnect/remote links without erasing a saved bond. A busy
-// controller returns TIMEOUT until cleanup finishes. Cannot re-enable this boot.
-esp_err_t ble_remote_set_controller_enabled(bool enabled);
-
 // Shared-host admission. Hooks must be registered before start; they execute
 // outside the remote mutex. Existing links remain connected during setup.
 typedef bool (*ble_remote_radio_admit_t)(uint32_t seconds, void *context);

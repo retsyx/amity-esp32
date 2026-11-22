@@ -420,7 +420,6 @@ int main(int argc, char **argv) {
     if (scenario == "pairing-resolved-random-error") fake::peer.type=1;
     fake::host_bond = fake::storage_peer;
     fake::controller_irk = fake::storage_peer && MYNEWT_VAL(BLE_HS_PVCY);
-    if(scenario=="actuator-startup")assert(ble_remote_set_controller_enabled(false)==ESP_OK);
     assert(ble_remote_start(nullptr, nullptr) == ESP_OK);
 
     if(scenario=="pairing-disconnected-before-security") {
@@ -482,13 +481,6 @@ int main(int argc, char **argv) {
         assert(!fake::controller_irk && !fake::host_bond && fake::status().unpairing);
         fake::disconnect();fake::run_steps(1);
         assert(!fake::status().unpairing && !fake::status().connected);
-    }else if(scenario=="actuator-pending-unpair") {
-        fake::run_steps(1);assert(ble_remote_unpair()==ESP_OK);fake::run_steps(1);
-        assert(fake::status().unpairing && fake::privacy_removals.empty());
-        const auto result=ble_remote_set_controller_enabled(false);
-        assert(result==ESP_OK||result==ESP_ERR_TIMEOUT);
-        fake::complete_connect(BLE_HS_EPREEMPTED);fake::run_steps(4);
-        assert(fake::privacy_removals.empty() && !fake::removed_bonds && fake::storage_peer);
     }else if(scenario=="unpair-no-privacy") {
         assert(!MYNEWT_VAL(BLE_HS_PVCY));
         assert(ble_remote_unpair()==ESP_OK);fake::run_steps(1);
@@ -508,33 +500,6 @@ int main(int argc, char **argv) {
             assert(ble_remote_unpair()==ESP_OK);fake::run_steps(1);
             assert(!fake::controller_irk && !fake::host_bond && !fake::status().last_error);
         } else assert(!fake::controller_irk && !fake::host_bond && fake::removed_bonds==1);
-    }else if(scenario=="actuator-startup"){
-        fake::run_steps(20);assert(fake::connects.empty()&&!fake::scans&&fake::storage_peer&&fake::status().bonded);
-        assert(ble_remote_scan(5)==ESP_ERR_INVALID_STATE&&ble_remote_start_pairing(5)==ESP_ERR_INVALID_STATE&&ble_remote_unpair()==ESP_ERR_INVALID_STATE);
-        const uint8_t address[6]={6,5,4,3,2,1};assert(ble_remote_pair(address,0)==ESP_ERR_INVALID_STATE);
-        assert(ble_remote_pause_background(false)==ESP_OK);fake::run_steps(10);assert(fake::connects.empty()&&!fake::removed_bonds);
-        assert(ble_remote_set_controller_enabled(true)==ESP_ERR_INVALID_STATE);
-    }else if(scenario=="actuator-input"){
-        key_callback=[](uint16_t,uint16_t,bool pressed,void*){if(pressed)++fake::positive_keys;else++fake::key_releases;};
-        on_key(7,4,true,nullptr);assert(fake::positive_keys==1);
-        assert(ble_remote_set_controller_enabled(false)==ESP_OK);on_key(7,4,true,nullptr);on_key(7,4,false,nullptr);
-        assert(fake::positive_keys==1&&fake::key_releases==1);
-        // Even an already-popped Pair command cannot cancel another GAP owner.
-        const auto cancellations=fake::cancellations;open_peer(fake::peer);assert(fake::cancellations==cancellations&&fake::connects.empty());
-    }else if(scenario=="actuator-reconnect"){
-        fake::run_steps(1);const auto attempt=fake::connects.back();assert(fake::status().waiting);
-        const auto result=ble_remote_set_controller_enabled(false);assert(result==ESP_OK||result==ESP_ERR_TIMEOUT);
-        fake::complete_connect(0,attempt);assert(fake::terminations.size()==1);fake::run_steps(5);
-        assert(!fake::security_calls&&!fake::discovery_calls&&!fake::removed_bonds&&fake::storage_peer&&fake::status().bonded);
-        ble_remote_pause_background(false);fake::run_steps(20);assert(fake::connects.size()==1);
-    }else if(scenario=="actuator-connected"){
-        fake::run_steps(1);fake::complete_connect();fake::run_steps(1);assert(fake::status().connected);
-        assert(ble_remote_set_controller_enabled(false)==ESP_ERR_TIMEOUT);assert(fake::terminations.size()==1);
-        fake::disconnect();assert(ble_remote_set_controller_enabled(false)==ESP_OK);ble_remote_pause_background(false);fake::run_steps(20);
-        assert(fake::connects.size()==1&&!fake::removed_bonds&&fake::storage_peer&&fake::status().bonded&&!fake::status().connected);
-    }else if(scenario=="actuator-queued-unpair"){
-        assert(ble_remote_unpair()==ESP_OK);assert(ble_remote_set_controller_enabled(false)==ESP_OK);fake::run_steps(10);
-        assert(!fake::removed_bonds&&fake::storage_peer&&fake::status().bonded&&fake::connects.empty());
     }else if (scenario == "absence") {
         fake::run_steps(1);
         const auto status = fake::status();

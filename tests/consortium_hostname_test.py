@@ -17,7 +17,7 @@ PREFIX=r'''
 #include <iostream>
 #include <mutex>
 using namespace amity::consortium;using namespace amity::consortium::platform;
-using esp_err_t=int;constexpr int ESP_OK=0,ESP_ERR_INVALID_ARG=1,ESP_ERR_INVALID_STATE=2,ESP_ERR_NOT_SUPPORTED=3,ESP_ERR_TIMEOUT=4,ESP_FAIL=5;
+using esp_err_t=int;constexpr int ESP_OK=0,ESP_ERR_INVALID_ARG=1,ESP_ERR_INVALID_STATE=2,ESP_ERR_NOT_SUPPORTED=3,ESP_FAIL=5;
 std::mutex lock,persistence_lock;Group group,durable;Identity identity;HostnameRegistry hostnames;
 uint64_t candidate_deadline=1000;bool candidate_passive=false;unsigned saves=0;bool save_failure=false,registry_failure=false;std::string current_name="factory-name",proposal_bytes;std::vector<std::string> effects;
 uint64_t now_ms(){return 100;}
@@ -28,7 +28,6 @@ struct {bool member=false,authority_ready=false;std::string phase;}status;
 #define pdMS_TO_TICKS(x) (x)
 void vTaskDelay(unsigned){}
 void gatt_server_seal(){effects.push_back("seal_admission");}
-int ble_remote_set_controller_enabled(bool enabled){assert(!enabled);effects.push_back("remote_off");return ESP_OK;}
 int save_group(const Group& value){++saves;effects.push_back("membership");if(save_failure)return ESP_FAIL;durable=value;return ESP_OK;}
 std::string host_ip(){return {};}
 std::string sha256(std::string_view value){return std::string(64,value==proposal_bytes?'a':'b');} // Inject only this primitive boundary; actual codecs/dispatcher are below.
@@ -57,7 +56,7 @@ int main(){
  for(auto bad:{"","Living-room","amity.local","-room","room-","room name","a_b","abcdefghijklmnopqrstuvwxyz1234567"})assert(!valid_hostname(bad));
  reset();std::string response;assert(bootstrap_request("{\"phase\":\"identify\"}",response)==ESP_OK&&response.find("\"bootstrap_profile\":2")!=std::string::npos);
  assert(bootstrap_request(prepare(),response)==ESP_OK&&current_name=="living-room"&&group.role==Group::prepared&&durable.join_hostname=="living-room"&&candidate_passive);
- assert(effects==std::vector<std::string>({"persist_hostname","membership","remote_off","retire","seal_admission"}));
+ assert(effects==std::vector<std::string>({"persist_hostname","membership","retire","seal_admission"}));
  Json prepared;JsonError detail;assert(parse_json(response,prepared,detail)&&prepared.get("hostname")->string=="living-room");
  assert(bootstrap_request(prepare(),response)==ESP_OK&&group.join_hostname=="living-room");
  reset();network.set_hostname={};assert(bootstrap_request(prepare(),response)==ESP_ERR_NOT_SUPPORTED&&!saves&&group.role==Group::unclaimed);

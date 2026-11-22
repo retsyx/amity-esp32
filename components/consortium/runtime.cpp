@@ -16,7 +16,6 @@
 #include "amity/consortium/owned_intent.hpp"
 #include "amity/consortium/settings.hpp"
 #include "system_configuration.hpp"
-#include "ble_remote.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_app_desc.h"
@@ -1290,7 +1289,7 @@ esp_err_t bootstrap_request(std::string_view request,std::string &response){
     if(!network.set_hostname||!network.get_hostname)return ESP_ERR_NOT_SUPPORTED;
     const auto network_hooks=network;
     const auto named=without_runtime_lock(guard,[&]{const auto result=network_hooks.set_hostname(decoded.candidate_hostname);return result==ESP_OK&&network_hooks.get_hostname()!=decoded.candidate_hostname?ESP_ERR_INVALID_STATE:result;});if(named!=ESP_OK)return named;
-    auto saved=without_runtime_lock(guard,[&]{return save_group(next);});if(saved!=ESP_OK)return saved;group=std::move(next);status.member=true;status.authority_ready=false;status.phase="finishing_enrollment";candidate_passive=false;auto hooks=lifecycle;const auto prepared_id=group.join_id;const auto prepared_digest=group.join_digest;guard.unlock();persistence.unlock();esp_err_t remote=ESP_ERR_TIMEOUT;for(unsigned attempt=0;attempt<50&&remote==ESP_ERR_TIMEOUT;++attempt){remote=ble_remote_set_controller_enabled(false);if(remote==ESP_ERR_TIMEOUT)vTaskDelay(pdMS_TO_TICKS(100));}const auto fenced=hooks.retire?hooks.retire():ESP_ERR_INVALID_STATE;guard.lock();if(group.join_id!=prepared_id||group.join_digest!=prepared_digest||fenced!=ESP_OK||remote!=ESP_OK)return ESP_ERR_INVALID_STATE;candidate_passive=true;gatt_server_seal();response="{\"phase\":\"prepared\",\"join_id\":\""+group.join_id.str()+"\",\"digest\":\""+group.join_digest+"\",\"hostname\":\""+decoded.candidate_hostname+"\"}";return ESP_OK;
+    auto saved=without_runtime_lock(guard,[&]{return save_group(next);});if(saved!=ESP_OK)return saved;group=std::move(next);status.member=true;status.authority_ready=false;status.phase="finishing_enrollment";candidate_passive=false;auto hooks=lifecycle;const auto prepared_id=group.join_id;const auto prepared_digest=group.join_digest;guard.unlock();persistence.unlock();const auto fenced=hooks.retire?hooks.retire():ESP_ERR_INVALID_STATE;guard.lock();if(group.join_id!=prepared_id||group.join_digest!=prepared_digest||fenced!=ESP_OK)return ESP_ERR_INVALID_STATE;candidate_passive=true;gatt_server_seal();response="{\"phase\":\"prepared\",\"join_id\":\""+group.join_id.str()+"\",\"digest\":\""+group.join_digest+"\",\"hostname\":\""+decoded.candidate_hostname+"\"}";return ESP_OK;
 }
 void admission_failed(model::MessageId scan,const std::string& failure){
     std::lock_guard<std::mutex> guard(lock);
@@ -1393,7 +1392,7 @@ void invite_worker_work(void *arg){
 }
 void invite_worker(void *arg){invite_worker_work(arg);invitation_running=false;vTaskDeleteWithCaps(nullptr);}
 esp_err_t recovery_required(model::OctopusId local,esp_err_t result,const char *reason){
-    ble_remote_set_controller_enabled(false);identity.id=local;status.initialized=true;status.authority_ready=false;status.coordinator=false;status.member=true;status.credential_ready=false;status.phase="recovery_required";status.last_error=reason;
+    identity.id=local;status.initialized=true;status.authority_ready=false;status.coordinator=false;status.member=true;status.credential_ready=false;status.phase="recovery_required";status.last_error=reason;
     return result;
 }
 // Each caller first initializes PSA and fully validates its own freshly loaded
@@ -1446,7 +1445,6 @@ esp_err_t runtime_start(model::ConsortiumId consortium,model::OctopusId octopus,
     // delay boot or prevent the independent Matter setup from choosing a main.
     status.initialized=status.credential_ready=true;status.authority_ready=original_controller(group,identity.id);status.coordinator=group.role==Group::coordinator&&status.authority_ready;status.member=group.role==Group::member||group.role==Group::prepared;candidate_passive=status.member;status.epoch=group.epoch;status.membership_revision=group.revision;status.leaf_spki_sha256=identity.spki;status.phase=group.role==Group::prepared?"finishing_enrollment":(group.role==Group::unclaimed?"awaiting_setup":"idle");
     if(startup.passive()){status.authority_ready=false;status.coordinator=false;status.member=true;}
-    if(startup.passive()&&ble_remote_set_controller_enabled(false)!=ESP_OK)return recovery_required(octopus,ESP_FAIL,"Remote control could not be stopped; factory reset required");
     if(xTaskCreateWithCaps(network_loop,"group_net",6144,nullptr,2,nullptr,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS)return ESP_ERR_NO_MEM;
     timing.done(true);return ESP_OK;
 }

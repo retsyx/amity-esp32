@@ -33,8 +33,8 @@ namespace amity::consortium {
 using namespace platform;
 void check(bool value,const char* message){if(!value)throw std::runtime_error(message);}
 template<class T>T ident(unsigned value){char text[33];std::snprintf(text,sizeof(text),"%032x",value);return *T::parse(text);}
-unsigned created_tasks=0,recoveries=0,group_reads=0,identity_loads=0,erases=0,remote_shutdowns=0;
-bool identity_ok=true,psa_ok=true,group_ok=true,remote_ok=true;
+unsigned created_tasks=0,recoveries=0,group_reads=0,identity_loads=0,erases=0;
+bool identity_ok=true,psa_ok=true,group_ok=true;
 std::map<std::string,std::string> records;std::string fail_read;
 constexpr int PSA_SUCCESS=0,pdPASS=1,MALLOC_CAP_SPIRAM=1,MALLOC_CAP_8BIT=2;
 constexpr int ESP_ERR_NVS_NOT_FOUND=0x1102;
@@ -54,7 +54,6 @@ namespace platform{esp_err_t load_identity(model::OctopusId owner,Identity& valu
 esp_err_t read_record(const char* space,const char* key,std::string& value,size_t cap){const auto name=std::string(space)+"/"+key;if(name==fail_read)return ESP_FAIL;const auto found=records.find(name);if(found==records.end())return ESP_ERR_NVS_NOT_FOUND;if(found->second.size()>cap)return ESP_ERR_INVALID_SIZE;value=found->second;return ESP_OK;}
 // The public recovery status matches firmware.
 esp_err_t recovery_required(model::OctopusId,esp_err_t result,const char*){++recoveries;status.initialized=true;status.credential_ready=false;status.authority_ready=false;status.coordinator=false;status.member=true;status.phase="recovery_required";return result;}
-int ble_remote_set_controller_enabled(bool enabled){check(!enabled,"headless role enabled remote");++remote_shutdowns;return remote_ok?ESP_OK:ESP_FAIL;}
 int xTaskCreateWithCaps(void(*)(void*),const char*,unsigned,void*,unsigned,void*,unsigned){++created_tasks;return pdPASS;}
 uint64_t clock_ms=0,netif_exists_at=0,netif_up_at=0,ip_ready_at=0,ip_query_success_at=0;
 unsigned early_connects=0,enrollment_closes=0;
@@ -104,7 +103,7 @@ namespace amity::consortium {
 SUITE = r'''
 void reset(){
     initialized=false;status={};identity={};group={};seed={};hostnames={};singleton={};boot={};configuration=0;candidate_passive=false;
-    created_tasks=recoveries=group_reads=identity_loads=erases=remote_shutdowns=0;identity_ok=psa_ok=group_ok=remote_ok=true;records.clear();fail_read.clear();platform::recorded_setup_timings.clear();
+    created_tasks=recoveries=group_reads=identity_loads=erases=0;identity_ok=psa_ok=group_ok=true;records.clear();fail_read.clear();platform::recorded_setup_timings.clear();
     clock_ms=transport_idle_at=netif_exists_at=netif_up_at=ip_ready_at=ip_query_success_at=0;early_connects=enrollment_closes=0;discovery_times.clear();on_loop_delay={};delays.clear();discoveries=connect_failures=setup_failures=launch_failures=launches=0;retain_launched=false;attempts.clear();attempt_times.clear();links.clear();candidate_deadline=candidate_generation=pending_radio_release=0;radio={};
 }
 void seed_role(Group::Role role){
@@ -138,7 +137,7 @@ void startup_tests(){
    reset();seed_role(role);
    check(start_runtime()==ESP_OK,"headless operational boot failed");
    check(group_reads==1&&identity_loads==1&&identity.key_der=="private-key-1","headless startup repeated credential work");
-   check(status.initialized&&status.credential_ready&&!status.authority_ready&&!status.coordinator&&created_tasks==1&&remote_shutdowns==1,"headless startup changed authority/passivity");
+   check(status.initialized&&status.credential_ready&&!status.authority_ready&&!status.coordinator&&created_tasks==1,"headless startup changed authority/passivity");
    check(status.member&&candidate_passive,"stored headless role changed");check_phases();
   }
  }
@@ -153,13 +152,12 @@ void startup_tests(){
    check(start_runtime()!=ESP_OK&&recoveries==1&&status.initialized&&status.phase=="recovery_required"&&!status.credential_ready&&!created_tasks,"invalid PSA/group/journal/identity reached operational readiness");
   }
  }
- for(unsigned failure=0;failure<4;++failure){
+ for(unsigned failure=0;failure<3;++failure){
   reset();seed_role(failure==1?Group::coordinator:Group::member);
   if(failure==0)seed.joining_id=ident<model::OctopusId>(99);
   if(failure==1)seed.authority=ident<model::OctopusId>(99);
   if(failure==2)seed.peers.resize(maximum_roster_peers+1);
-  if(failure==3)remote_ok=false;
-  check(start_runtime()!=ESP_OK&&recoveries==1&&!created_tasks&&!status.credential_ready,"headless authority/localID/capacity/remote shutdown check lost");
+  check(start_runtime()!=ESP_OK&&recoveries==1&&!created_tasks&&!status.credential_ready,"headless authority/localID/capacity check lost");
  }
 }
 void headless_only(){reset();seed_role(Group::member);const auto result=start_runtime();std::cout<<"headless_group_reads="<<group_reads<<" identity_loads="<<identity_loads<<" result="<<result<<'\n';check(result==ESP_OK&&status.initialized&&status.credential_ready&&created_tasks==1,"headless operational startup failed");}
