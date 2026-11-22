@@ -2,15 +2,37 @@
 
 from pathlib import Path
 import sys
+import threading
 import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import (AvrComponent, CecAddress, CecSession, DUT, Frame,
-                           PlaybackComponent, TvComponent, assign_addresses)
-from test_component_routing_assertions import IdleWire
+                           PlaybackComponent, TvComponent, TxResult, assign_addresses)
 from unit_tests.virtual_time import use_virtual_time
+
+
+class IdleWire:
+    def __init__(self, gpio):
+        self.gpio = gpio
+        self.idle = threading.Event()
+
+    def open(self):
+        pass
+
+    def configure(self, components):
+        pass
+
+    def transmit(self, frame):
+        return TxResult(frame, 1, time.monotonic_ns())
+
+    def receive(self, timeout):
+        self.idle.wait(timeout)
+        return None
+
+    def close(self):
+        self.idle.set()
 
 
 class Cec14Wire(IdleWire):

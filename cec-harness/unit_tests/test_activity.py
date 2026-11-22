@@ -5,6 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 import sys
+import threading
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -27,6 +28,17 @@ def fresh_rescan(fixture):
                    owner_duts=dict(previous.owner_duts), _testbed=fixture.bed, _group=fixture.source.group)
     fixture.dut.last_scan = scan
     return scan
+
+
+def distributed_activity_fixture():
+    """Current coordinator/member evidence with direct hardware-free RX."""
+    fixture = Fixture()
+    fixture.add_member()
+    fixture.session._lock = threading.RLock()
+    fixture.session._stop = threading.Event()
+    fixture.session._record = lambda *args, **kwargs: None
+    fixture.session.power_changed = lambda *args, **kwargs: None
+    return fixture
 
 
 class Fixture:

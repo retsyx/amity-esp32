@@ -14,7 +14,7 @@ from amity_harness import Frame, Hooks, TxResult
 from amity_harness.activity import ActivityAction
 from amity_harness.split_theater import LookupNameGate
 from amity_harness.testbed import _CONTROL_OBSERVATION_FIELDS
-from test_component_power_assertions import distributed_activity_fixture
+from test_activity import distributed_activity_fixture
 from unit_tests.virtual_time import use_virtual_time
 
 

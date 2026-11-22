@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from amity_harness import (AvrAttachment, AvrComponent, CecAddress, CecSession,
                            DUT, Frame, PlaybackComponent, TvComponent, TxResult)
 from unit_tests.test_virtual_bus import Backend
-from test_component_power_assertions import distributed_activity_fixture
+from test_activity import distributed_activity_fixture
 from unit_tests.virtual_time import use_virtual_time
 
 
