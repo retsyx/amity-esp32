@@ -54,8 +54,8 @@ typedef struct {
 // component never starts or stops the shared controller/host. Callbacks run on
 // the NimBLE host task and must be short, enqueueing work rather than blocking.
 esp_err_t ble_remote_start(ble_remote_key_callback_t callback, void *context);
-// Register during application startup. Invoked BEFORE synthetic key releases
-// on link loss/unpair, so consumers can cancel pending power/activity gestures.
+// Register before start. Invoked on link loss and Unpair; no key releases are
+// reported for keys that were down, so the consumer cancels held input itself.
 void ble_remote_set_disconnect_callback(ble_remote_disconnect_callback_t callback, void *context);
 void ble_remote_set_siri_callback(ble_remote_siri_callback_t callback, void *context);
 // Search for a nearby HID or Gen 2/3 Siri Remote accepting a bond; skip rejected peers.

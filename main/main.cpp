@@ -456,11 +456,11 @@ void start_original_interfaces() {
     }
     ESP_ERROR_CHECK(xTaskCreate(input_task,"remote_input",8192,nullptr,4,nullptr)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
     ble_remote_set_siri_callback(remote_siri,nullptr);
+    ble_remote_set_disconnect_callback(remote_disconnect,nullptr);
     // esp_matter::start starts NimBLE asynchronously. Attach only once the host syncs.
     esp_err_t ble=ESP_ERR_INVALID_STATE;
     for(unsigned attempt=0;attempt<100&&ble==ESP_ERR_INVALID_STATE;++attempt) {ble=ble_remote_start(remote_key,nullptr);if(ble==ESP_ERR_INVALID_STATE)vTaskDelay(pdMS_TO_TICKS(100));}
     ESP_ERROR_CHECK(ble);
-    ble_remote_set_disconnect_callback(remote_disconnect,nullptr);
     startup_memory("before HomeKit");
     if(original_interfaces_enabled.load()){
         const auto home=amity_homekit::start(hub,callbacks);

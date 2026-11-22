@@ -21,7 +21,7 @@ for scenario in \
   absence success unpair unpair-delete-error unpair-storage-error unpair-before-completion unpair-pairing \
   unpair-cancel-error connect-error async-error discovery-error \
   disconnect-before-setup unreported-link-lost reconnect-backoff host-reset pairing stop-pairing-search stop-pairing-connect stop-pairing-security \
-  saved-layout changed-layout lost-layout-validation layout-without-hash; do
+  saved-layout disconnect-held-key changed-layout lost-layout-validation layout-without-hash; do
   "$out/ble_transport_test" "$scenario"
 done
 "${CXX:-c++}" -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \

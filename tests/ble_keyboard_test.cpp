@@ -42,8 +42,11 @@ int main() {
     report[2] = 0;
     assert(keyboard.input(0,0,report,sizeof(report)));
     assert((events.back() == Event{7,0x3a,false}));
-    keyboard.release_all();
-    assert((events.back() == Event{7,0x52,false}));
+    keyboard.clear(); // Link loss reports no release for the held key.
+    assert(events.size() == 3);
+    assert(keyboard.add_map(0, boot, sizeof(boot)));
+    assert(keyboard.input(0,0,report,sizeof(report)));
+    assert((events.back() == Event{7,0x52,true})); // A key held after reconnecting is a new press.
     events.clear(); keyboard.clear();
 
     // ZMK-style NKRO bitmap with a distinct 16-bit consumer array report ID.
@@ -64,7 +67,7 @@ int main() {
     volume[0] = 0;
     assert(keyboard.input(0,2,volume,sizeof(volume)));
     assert(events.size() == 4 && (events.back() == Event{0xc,0xe9,false}));
-    keyboard.clear(); assert(events.size() == 6);
+    keyboard.clear(); assert(events.size() == 4);
 
     // Multiple maps referencing the same usage must release only after every
     // report has released it. Explicit usages also exercise non-byte alignment.

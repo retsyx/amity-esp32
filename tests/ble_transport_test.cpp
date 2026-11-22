@@ -45,7 +45,7 @@ uint8_t hash[16] = {0xa5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
 std::vector<uint8_t> layout;
 unsigned hash_reads, ccc_writes, layouts_saved;
 std::vector<ble_addr_t> privacy_removals, bond_removals;
-unsigned recursive_depth, positive_keys, key_releases;
+unsigned recursive_depth, positive_keys, key_releases, disconnects;
 uint16_t live_handle = BLE_HS_CONN_HANDLE_NONE;
 ble_gap_conn_desc descriptor{};
 ble_gap_event_fn *scan_callback;
@@ -760,6 +760,24 @@ int main(int argc, char **argv) {
         assert(ble_remote_unpair() == ESP_OK);
         fake::run_steps(1);
         assert(fake::layout.empty() && !fake::storage_peer);
+    } else if (scenario == "disconnect-held-key") {
+        key_callback=[](uint16_t,uint16_t,bool pressed,void*){if(pressed)++fake::positive_keys;else++fake::key_releases;};
+        disconnect_callback=[](void*){++fake::disconnects;};
+        fake::run_steps(1);
+        fake::complete_connect();
+        fake::run_steps(1);
+        assert(fake::status().connected);
+        fake::notify(5, {0x01});
+        assert(fake::positive_keys == 1);
+        // Link loss cancels the held key through the disconnect callback alone.
+        fake::disconnect();
+        assert(fake::disconnects == 1 && fake::key_releases == 0);
+        fake::run_steps(1);
+        fake::complete_connect();
+        fake::run_steps(1);
+        assert(fake::status().connected);
+        fake::notify(5, {0x01}); // Still held after reconnecting: a new press.
+        assert(fake::positive_keys == 2 && fake::key_releases == 0);
     } else if (scenario == "changed-layout") {
         fake::database_hash = true;
         fake::run_steps(1);

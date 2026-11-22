@@ -153,12 +153,4 @@ bool HidKeyboard::input(uint8_t map, uint8_t id, const uint8_t *data, size_t len
     dispatch(before, pressed());
     return true;
 }
-
-void HidKeyboard::release_all() {
-    const auto before = pressed();
-    for (auto &report : reports_) report.down.clear();
-    dispatch(before, {});
-}
-
-void HidKeyboard::clear() { release_all(); reports_.clear(); }
 } // namespace ble

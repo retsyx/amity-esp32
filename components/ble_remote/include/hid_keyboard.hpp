@@ -22,8 +22,9 @@ public:
         : callback_(callback), context_(context) {}
     bool add_map(uint8_t map_index, const uint8_t *descriptor, size_t length);
     bool input(uint8_t map_index, uint8_t report_id, const uint8_t *data, size_t length);
-    void release_all();
-    void clear();
+    // Forget every map and held key without reporting releases. The link owner
+    // cancels held input when it loses the remote.
+    void clear() { reports_.clear(); }
 private:
     struct Field {
         uint16_t offset, size, count;
