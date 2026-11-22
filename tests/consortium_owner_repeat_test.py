@@ -38,7 +38,7 @@ template<class T>T ident(unsigned n){char text[33];snprintf(text,sizeof(text),"%
 struct Queued{Kind kind;std::string payload;uint32_t ttl;uint64_t created;uint64_t revision=0;std::shared_ptr<const model::OwnedIntent> owned;std::shared_ptr<const model::OwnedAdapterSnapshot> snapshot{};bool firmware_stream=false;};
 struct Tls{int socket=-1;model::OctopusId authenticated;std::vector<Peer> allowed;bool healthy=true;bool usable()const{return healthy;}};
 using TlsLink=Tls;
-struct Active{int wakeup=-1;Session session;std::shared_ptr<Tls> tls=std::make_shared<Tls>();model::OctopusId peer,connection_peer;model::BootId claimed_boot;std::atomic_bool execution_fenced{false},restart_requested{false};model::LinkId cleaned_link;std::string endpoint_hint;std::mutex mutex,close_mutex;bool cancelled=false,retiring=false,ready=true,management_ready=false,context_ready=true,context_requested=false,closed_notified=false,refreshing=false;RuntimePeerStatus status;std::deque<Queued> queue;};
+struct Active{int wakeup=-1;Session session;std::shared_ptr<Tls> tls=std::make_shared<Tls>();model::OctopusId peer,connection_peer;model::BootId claimed_boot;std::atomic_bool execution_fenced{false},restart_requested{false};model::LinkId cleaned_link;std::string endpoint_hint;std::mutex mutex,close_mutex;bool cancelled=false,retiring=false,ready=true,management_ready=false,context_ready=true,context_requested=false,closed_notified=false,refreshing=false;LinkScope context_retry_scope;uint64_t context_retry_at=0;RuntimePeerStatus status;std::deque<Queued> queue;};
 // ACK observation has a separate native test; this fixture tests IPC policy.
 void begin_release_ack(Active&,const model::OwnedIntent&,uint64_t,const network_diagnostics::Snapshot&){}
 void emit_key_network(const model::OctopusId&,uint8_t,uint64_t,uint8_t,bool,const char*,const network_diagnostics::Snapshot&,const network_diagnostics::Snapshot&){}
@@ -231,7 +231,9 @@ void initial_context(){
  i.kind=model::OwnedIntentKind::context;i.target.osd_name.clear();assert(runtime_send_owned(i)==ESP_OK&&a->queue.size()==1);
  assert(a->context_ready&&!a->context_requested&&runtime_send_owned(down())==ESP_OK&&a->queue.size()==2);
  assert(a->queue[0].owned&&a->queue[0].owned->kind==model::OwnedIntentKind::context&&a->queue[0].revision==1);
- reset();a=connection();links={a};a->context_ready=false;assert(!initialize_context(*a)&&!a->context_ready&&!a->context_requested);controls.ready=[](auto,auto,auto){return false;};assert(!initialize_context(*a)&&!a->context_ready&&!a->context_requested);
+ // A capture the owner cannot take keeps the logical session and is asked
+ // again later; capture_retries_without_restart() covers the retry.
+ reset();a=connection();links={a};a->context_ready=false;assert(initialize_context(*a)&&!a->context_ready&&!a->context_requested&&!a->restart_requested&&a->ready);
  // No saved selectors means an admitted recapture may emit no context. Local
  // discovery and exact key-up cleanup still reach the owner independently.
  reset();a=connection();links={a};group.consortium=a->session.scope().consortium_id;a->context_ready=false;a->refreshing=true;
@@ -273,17 +275,21 @@ void asynchronous_context_failure_is_scoped(){
  controls.ready=[&](auto owner,uint64_t revision,auto completed){assert(owner==a->peer&&revision==1);done=std::move(completed);return true;};
  assert(initialize_context(*a)&&a->context_requested&&!a->context_ready);
  clock_ms=5101;auto context=down();context.kind=model::OwnedIntentKind::context;context.target.osd_name.clear();
- // Failure of the captured context is scoped independently of elapsed wall time.
+ // Failure of the captured context is scoped independently of elapsed wall
+ // time. It keeps the logical session and asks again later, logged once.
  assert(a->queue.empty()&&!a->cancelled);
- done(model::OwnedContextResult::failed);logical_restart_pending(*a);assert(!a->context_requested&&!a->context_ready&&diagnostic_logs.size()==1);
- assert(diagnostic_logs[0].find("reason=context_recapture_failed")!=std::string::npos);done(model::OwnedContextResult::failed);assert(diagnostic_logs.size()==1);
+ done(model::OwnedContextResult::failed);assert(!a->restart_requested&&a->ready&&!a->context_requested&&!a->context_ready&&diagnostic_logs.size()==1);
+ assert(diagnostic_logs[0].find("Owner context capture retry reason=failed")==0);done(model::OwnedContextResult::failed);assert(diagnostic_logs.size()==1);
  // A local R+1 configuration may be executing before the runtime publishes
- // that revision. The old command reports stale, leaving its healthy R link.
+ // that revision. The old command reports stale, leaving its healthy R link
+ // to ask again later.
  reset();a=connection();links={a};group.consortium=a->session.scope().consortium_id;a->context_ready=false;
  controls.ready=[&](auto,uint64_t,auto completed){done=std::move(completed);return true;};assert(initialize_context(*a));
- const auto original=a->session.scope();done(model::OwnedContextResult::stale);assert(!a->cancelled&&a->session.scope()==original&&diagnostic_logs.empty());
+ const auto original=a->session.scope();done(model::OwnedContextResult::stale);
+ assert(!a->cancelled&&!a->restart_requested&&a->session.scope()==original&&!a->context_requested&&diagnostic_logs.size()==1&&diagnostic_logs[0].find("reason=stale")!=std::string::npos);
  configuration=2;a->refreshing=true;done(model::OwnedContextResult::published);
- assert(a->refreshing&&!a->context_ready&&a->context_requested&&!a->cancelled); // Old success cannot finish a newer target revision.
+ assert(a->refreshing&&!a->context_ready&&!a->cancelled); // Old success cannot finish a newer target revision.
+ diagnostic_logs.clear();
  HelloFrame hello;hello.consortium_id=original.consortium_id;hello.octopus_id=original.peer_id;hello.boot_id=original.peer_boot_id;hello.config_revision=1;
  assert(a->session.hello(hello)==Error::none&&a->session.synchronized(1,true,true)==Error::none&&a->session.advance_configuration(2)==Error::none);
  configuration=2;a->status.config_revision=2;a->context_requested=false;a->context_ready=false;
@@ -320,6 +326,76 @@ void asynchronous_context_ignores_ended_logical_session(){
  model::OwnedAuthorization old_auth{a->peer,original.peer_boot_id,boot,original.link_id,1,1000};
  auto current_auth=old_auth;current_auth.link_id=new_link;
  assert(!runtime_owned_authorized(old_auth)&&runtime_owned_authorized(current_auth));
+}
+// A capture that puts nothing on the link, because the owner did not take
+// the request or reported it stale or failed, is asked again on the same
+// logical session at least a second later. The session is not restarted,
+// queued work and TLS stay, refreshing still gates removal, and only each
+// scope's first retry is logged.
+void capture_retries_without_restart(){
+ const auto retries=[]{return std::count_if(diagnostic_logs.begin(),diagnostic_logs.end(),[](const auto& line){return line.find("Owner context capture retry")==0;});};
+ const auto restarted=[]{return std::any_of(diagnostic_logs.begin(),diagnostic_logs.end(),[](const auto& line){return line.find("Session restart requested")==0;});};
+ const auto same_session=[](const Active& active,const LinkScope& scope){
+  return active.ready&&!active.restart_requested&&!active.execution_fenced&&!active.cancelled&&active.session.scope()==scope&&active.tls->usable()&&shutdowns==0;
+ };
+ reset();auto a=connection();links={a};group.consortium=a->session.scope().consortium_id;a->context_ready=false;a->refreshing=true;
+ const auto scope=a->session.scope();
+ a->queue.push_back({Kind::device_status,"{\"hostname\":\"queued-work\"}",60000,clock_ms,1,{}});
+ // The owner hooks are not installed yet.
+ assert(initialize_context(*a)&&!a->context_requested&&!a->context_ready&&same_session(*a,scope)&&a->queue.size()==1);
+ assert(retries()==1&&!restarted()&&diagnostic_logs[0].find("reason=refused")!=std::string::npos);
+ // Then the owner refuses the request, as during a settings commit.
+ unsigned requests=0;bool admit=false;std::function<void(model::OwnedContextResult)> done;
+ controls.ready=[&](auto owner,uint64_t revision,auto completed){assert(owner==a->peer&&revision==1);++requests;if(admit)done=std::move(completed);return admit;};
+ clock_ms+=999;assert(initialize_context(*a)&&requests==0);
+ clock_ms+=1;assert(initialize_context(*a)&&requests==1&&!a->context_requested&&same_session(*a,scope));
+ clock_ms+=999;assert(initialize_context(*a)&&requests==1&&retries()==1);
+ // Failed and stale completions for this scope wait the same way.
+ admit=true;clock_ms+=1;assert(initialize_context(*a)&&requests==2&&a->context_requested);
+ assert(initialize_context(*a)&&requests==2);
+ done(model::OwnedContextResult::failed);
+ assert(!a->context_requested&&same_session(*a,scope)&&a->queue.size()==1&&a->refreshing&&retries()==1&&!restarted());
+ clock_ms+=999;assert(initialize_context(*a)&&requests==2);
+ clock_ms+=1;assert(initialize_context(*a)&&requests==3);
+ done(model::OwnedContextResult::stale);
+ assert(!a->context_requested&&same_session(*a,scope)&&a->queue.size()==1&&a->refreshing&&retries()==1&&!restarted());
+ // The retry captures a current context, which readies the link.
+ clock_ms+=1000;assert(initialize_context(*a)&&requests==4&&a->context_requested);
+ auto context=down();context.kind=model::OwnedIntentKind::context;context.target.osd_name.clear();
+ assert(runtime_send_owned(context)==ESP_OK&&a->context_ready&&!a->refreshing&&a->queue.size()==2);
+ done(model::OwnedContextResult::published);assert(a->context_ready&&same_session(*a,scope)&&retries()==1);
+ // A failure that completes after a current context entered the link changes nothing.
+ reset();a=connection();links={a};group.consortium=a->session.scope().consortium_id;a->context_ready=false;
+ controls.ready=[&](auto,uint64_t,auto completed){done=std::move(completed);return true;};assert(initialize_context(*a));
+ auto selection=down();selection.kind=model::OwnedIntentKind::activity;assert(runtime_send_owned(selection)==ESP_OK&&a->context_ready);
+ done(model::OwnedContextResult::failed);assert(a->context_ready&&retries()==0&&!restarted());
+ // So does a refusal while a selection broadcast entered the link.
+ reset();a=connection();links={a};group.consortium=a->session.scope().consortium_id;a->context_ready=false;
+ controls.ready=[&](auto,uint64_t,auto){auto broadcast=down();broadcast.kind=model::OwnedIntentKind::activity;assert(runtime_send_owned(broadcast)==ESP_OK);return false;};
+ assert(initialize_context(*a)&&a->context_ready&&!a->context_requested&&retries()==0&&!restarted());
+ // A new logical session does not wait for an earlier scope's retry, the
+ // earlier scope's completions are ignored, and its first retry logs again.
+ reset();a=connection();links={a};group.consortium=a->session.scope().consortium_id;a->context_ready=false;
+ const auto original=a->session.scope();
+ HelloFrame hello;hello.consortium_id=original.consortium_id;hello.octopus_id=original.peer_id;hello.boot_id=original.peer_boot_id;hello.config_revision=1;
+ assert(a->session.hello(hello)==Error::none&&a->session.synchronized(1,true,true)==Error::none);
+ std::function<void(model::OwnedContextResult)> old_completed,new_completed;unsigned captures=0;
+ controls.ready=[&](auto,uint64_t,auto completed){++captures;old_completed=std::move(completed);return true;};
+ assert(initialize_context(*a)&&captures==1);old_completed(model::OwnedContextResult::failed);assert(!a->context_requested&&retries()==1);
+ {std::lock_guard<std::mutex> guard(lock);std::lock_guard<std::mutex> queue(a->mutex);
+  assert(a->session.begin_synchronization(1,ident<model::LinkId>(91))==Error::none);a->ready=false;a->context_requested=false;a->refreshing=true;
+ }
+ assert(a->session.synchronized(1,true,true)==Error::none);a->ready=true;
+ controls.ready=[&](auto,uint64_t,auto completed){++captures;new_completed=std::move(completed);return true;};
+ assert(initialize_context(*a)&&captures==2&&a->context_requested);
+ old_completed(model::OwnedContextResult::failed);old_completed(model::OwnedContextResult::stale);
+ assert(a->context_requested&&a->refreshing&&!a->restart_requested&&retries()==1);
+ new_completed(model::OwnedContextResult::failed);assert(!a->context_requested&&a->refreshing&&!a->restart_requested&&retries()==2);
+ // An empty published capture is complete: it is not asked again.
+ reset();a=connection();links={a};group.consortium=a->session.scope().consortium_id;a->context_ready=false;a->refreshing=true;
+ controls.ready=[&](auto,uint64_t,auto completed){++captures;done=std::move(completed);return true;};
+ captures=0;assert(initialize_context(*a)&&captures==1);done(model::OwnedContextResult::published);
+ clock_ms+=5000;assert(initialize_context(*a)&&captures==1&&a->context_requested&&!a->refreshing&&retries()==0);
 }
 void diagnostic_lines_fit_capture(){
  for(bool retained:{false,true}){
@@ -442,7 +518,7 @@ void codec_and_session(){
 }
 
 }
-int main(){using namespace amity::consortium;closure();duplicate_connections();unclaimed_disconnects();connection_launch();full_roster_replacement();queues();initial_context();future_context_is_recaptured();asynchronous_context_failure_is_scoped();asynchronous_context_ignores_ended_logical_session();diagnostic_lines_fit_capture();release_sender_timing();all_key_sender_timing();restart_flags_gate_front_doors_before_scope_rotation();authorization();codec_and_session();std::cout<<"PASS qualified transport: actual FIFO/key-up capacity, down/up/tap sender timing outside locks, full-roster replacement and healthy-link reuse, link loss/replacement fences, scoped codecs, stale boots/config, original message TTL and ordered button state without periodic grants\\n";}
+int main(){using namespace amity::consortium;closure();duplicate_connections();unclaimed_disconnects();connection_launch();full_roster_replacement();queues();initial_context();future_context_is_recaptured();asynchronous_context_failure_is_scoped();asynchronous_context_ignores_ended_logical_session();capture_retries_without_restart();diagnostic_lines_fit_capture();release_sender_timing();all_key_sender_timing();restart_flags_gate_front_doors_before_scope_rotation();authorization();codec_and_session();std::cout<<"PASS qualified transport: actual FIFO/key-up capacity, down/up/tap sender timing outside locks, full-roster replacement and healthy-link reuse, link loss/replacement fences, scoped codecs, stale boots/config, original message TTL and ordered button state without periodic grants\\n";}
 '''
 def main():
  source=(ROOT/'components/consortium/runtime.cpp').read_text()

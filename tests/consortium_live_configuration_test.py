@@ -58,6 +58,7 @@ struct SynchronizationRound {model::MessageId id;uint64_t revision=0;};
 struct Active{
  Session session;std::shared_ptr<FakeTls> tls=std::make_shared<FakeTls>();model::OctopusId peer;
  std::mutex mutex;bool cancelled=false,retiring=false,lifecycle_only=false,management_ready=false,ready=true,context_ready=true,context_requested=false,refreshing=false;
+ LinkScope context_retry_scope;uint64_t context_retry_at=0;
  RuntimePeerStatus status;std::deque<Queued> queue;std::string endpoint_hint,expected_hostname,advertised_hostname;
  std::atomic_bool execution_fenced{false},restart_requested{false};model::LinkId cleaned_link;
  SynchronizationRound synchronization;std::optional<SynchronizationRound> pending_synchronization;bool execution_supported=true;model::MessageId update_begin_id;

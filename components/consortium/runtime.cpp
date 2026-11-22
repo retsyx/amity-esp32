@@ -127,6 +127,10 @@ struct Active {
     uint64_t wifi_reported_at=0;
     network_diagnostics::WifiSignal wifi_reported;
     std::atomic_bool cancelled{false},retiring{false},ready{false},management_ready{false},context_ready{false},context_requested{false},refreshing{false};
+    // A context capture that put nothing on this link is requested again on
+    // the same logical session, not before this time. Link mutex protected;
+    // it applies only while the session is still in that scope.
+    LinkScope context_retry_scope;uint64_t context_retry_at=0;
     std::atomic_bool execution_fenced{false};
     std::atomic_bool restart_requested{false};
     model::LinkId cleaned_link;
@@ -685,13 +689,27 @@ bool initialize_context(Active& active){
     {std::lock_guard<std::mutex> guard(lock);std::lock_guard<std::mutex> queue(active.mutex);
         if(active.cancelled||active.retiring||active.restart_requested||active.execution_fenced||!active.ready)return false;
         if(active.context_ready||active.context_requested)return true;
-        active.context_requested=true;hooks=controls;scope=active.session.scope();
+        scope=active.session.scope();
+        if(active.context_retry_scope==scope&&now_ms()<active.context_retry_at)return true;
+        active.context_requested=true;hooks=controls;
     }
     // The hook may only admit an asynchronous owner-task recapture. Readiness
     // changes when its fresh current context actually enters this link's FIFO.
     if(hooks.ready&&hooks.ready(active.peer,scope.config_revision,[scope](model::OwnedContextResult result){context_capture_completed(scope,result);}))return true;
-    {std::lock_guard<std::mutex> guard(lock);std::lock_guard<std::mutex> queue(active.mutex);active.context_requested=false;}
-    return false;
+    // The owner did not take the request: its hooks are not installed yet, a
+    // settings commit or maintenance is in progress, or its queue is full.
+    // Ask again on this same logical session, at least a second later.
+    bool first=false;
+    {std::lock_guard<std::mutex> guard(lock);std::lock_guard<std::mutex> queue(active.mutex);
+        active.context_requested=false;
+        if(!active.context_ready){
+            first=!(active.context_retry_scope==scope);
+            active.context_retry_scope=scope;active.context_retry_at=now_ms()+1000;
+        }
+    }
+    if(first)ESP_LOGW("consortium","Owner context capture retry reason=refused peer=%s link=%s rev=%llu",
+        active.peer.str().c_str(),scope.link_id.str().c_str(),static_cast<unsigned long long>(scope.config_revision));
+    return true;
 }
 TcpAckSample sample_tcp_ack(int socket){
     TcpAckSample sample;
@@ -832,8 +850,8 @@ struct DeferredLinkTrace {
     ~DeferredLinkTrace(){for(size_t i=0;i<size;++i)emit_link_trace(snapshots[i]);}
 };
 void context_capture_completed(const LinkScope& scope,model::OwnedContextResult result){
-    if(result==model::OwnedContextResult::stale)return;
-    DeferredLinkTrace diagnostics;std::lock_guard<std::mutex> guard(lock);
+    model::OctopusId retried;
+    {std::lock_guard<std::mutex> guard(lock);
     if(!original_controller(group,identity.id)||!status.authority_ready||group.consortium!=scope.consortium_id)return;
     for(auto& active:links)if(!active->cancelled&&!active->retiring&&!active->restart_requested&&!active->execution_fenced&&active->ready){
         std::lock_guard<std::mutex> queue(active->mutex);
@@ -843,9 +861,15 @@ void context_capture_completed(const LinkScope& scope,model::OwnedContextResult 
         // actual current context enters the link FIFO. Leave the accepted
         // request parked so an empty capture is not repeated on every operational turn.
         if(result==model::OwnedContextResult::published){if(scope.config_revision==configuration)active->refreshing=false;continue;}
-        LinkTrace trace;trace.phase="owner_context";trace.fail("context_recapture_failed",Error::none,LinkTrace::Recovery::recoverable);trace.retained=true;diagnostics.capture(*active,trace,now_ms());
-        request_session_restart(*active);
-    }
+        // A stale or failed capture put nothing on this link. Unless a current
+        // context has entered it since, ask again on this same logical
+        // session at least a second later. Only a scope's first retry logs.
+        if(active->context_ready)continue;
+        if(!(active->context_retry_scope==scope))retried=active->peer;
+        active->context_requested=false;active->context_retry_scope=scope;active->context_retry_at=now_ms()+1000;
+    }}
+    if(retried)ESP_LOGW("consortium","Owner context capture retry reason=%s peer=%s link=%s rev=%llu",
+        result==model::OwnedContextResult::stale?"stale":"failed",retried.str().c_str(),scope.link_id.str().c_str(),static_cast<unsigned long long>(scope.config_revision));
 }
 std::optional<uint8_t> dropped_report(const Active& active,const Queued& queued){
     if(!queued.snapshot||active.cancelled||active.retiring||!active.ready)return {};
