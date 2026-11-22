@@ -53,11 +53,12 @@ for scenario in idle boot-held hold short cancel boot-release-hold latched-edge 
 done
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
   -I"$root/components/ble_remote/include" "$root/components/ble_remote/hid_keyboard.cpp" \
-  -x c++ "$root/components/ble_remote/atomic_remote.c" "$root/tests/ble_keyboard_test.cpp" -o "$out/ble_test"
+  "$root/components/ble_remote/atomic_remote.cpp" "$root/components/ble_remote/remote_input.cpp" \
+  "$root/tests/ble_keyboard_test.cpp" -o "$out/ble_test"
 "$out/ble_test"
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
-  -I"$root/components/ble_remote/include" "$root/components/ble_remote/atomic_controller.cpp" "$root/components/ble_remote/remote_input.cpp" \
-  -x c++ "$root/components/ble_remote/atomic_remote.c" "$root/tests/ble_controller_test.cpp" -o "$out/ble_controller_test"
+  -I"$root/components/ble_remote/include" "$root/components/ble_remote/atomic_remote.cpp" "$root/components/ble_remote/remote_input.cpp" \
+  "$root/tests/ble_controller_test.cpp" -o "$out/ble_controller_test"
 "$out/ble_controller_test"
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
   -I"$root/components/ble_remote/include" "$root/components/ble_remote/siri_remote.cpp" \
@@ -65,9 +66,8 @@ c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
 "$out/siri_remote_test"
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
   -I"$root/components/ble_remote/include" "$root/tests/remote_input_test.cpp" \
-  "$root/components/ble_remote/atomic_controller.cpp" "$root/components/ble_remote/siri_remote.cpp" \
-  "$root/components/ble_remote/remote_input.cpp" -x c++ "$root/components/ble_remote/atomic_remote.c" \
-  -o "$out/remote_input_test"
+  "$root/components/ble_remote/atomic_remote.cpp" "$root/components/ble_remote/siri_remote.cpp" \
+  "$root/components/ble_remote/remote_input.cpp" -o "$out/remote_input_test"
 "$out/remote_input_test"
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
   -I"$root/main" "$root/tests/swipe_sequence_test.cpp" -o "$out/swipe_sequence_test"

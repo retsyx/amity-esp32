@@ -10,8 +10,7 @@
 #include "amity/system_control.hpp"
 #include "amity_matter.h"
 #include "homekit.hpp"
-#include "atomic_controller.hpp"
-#include "atomic_remote.h"
+#include "atomic_remote.hpp"
 #include "siri_remote.hpp"
 #include "volume_sequence.hpp"
 #include "swipe_sequence.hpp"
@@ -286,22 +285,14 @@ void log_siri_buttons(const Input &input,uint16_t &previous) {
     previous=buttons;
 }
 void log_atomic_key(const Input &input) {
-    atomic_action_t action{};
-    const char *name="Unknown";
-    if(atomic_remote_translate(input.page,input.usage,&action)) {
-        if(action.type==ATOMIC_ACTIVITY) {
-            ESP_LOGI("remote_input","Atomic: F%u %s",static_cast<unsigned>(action.value+1),input.down?"pressed":"released");
-            return;
-        }
-        switch(action.value) {
-        case 0x00:name="Select";break;case 0x01:name="Up";break;case 0x02:name="Down";break;
-        case 0x03:name="Left";break;case 0x04:name="Right";break;case 0x09:name="Home";break;
-        case 0x0d:name="Back";break;case 0x40:name="Power";break;case 0x41:name="Volume Up";break;
-        case 0x42:name="Volume Down";break;case 0x43:name="Mute";break;
-        }
+    const auto button=ble::atomic_button(input.page,input.usage);
+    if(button&&*button>=ble::RemoteButton::Activity0) {
+        const auto number=static_cast<unsigned>(*button)-static_cast<unsigned>(ble::RemoteButton::Activity0)+1;
+        ESP_LOGI("remote_input","Atomic: F%u %s",number,input.down?"pressed":"released");
+        return;
     }
-    ESP_LOGI("remote_input","Atomic: %s %s (page=0x%04x usage=0x%04x)",name,input.down?"pressed":"released",
-             static_cast<unsigned>(input.page),static_cast<unsigned>(input.usage));
+    ESP_LOGI("remote_input","Atomic: %s %s (page=0x%04x usage=0x%04x)",button?ble::remote_button_name(*button):"Unknown",
+             input.down?"pressed":"released",static_cast<unsigned>(input.page),static_cast<unsigned>(input.usage));
 }
 bool submit_remote_release(uint8_t key,uint32_t generation) {
     const auto started=esp_timer_get_time();

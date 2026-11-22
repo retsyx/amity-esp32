@@ -7,9 +7,10 @@
  */
 
 #include "hid_keyboard.hpp"
-#include "atomic_remote.h"
+#include "atomic_remote.hpp"
 #include <cassert>
 #include <cstdio>
+#include <string>
 #include <tuple>
 #include <vector>
 
@@ -94,19 +95,18 @@ int main() {
     const uint8_t large[] = {0x75,0x20,0x96,0xff,0xff,0x81,0};
     assert(!keyboard.add_map(3,large,sizeof(large)));
 
-    atomic_action_t action{};
+    using B = ble::RemoteButton;
     const uint16_t usage[] = {0x28,0x29,0x4a,0x4f,0x50,0x51,0x52,0x66,0x7f,0x80,0x81};
-    const uint8_t cec[] = {0x00,0x0d,0x09,0x04,0x03,0x02,0x01,0x40,0x43,0x41,0x42};
-    for (size_t i=0;i<sizeof(cec);++i) {
-        assert(atomic_remote_translate(7,usage[i],&action));
-        assert(action.type == ATOMIC_CEC_KEY && action.value == cec[i]);
-    }
-    for (uint16_t i=0;i<4;++i) {
-        assert(atomic_remote_translate(7,0x3a+i,&action));
-        assert(action.type == ATOMIC_ACTIVITY && action.value == i);
-    }
-    assert(atomic_remote_translate(0x0c,0xea,&action) && action.value == 0x42);
-    assert(!atomic_remote_translate(7,0x04,&action)); // Alphabetic keys unsupported.
-    assert(!atomic_remote_translate(7,0x3e,&action)); // F5 is not an activity.
+    const B keys[] = {B::Select,B::Back,B::Home,B::Right,B::Left,B::Down,B::Up,B::Power,B::Mute,B::VolumeUp,B::VolumeDown};
+    for (size_t i=0;i<sizeof(usage)/sizeof(usage[0]);++i) assert(ble::atomic_button(7,usage[i]) == keys[i]);
+    for (uint16_t i=0;i<4;++i)
+        assert(ble::atomic_button(7,0x3a+i) == static_cast<B>(static_cast<uint16_t>(B::Activity0)+i));
+    const uint16_t consumer[] = {0x30,0x41,0x42,0x43,0x44,0x45,0x46,0x224,0x223,0xe2,0xe9,0xea};
+    const B consumer_keys[] = {B::Power,B::Select,B::Up,B::Down,B::Left,B::Right,B::Back,B::Back,B::Home,B::Mute,B::VolumeUp,B::VolumeDown};
+    for (size_t i=0;i<sizeof(consumer)/sizeof(consumer[0]);++i) assert(ble::atomic_button(0x0c,consumer[i]) == consumer_keys[i]);
+    assert(!ble::atomic_button(7,0x04)); // Alphabetic keys unsupported.
+    assert(!ble::atomic_button(7,0x3e)); // F5 is not an activity.
+    assert(!ble::atomic_button(0x0c,0x28)); // Keyboard usages belong to their page.
+    assert(std::string(ble::remote_button_name(B::VolumeDown)) == "Volume Down");
     puts("BLE descriptor and Atomic mapping tests passed");
 }

@@ -34,7 +34,7 @@ from .trace import event
 MAX_LINK_DROP_REACTION_NS = 20_000_000
 
 # Keyboard usages the shipping remote translation maps to CEC keys
-# (components/ble_remote/atomic_remote.c). Power selects Standby instead of
+# (components/ble_remote/atomic_remote.cpp). Power selects Standby instead of
 # sending a key; the remote has no Play, Pause, Stop or Play/Pause button.
 REMOTE_USAGES = {Key.SELECT: 0x28, Key.UP: 0x52, Key.DOWN: 0x51, Key.LEFT: 0x50, Key.RIGHT: 0x4F,
                  0x09: 0x4A, 0x0D: 0x29, Key.POWER: 0x66, Key.VOLUME_UP: 0x80,

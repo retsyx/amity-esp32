@@ -28,6 +28,25 @@ constexpr int shortcut(RemoteButton button) {
 }
 }
 
+const char *remote_button_name(RemoteButton button) {
+    switch (button) {
+    case RemoteButton::Select: return "Select";
+    case RemoteButton::Up: return "Up";
+    case RemoteButton::Down: return "Down";
+    case RemoteButton::Left: return "Left";
+    case RemoteButton::Right: return "Right";
+    case RemoteButton::Home: return "Home";
+    case RemoteButton::Back: return "Back";
+    case RemoteButton::Siri: return "Siri";
+    case RemoteButton::Power: return "Power";
+    case RemoteButton::VolumeUp: return "Volume Up";
+    case RemoteButton::VolumeDown: return "Volume Down";
+    case RemoteButton::Mute: return "Mute";
+    case RemoteButton::PlayPause: return "Play/Pause";
+    default: return "Unknown";
+    }
+}
+
 bool RemoteInputController::emit(RemoteCommandType type, int value, uint8_t count) {
     return callback_ && callback_(RemoteCommand{type, value, count, report_stamp_}, context_);
 }

@@ -17,6 +17,8 @@ enum class RemoteButton : uint16_t {
     VolumeUp = 0x41, VolumeDown = 0x42, Mute = 0x43, PlayPause = 0x61,
     Activity0 = 0x100, Activity1, Activity2, Activity3,
 };
+// Log name of a non-activity button.
+const char *remote_button_name(RemoteButton button);
 struct InputStamp {
     uint64_t timestamp = 0;
     uint32_t generation = 0;

@@ -3,7 +3,7 @@
  * This file is part of Amity-esp32.
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
-#include "atomic_controller.hpp"
+#include "atomic_remote.hpp"
 #include "siri_remote.hpp"
 #include <array>
 #include <cassert>

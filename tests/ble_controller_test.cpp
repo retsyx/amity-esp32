@@ -6,7 +6,7 @@
  * License, or (at your option) any later version.
  */
 
-#include "atomic_controller.hpp"
+#include "atomic_remote.hpp"
 #include <cassert>
 #include <cstdio>
 #include <utility>
