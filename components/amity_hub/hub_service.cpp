@@ -71,8 +71,7 @@ struct HubService::Adapter : Transport {
     uint8_t requested_scan_sides=3;bool scan_running=false;
     std::array<int64_t,2> last_scan{{-120000000,-120000000}};int64_t last_claim=-5000000;
     uint32_t dropped_tx=0,discovery_generation=0;Flight* sending_key=nullptr;
-    bool setting_activity=false,pacing_receive=false,emitting_user_key=false,emitting_key_cleanup=false;
-    unsigned activity_outstanding=0;
+    bool setting_activity=false,pacing_receive=false,emitting_key_cleanup=false;
     enum class DiscoveryPhase {Idle,ClaimBack,ScanBack,BackReplies,ClaimFront,ScanFront,FinalReplies};
     struct DiscoveryState {DiscoveryPhase phase=DiscoveryPhase::Idle;bool waiting=false,claim_only=false,claimed=false;uint8_t candidate=0,nacks=0,address=0,sides=0;int64_t deadline=0,quiet_since=0;}discovery;
     const system::OwnedAuthorization* executing_auth=nullptr;
@@ -592,10 +591,10 @@ struct HubService::Impl : Adapter {
         auto* flight=recipient->engine->reserve_flight();
         if(!flight){state.phase=KeyPhase::failed;state.waiting=false;if(state.emitted)key_cleanup_roles|=key_role(raw);return true;}
         flight->key=raw;flight->instance=state.instance;
-        auto& engine=*recipient->engine;engine.sending_key=flight;engine.emitting_user_key=true;
+        auto& engine=*recipient->engine;engine.sending_key=flight;
         const auto* previous=engine.executing_auth;engine.executing_auth=nullptr;
         const bool sent=engine.hub.transmit_key(recipient->device,state.mapped,Hub::audio_key(raw));
-        engine.executing_auth=previous;engine.sending_key=nullptr;engine.emitting_user_key=false;
+        engine.executing_auth=previous;engine.sending_key=nullptr;
         if(sent){state.waiting=true;state.emitted=true;}else{flight->used=false;state.phase=KeyPhase::failed;state.waiting=false;if(state.emitted)key_cleanup_roles|=key_role(raw);}
         return true;
     }
@@ -1491,7 +1490,6 @@ bool HubService::Adapter::complete_transmissions() {
         for(auto& flight:flights){if(!flight.used)continue;const auto result=flight.completion.result.load(std::memory_order_acquire);if(result==cec::TxResult::Pending)continue;
             flight.used=false;
             if(flight.key>=0){auto& state=root.keys[static_cast<size_t>(flight.key)];if(state.instance==flight.instance){state.waiting=false;if(result!=cec::TxResult::Success){state.phase=Impl::KeyPhase::failed;if(state.emitted)root.key_cleanup_roles|=Impl::key_role(static_cast<uint8_t>(flight.key));}}}
-            if(flight.activity)--activity_outstanding;
             changed=true;
         }
         return changed;
@@ -1556,7 +1554,7 @@ bool HubService::Adapter::send(BusSide side, uint8_t destination, const uint8_t 
             "Source policy TX adapter=%u side=%s destination=%u opcode=%02x admitted=%d",
             adapter_id,side==BusSide::Front?"front":"back",destination,data[0],sent);
         if (flight && !sent) flight->used = false;
-        if(sent&&paced){flight->activity=setting_activity||pacing_receive;flight->cleanup=emitting_key_cleanup;if(flight->activity)++activity_outstanding;}
+        if(sent&&paced){flight->activity=setting_activity||pacing_receive;flight->cleanup=emitting_key_cleanup;}
         if (!sent) ++dropped_tx;
         return sent;
     }
