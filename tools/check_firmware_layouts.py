@@ -3,6 +3,7 @@
 
 This catches a public header changing while a parallel incremental build is
 running, before an otherwise linkable incompatible image reaches the device.
+Every listed record must still exist, so the list cannot silently go stale.
 """
 import argparse
 import json
@@ -10,39 +11,25 @@ from pathlib import Path
 from elftools.elf.elffile import ELFFile
 
 RECORDS={
-    'amity::system::ExecutionSnapshot','amity::system::ActivityOutcome','amity::system::InputIntent','amity::system::SelectRequest',
-    'amity::system::CommandOutcome','amity::system::LocalConfiguration',
-    'amity::system::PortPolicySnapshot','amity::system::ComponentBinding',
-    'amity::system::CecObservation','amity::system::Topology','amity::system::Plan',
-    'amity::system::AuthorizedCecOperation','amity::system::WireWork',
-    'amity::system::OperationArguments','amity::system::LocalCecAgent',
-    'amity::system::Coordinator',
-    'amity::system::LocalCecAgent::Transmission','amity::system::LocalCecAgent::HeldKey',
-    'amity::system::LocalCecAgent::AudioQuery','amity::system::LocalCecAgent::ReleaseStream',
-    'amity::system::Coordinator::Lane','amity::system::Coordinator::WireAdapter',
+    'amity::system::ExecutionSnapshot','amity::system::ActivityOutcome','amity::system::CecObservation','amity::system::OwnedIntent',
     'amity::consortium::RuntimeStatus','amity::consortium::RuntimePeerStatus',
     'amity::consortium::RuntimeControlHooks','amity::consortium::RuntimeNetworkHooks','amity::consortium::Envelope',
-    'amity::system::OwnedIntent',
-    'amity::consortium::Operation','config_store::Configuration',
-    'config_store::ConfiguredComponent',
-    'amity::Snapshot','cec::ExecutionFence','cec::Completion','cec::Submission','cec::Engine',
-    'config_store::RequestedSession',
-    'amity::system::RequestedActivity','amity::ConfigurationActivationStatus',
-    'amity::consortium::RuntimeLifecycleHooks',
-    'amity::consortium::RuntimeSettingsHooks',
+    'amity::consortium::RuntimeLifecycleHooks','amity::consortium::RuntimeSettingsHooks',
     'amity::consortium::DeviceSettingsWrite','amity::consortium::AdapterSettingChange',
-    'amity::AdapterRuntimeState',
+    'amity::consortium::HelloFrame','amity::consortium::platform::TlsLink',
+    'config_store::Configuration','config_store::ConfiguredComponent',
+    'config_store::ReplacementApproval','config_store::ReplacementPort','config_store::ReplacementEquipment',
+    'amity::Snapshot','amity::ConfigurationActivationStatus','amity::AdapterRuntimeState',
+    'amity::HubService','amity::SystemControl',
+    'cec::ExecutionFence','cec::Engine','cec::BoardProfile','cec::PortPin','cec::Bus',
     'device_settings::AdapterDefaults','device_settings::AdapterDefaultChange',
     'system_services::updates::ReleaseManifest',
-    'config_store::ReplacementApproval','config_store::ReplacementPort','config_store::ReplacementEquipment',
-    'amity::HubService','amity::SystemControl','amity::LiveSystem',
-    'amity::LiveSystem::Port','amity::LiveSystem::Port::Submitted',
-    'cec::BoardProfile','cec::PortPin','cec::Bus',
-    'amity::consortium::HelloFrame',
-    'amity::consortium::platform::TlsLink',
 }
 RECORD_NAMES={n.rsplit('::',1)[-1] for n in RECORDS}
 ROOT=Path(__file__).resolve().parents[1]
+# Function bodies hold only local types; skipping them avoids most DWARF parsing.
+SKIPPED={'DW_TAG_subprogram','DW_TAG_inlined_subroutine','DW_TAG_lexical_block','DW_TAG_variable',
+         'DW_TAG_formal_parameter','DW_TAG_enumeration_type'}
 
 
 def name(die):
@@ -71,6 +58,13 @@ def type_name(die,depth=0):
     return die.tag+':'+type_name(target,depth+1)
 
 
+def records_in(die):
+    for child in die.iter_children():
+        if child.tag in SKIPPED:continue
+        if child.tag in ('DW_TAG_structure_type','DW_TAG_class_type'):yield child
+        if child.has_children:yield from records_in(child)
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--elf',required=True,type=Path);parser.add_argument('--output',type=Path);args=parser.parse_args()
     records={};errors=[]
@@ -78,11 +72,10 @@ def main():
         elf=ELFFile(stream)
         if not elf.has_dwarf_info():raise SystemExit('ELF has no DWARF layout evidence')
         for cu in elf.get_dwarf_info().iter_CUs():
-            source=name(cu.get_top_DIE())
+            top=cu.get_top_DIE();source=name(top)
             if not source.startswith(str(ROOT/'components')+'/') and source!=str(ROOT/'main/main.cpp'):continue
-            for die in cu.iter_DIEs():
-                if die.tag not in ('DW_TAG_structure_type','DW_TAG_class_type') or 'DW_AT_byte_size' not in die.attributes:continue
-                if name(die) not in RECORD_NAMES:continue
+            for die in records_in(top):
+                if 'DW_AT_byte_size' not in die.attributes or name(die) not in RECORD_NAMES:continue
                 key=qualified(die)
                 if key not in RECORDS:continue
                 members=[]
@@ -95,12 +88,15 @@ def main():
                 prior=records.setdefault(key,[])
                 if prior and prior[0]['layout']!=layout:errors.append(dict(record=key,first=prior[0],conflicting=dict(source=source,layout=layout)))
                 prior.append(dict(source=source,layout=layout))
-    result=dict(elf=str(args.elf),records=records,errors=errors)
-    if args.output:
-        args.output.parent.mkdir(parents=True,exist_ok=True);args.output.write_text(json.dumps(result,indent=2)+'\n')
+    # The output marks a passed check; a failed check must run again.
+    if args.output and args.output.exists():args.output.unlink()
     if errors:
         for error in errors:print('Inconsistent public layout:',error['record'],error['first']['source'],error['first']['layout']['size'],'!=',error['conflicting']['source'],error['conflicting']['layout']['size'])
         raise SystemExit('Public headers changed during the build. Rebuild before flashing.')
+    missing=sorted(RECORDS-set(records))
+    if missing:raise SystemExit('Update RECORDS in tools/check_firmware_layouts.py; these records no longer exist: '+', '.join(missing))
+    if args.output:
+        args.output.parent.mkdir(parents=True,exist_ok=True);args.output.write_text(json.dumps(dict(elf=str(args.elf),records=records),indent=2)+'\n')
     print('Consistent firmware layouts:',len(records),'public records')
 
 

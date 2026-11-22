@@ -63,11 +63,13 @@ list(REMOVE_AT AMITY_MDNS_SOURCES ${AMITY_MDNS_INDEX})
 list(APPEND AMITY_MDNS_SOURCES "${AMITY_MDNS_FIXED}")
 set_property(TARGET ${AMITY_MDNS_LIB} PROPERTY SOURCES "${AMITY_MDNS_SOURCES}")
 
-add_custom_target(check-firmware-layouts ALL
+# Check public record layouts only when the ELF or the checker changes.
+add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/firmware-layouts.json
     COMMAND ${PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_firmware_layouts.py
         --elf ${CMAKE_BINARY_DIR}/${PROJECT_NAME}.elf
         --output ${CMAKE_BINARY_DIR}/firmware-layouts.json
-    DEPENDS ${CMAKE_BINARY_DIR}/${PROJECT_NAME}.elf VERBATIM)
+    DEPENDS ${CMAKE_BINARY_DIR}/${PROJECT_NAME}.elf ${CMAKE_SOURCE_DIR}/tools/check_firmware_layouts.py VERBATIM)
+add_custom_target(check-firmware-layouts ALL DEPENDS ${CMAKE_BINARY_DIR}/firmware-layouts.json)
 
 set(AMITY_RELEASE_SIGNING_KEY "" CACHE FILEPATH "Separate P-256 release-manifest signing key")
 set(AMITY_RELEASE_ARGUMENTS --profile development)
