@@ -192,25 +192,6 @@ void Hub::active_source() {
     send(BusSide::Front, 15, {0x82, static_cast<uint8_t>(physical_ >> 8), static_cast<uint8_t>(physical_)});
 }
 
-void Hub::input(const Activity &activity) {
-    if (auto *d = find_device(activity.source)) {
-        send(d->bus, 15, {0x86, static_cast<uint8_t>(d->physical_address >> 8), static_cast<uint8_t>(d->physical_address)});
-        return;
-    }
-    if (pending_resolution_) return;
-    fallback_input(activity);
-}
-
-void Hub::fallback_input(const Activity& activity){
-    if (!activity.switch_device.empty()) {
-        auto *d = find_device(activity.switch_device);
-        if (!d) return;
-        const uint8_t data[] = {0x44,0x69,activity.switch_input}; finite_press(*d,data,sizeof(data));
-        if(pending_resolution_)return;
-    }
-    active_source();
-}
-
 void Hub::request_audio_status() {
     const auto recipient=key_name(0x41);
     const auto *audio = find_device(recipient,owner_audio_side_);
@@ -308,7 +289,8 @@ void Hub::finish_discovery() {
     discovering_ = false;
     const auto *after = find_device(current().source);
     if (after && after->physical_address != 0xffff && (!had_source || previous.bus != after->bus ||
-        previous.address != after->address || previous.physical_address != after->physical_address)) input(current());
+        previous.address != after->address || previous.physical_address != after->physical_address))
+        send(after->bus, 15, {0x86, static_cast<uint8_t>(after->physical_address >> 8), static_cast<uint8_t>(after->physical_address)});
 }
 
 Device *Hub::discovery_device(BusSide side, uint8_t address) {

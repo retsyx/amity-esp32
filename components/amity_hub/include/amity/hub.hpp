@@ -118,8 +118,6 @@ private:
     std::string key_name(uint8_t key) const;
     bool send(BusSide side, uint8_t dest, std::initializer_list<uint8_t> data);
     bool power(const Device &device, bool on);
-    void input(const Activity &activity);
-    void fallback_input(const Activity&);
     void active_source();
     void identity(BusSide side, const cec::Frame &frame);
     void source_thief(const cec::Frame&);
