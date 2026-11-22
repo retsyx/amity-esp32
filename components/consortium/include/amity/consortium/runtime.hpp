@@ -116,11 +116,6 @@ struct RuntimeLifecycleHooks {
     std::function<void()> after_factory_reset;
 };
 void runtime_lifecycle_hooks(RuntimeLifecycleHooks);
-// Resume an already physically authorized reclaim before identity/CEC startup.
-esp_err_t runtime_finish_reclaim(std::function<esp_err_t()> preserve_network = {});
-// Physical USB only. Preserves origin and unrelated pairings/settings;
-// rotates operational credentials and group identity via a resumable reboot.
-esp_err_t runtime_reclaim_membership(model::OctopusId confirmed_local_id);
 
 struct RuntimeSettingsHooks {
     std::function<std::string()> snapshot;
@@ -174,5 +169,4 @@ void runtime_fence_owned_link(model::OctopusId,model::LinkId);
 uint64_t runtime_owned_deadline(const model::OwnedAuthorization&);
 bool runtime_owned_authorized(const model::OwnedAuthorization&);
 std::optional<model::LinkId> runtime_link_id(model::OctopusId,model::BootId);
-esp_err_t runtime_crypto_self_test();
 } // namespace amity::consortium

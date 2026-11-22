@@ -17,8 +17,6 @@
 extern "C" {
 #endif
 
-// Internal startup recovery: preserves station credentials during explicit physical reclaim.
-esp_err_t amity_matter_finish_network_reclaim(void);
 
 #define AMITY_MATTER_MAX_INPUTS 16
 #define AMITY_MATTER_INPUT_NAME_LENGTH 64

@@ -59,11 +59,9 @@ esp_err_t load_group(Group& value){++group_reads;if(!group_ok)return ESP_FAIL;va
 namespace platform{esp_err_t load_identity(model::OctopusId owner,Identity& value){++identity_loads;if(!identity_ok)return ESP_FAIL;value={owner,"validated-leaf","private-key-"+std::to_string(identity_loads),std::string(64,'a')};return ESP_OK;}}
 esp_err_t read_record(const char* space,const char* key,std::string& value,size_t cap){const auto name=std::string(space)+"/"+key;if(name==fail_read)return ESP_FAIL;const auto found=records.find(name);if(found==records.end())return ESP_ERR_NVS_NOT_FOUND;if(found->second.size()>cap)return ESP_ERR_INVALID_SIZE;value=found->second;return ESP_OK;}
 esp_err_t erase_record(const char*,const char*){++erases;return ESP_OK;}
-// Recovery task creation is a separate service seam; created_tasks counts
-// operational workers only, while the public recovery status matches firmware.
-esp_err_t recovery_usb(model::OctopusId,esp_err_t result,const char*){++recoveries;status.initialized=true;status.credential_ready=false;status.authority_ready=false;status.coordinator=false;status.member=true;status.phase="recovery_required";return result;}
+// The public recovery status matches firmware.
+esp_err_t recovery_required(model::OctopusId,esp_err_t result,const char*){++recoveries;status.initialized=true;status.credential_ready=false;status.authority_ready=false;status.coordinator=false;status.member=true;status.phase="recovery_required";return result;}
 int ble_remote_set_controller_enabled(bool enabled){check(!enabled,"headless role enabled remote");++remote_shutdowns;return remote_ok?ESP_OK:ESP_FAIL;}
-void usb_worker(void*){}
 int xTaskCreateWithCaps(void(*)(void*),const char*,unsigned,void*,unsigned,void*,unsigned){++created_tasks;return pdPASS;}
 uint64_t clock_ms=0,netif_exists_at=0,netif_up_at=0,ip_ready_at=0,ip_query_success_at=0;
 unsigned early_connects=0,enrollment_closes=0;
@@ -109,7 +107,6 @@ struct TlsLink{
 struct Connected{};
 void launch(std::shared_ptr<TlsLink>,std::string endpoint={},model::OctopusId expected={}){++launches;check(endpoint==attempts.back()&&expected==group.authority,"launch lost selected endpoint or owner");if(launch_failures){--launch_failures;return;}if(retain_launched){auto active=std::make_shared<Active>();active->connection_peer=expected;std::lock_guard<std::mutex> guard(lock);links.push_back(active);return;}throw Connected{};}
 }
-namespace config_store{bool production_storage_self_test(){return true;}}
 namespace amity::consortium {
 '''
 SUITE = r'''
@@ -135,28 +132,25 @@ void check_phases(){
 void startup_tests(){
  reset();seed_role(Group::coordinator);
  for(unsigned n=0;n<3;++n)seed.peers.push_back({ident<model::OctopusId>(10+n),"validated-peer",std::string(64,'a'+n),true});
- check(start_runtime()==ESP_OK&&group.peers.size()==3&&status.authority_ready&&created_tasks==2,"main with three secondary Amities failed operational startup");
+ check(start_runtime()==ESP_OK&&group.peers.size()==3&&status.authority_ready&&created_tasks==1,"main with three secondary Amities failed operational startup");
  for(auto mode:{AdmissionMode::button,AdmissionMode::setup_code}){
   for(auto role:{Group::unclaimed,Group::coordinator}){
    reset();seed_role(role);selected_mode=mode;
    check(start_runtime()==ESP_OK,"admission-capable startup failed");
    std::cout<<"admission_role="<<unsigned(role)<<" group_reads="<<group_reads<<" identity_loads="<<identity_loads<<" profile_tests="<<profile_checks<<'\n';
    check(group_reads==1&&identity_loads==1&&identity.key_der=="private-key-1","runtime_start repeated validation or lost exact verified identity");
-   check(profile_checks==0&&full_checks==0&&status.initialized&&status.credential_ready&&created_tasks==2,"startup ran an admission test or lost operational readiness");
+   check(profile_checks==0&&full_checks==0&&status.initialized&&status.credential_ready&&created_tasks==1,"startup ran an admission test or lost operational readiness");
    check(status.authority_ready==(role==Group::coordinator)&&status.coordinator==(role==Group::coordinator)&&!status.member,"main/unclaimed authority changed");check_phases();
-   check(runtime_crypto_self_test()==ESP_OK&&full_checks==1,"explicit USB diagnostic stopped checking both profiles");
    reset();seed_role(role);selected_mode=mode;crypto_ok=false;
-   check(start_runtime()==ESP_OK&&status.initialized&&status.credential_ready&&created_tasks==2&&group_reads==1&&identity_loads==1&&profile_checks==0&&full_checks==0,"unused admission crypto failure blocked startup");
+   check(start_runtime()==ESP_OK&&status.initialized&&status.credential_ready&&created_tasks==1&&group_reads==1&&identity_loads==1&&profile_checks==0&&full_checks==0,"unused admission crypto failure blocked startup");
    check(status.authority_ready==(role==Group::coordinator)&&status.coordinator==(role==Group::coordinator)&&!status.member,"unused admission crypto failure changed authority");check_phases();
-   check(runtime_crypto_self_test()!=ESP_OK&&full_checks==1&&status.initialized&&status.credential_ready,"explicit diagnostic failure was skipped or changed operational readiness");
   }
   for(auto role:{Group::prepared,Group::member,Group::retired}){
    reset();seed_role(role);selected_mode=mode;crypto_ok=false;
    check(start_runtime()==ESP_OK,"headless operational boot depended on unused admission test");
    check(group_reads==1&&identity_loads==1&&identity.key_der=="private-key-1"&&profile_checks==0&&full_checks==0,"headless startup repeated credential/admission work");
-   check(status.initialized&&status.credential_ready&&!status.authority_ready&&!status.coordinator&&created_tasks==2&&remote_shutdowns==1,"headless startup changed authority/passivity");
+   check(status.initialized&&status.credential_ready&&!status.authority_ready&&!status.coordinator&&created_tasks==1&&remote_shutdowns==1,"headless startup changed authority/passivity");
    check(status.member==(role!=Group::retired)&&candidate_passive==(role!=Group::retired),"stored headless role changed");check_phases();
-   check(runtime_crypto_self_test()!=ESP_OK&&full_checks==1&&status.initialized&&status.credential_ready,"explicit diagnostic failure was skipped or changed operational readiness");
   }
  }
  // Failure before operational readiness remains fail closed for every role.
@@ -183,7 +177,7 @@ void startup_tests(){
   check(start_runtime()!=ESP_OK&&recoveries==1&&!created_tasks&&!status.credential_ready,"headless authority/localID/capacity/remote shutdown check lost");
  }
 }
-void headless_only(){reset();seed_role(Group::member);crypto_ok=false;const auto result=start_runtime();std::cout<<"headless_group_reads="<<group_reads<<" identity_loads="<<identity_loads<<" admission_tests="<<profile_checks<<" result="<<result<<'\n';check(result==ESP_OK&&status.initialized&&status.credential_ready&&profile_checks==0&&created_tasks==2,"unused admission self-test blocked headless operational startup");}
+void headless_only(){reset();seed_role(Group::member);crypto_ok=false;const auto result=start_runtime();std::cout<<"headless_group_reads="<<group_reads<<" identity_loads="<<identity_loads<<" admission_tests="<<profile_checks<<" result="<<result<<'\n';check(result==ESP_OK&&status.initialized&&status.credential_ready&&profile_checks==0&&created_tasks==1,"unused admission self-test blocked headless operational startup");}
 void fresh_public_preflight(){
  const auto local=ident<model::OctopusId>(2);RuntimeStartup startup;
  reset();identity_ok=false;const auto empty=records;
@@ -260,7 +254,7 @@ void connection_tests(){
     setup_member();group.role=Group::prepared;candidate_passive=true;transport_idle_at=300;run_network();check(attempt_times.front()==300&&discoveries==0,"IP-first bypassed prepared GATT transport-idle fence");
 }
 }
-int main(){using namespace amity::consortium;try{startup_tests();fresh_public_preflight();connection_tests();std::cout<<"PASS actual startup/connection loop: once-per-call group+identity verification; fresh read-only preflight; role and storage failure fences; no boot admission tests; full explicit self-test; unchanged pinned IP/discovery fallback\n";return 0;}catch(const std::exception& error){std::cerr<<"FAIL "<<error.what()<<'\n';return 1;}}
+int main(){using namespace amity::consortium;try{startup_tests();fresh_public_preflight();connection_tests();std::cout<<"PASS actual startup/connection loop: once-per-call group+identity verification; fresh read-only preflight; role and storage failure fences; no boot admission tests; unchanged pinned IP/discovery fallback\n";return 0;}catch(const std::exception& error){std::cerr<<"FAIL "<<error.what()<<'\n';return 1;}}
 '''
 
 
@@ -278,8 +272,7 @@ def main():
               + '\n#undef socket\n#undef close\n#undef getaddrinfo\n#undef freeaddrinfo\n'
               + (function(source, 'esp_err_t validate_startup(') if 'esp_err_t validate_startup(' in source else '')
               + function(source, 'esp_err_t runtime_read_startup(')
-              + function(source, 'esp_err_t runtime_start(')
-              + function(source, 'esp_err_t runtime_crypto_self_test('))
+              + function(source, 'esp_err_t runtime_start('))
     suite = SUITE
     if args.only == 'startup':
         suite = suite.replace('startup_tests();fresh_public_preflight();connection_tests();', 'startup_tests();fresh_public_preflight();')

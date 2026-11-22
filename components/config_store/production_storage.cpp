@@ -18,11 +18,4 @@ bool derive_production_storage_key(std::string_view partition,const uint8_t root
     if(!valid){volatile uint8_t* bytes=output;for(size_t n=0;n<64;++n)bytes[n]=0;}
     return valid;
 }
-bool production_storage_self_test(){
-    // Public synthetic vectors independently computed with RFC5869 HKDF-SHA256.
-    uint8_t root[64],output[64];for(size_t n=0;n<64;++n)root[n]=static_cast<uint8_t>(n);
-    const char* vectors[]={"d18780a0fe11189ccfcb13b418ac3801db33224df7aa339024bd03b8c07199d089606d9e434526e9c2ad8e5820e7bf2fbc3d5d2733b509c38314620687ddc76b","e1b5a4d51e255acdb0be4899a6edbe9bf958094a47aa4262eb42a272590f5eecb19b1aef0a36fd157ab223d7c3e44f5ee9d663653c8b705096c8749d1fa6152e"};
-    for(size_t n=0;n<2;++n){if(!derive_production_storage_key(n?"fctry":"amity_cfg",root,output))return false;for(size_t i=0;i<64;++i){const auto digit=[](char c){return c<='9'?c-'0':c-'a'+10;};if(output[i]!=digit(vectors[n][2*i])*16+digit(vectors[n][2*i+1]))return false;}}
-    return !derive_production_storage_key("nvs",root,output)&&!derive_production_storage_key("other",root,output);
-}
 }

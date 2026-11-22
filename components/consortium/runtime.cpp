@@ -9,7 +9,6 @@
 #include "enrollment_abort.hpp"
 #include "hostname_registry.hpp"
 #include "runtime_persistence.hpp"
-#include "production_storage.hpp"
 #include "tcp_ack_trace.hpp"
 #include "network_diagnostics.hpp"
 #include "wifi_signal.hpp"
@@ -201,7 +200,6 @@ std::atomic_bool invitation_cancelled{false};
 uint64_t candidate_generation=0,candidate_deadline=0,pending_radio_release=0;
 bool candidate_passive=false;
 std::atomic_bool candidate_network_recovered{false};
-bool recovery_console=false;
 int listener=-1;
 void error(std::string value){std::lock_guard<std::mutex> guard(lock);status.last_error=std::move(value);}
 template<class T>T random_id(){auto value=T::parse(random_hex(16));return value?*value:T{};}
@@ -260,7 +258,7 @@ bool finish_enrollment_abort(Active& active){
         if(!send(active,Kind::enrollment_control,control_json(pending.join,pending.digest,"abort",",\"reason\":\"cancelled\""),2000))break;
         requested=true;
     }
-    error("Membership revoked; candidate cancellation was not acknowledged. Physical reclaim may be required.");
+    error("Membership revoked; candidate cancellation was not acknowledged. Factory reset the removed Amity before adding it again.");
     return false;
 }
 bool candidate_join_status(Active& active,model::JoinId join,const std::string& digest){
@@ -290,7 +288,7 @@ bool abort_candidate_enrollment(Active& active,model::JoinId join,const std::str
         if(group.role!=Group::retired&&without_runtime_lock(guard,[&]{return save_group(next);})!=ESP_OK)return false;
         group=std::move(next);network_hooks=network;lifecycle_hooks=lifecycle;
         status.member=false;status.coordinator=false;status.authority_ready=false;status.synchronized=false;status.phase="enrollment_aborted";
-        status.last_error="Enrollment cancelled; this Amity remains passive. Use physical reclaim to operate independently.";
+        status.last_error="Enrollment cancelled; this Amity remains passive. Factory reset it to use it again.";
         for(auto& other:links)if(other.get()!=&active){other->cancelled=true;::shutdown(other->tls->socket,SHUT_RDWR);}
     }
     const auto fenced=lifecycle_hooks.retire?lifecycle_hooks.retire():ESP_ERR_NOT_SUPPORTED;
@@ -1537,41 +1535,10 @@ void invite_worker_work(void *arg){
     const auto finishing=timing.begin("finishing");timing.finish(finishing,true);timing.done(true);
 }
 void invite_worker(void *arg){invite_worker_work(arg);invitation_running=false;vTaskDeleteWithCaps(nullptr);}
-void usb_worker(void*){
-    char line[128];while(true){
-        if(!fgets(line,sizeof(line),stdin)){vTaskDelay(pdMS_TO_TICKS(100));clearerr(stdin);continue;}
-        std::string command(line);std::fill(std::begin(line),std::end(line),0);
-        while(!command.empty()&&(command.back()=='\n'||command.back()=='\r'))command.pop_back();
-        if(command=="AMITY CONSORTIUM ID"){std::lock_guard<std::mutex> guard(lock);printf("AMITY CONSORTIUM ID %s\n",identity.id.str().c_str());}
-        else if(command.rfind("AMITY CONSORTIUM RECLAIM ",0)==0){
-            auto confirmed=model::OctopusId::parse(command.substr(25));auto result=confirmed?runtime_reclaim_membership(*confirmed):ESP_ERR_INVALID_ARG;
-            printf("AMITY CONSORTIUM RECLAIM %s\n",result==ESP_OK?"OK REBOOTING":"FAILED");fflush(stdout);
-            if(result==ESP_OK){vTaskDelay(pdMS_TO_TICKS(100));esp_restart();}
-        }else if(command=="AMITY CONSORTIUM SELFTEST")printf("AMITY CONSORTIUM SELFTEST %s\n",runtime_crypto_self_test()==ESP_OK?"OK":"FAILED");
-        std::fill(command.begin(),command.end(),0);
-    }
-}
-esp_err_t recovery_usb(model::OctopusId local,esp_err_t result,const char *reason){
-    ble_remote_set_controller_enabled(false);identity.id=local;recovery_console=true;status.initialized=true;status.authority_ready=false;status.coordinator=false;status.member=true;status.credential_ready=false;status.phase="recovery_required";status.last_error=reason;
-    if(xTaskCreateWithCaps(usb_worker,"group_recovery",12288,nullptr,1,nullptr,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS)return ESP_ERR_NO_MEM;
+esp_err_t recovery_required(model::OctopusId local,esp_err_t result,const char *reason){
+    ble_remote_set_controller_enabled(false);identity.id=local;status.initialized=true;status.authority_ready=false;status.coordinator=false;status.member=true;status.credential_ready=false;status.phase="recovery_required";status.last_error=reason;
     return result;
 }
-}
-esp_err_t runtime_finish_reclaim(std::function<esp_err_t()> preserve_network){
-    std::string marker;auto result=read_record("amity_reclaim","pending",marker,64);if(result==ESP_ERR_NVS_NOT_FOUND)return ESP_OK;if(result!=ESP_OK)return result;
-    if(marker.size()!=34||marker.rfind("1:",0)!=0||!model::OctopusId::parse(std::string_view(marker).substr(2)))return ESP_ERR_INVALID_STATE;
-    std::string origin;if(read_record("amity_origin","committed",origin,64)!=ESP_OK||origin.size()!=origin_record_prefix.size()+32||std::string_view(origin).substr(0,origin_record_prefix.size())!=origin_record_prefix||origin.substr(origin_record_prefix.size())!=marker.substr(2))return ESP_ERR_INVALID_STATE;
-    if(!preserve_network)return ESP_ERR_INVALID_STATE;
-    result=preserve_network();if(result!=ESP_OK)return result;
-    for(const auto space:{"amity_group","amity_config","amity_system","amity_local","amity_export","amity_handover"}){result=erase_namespace(space);if(result!=ESP_OK)return result;}
-    result=erase_record("amity","config");if(result!=ESP_OK)return result;
-    return erase_record("amity_reclaim","pending");
-}
-esp_err_t runtime_reclaim_membership(model::OctopusId confirmed){
-    RuntimeLifecycleHooks hooks;{std::lock_guard<std::mutex> persistence(persistence_lock);std::unique_lock<std::mutex> guard(lock);if(!status.initialized||confirmed!=identity.id||(!recovery_console&&group.role==Group::unclaimed))return ESP_ERR_INVALID_STATE;auto result=without_runtime_lock(guard,[&]{return write_record("amity_reclaim","pending","1:"+confirmed.str());});if(result!=ESP_OK)return result;status.phase="reclaim_pending";status.authority_ready=false;status.synchronized=false;for(auto &active:links){active->cancelled=true;::shutdown(active->tls->socket,SHUT_RDWR);}hooks=lifecycle;}
-    runtime_cancel_radio_workflows();if(!hooks.retire)return ESP_ERR_NOT_SUPPORTED;return hooks.retire();
-}
-namespace {
 // Each caller first initializes PSA and fully validates its own freshly loaded
 // Group. Reuse only this call's exact verified identity; never cache a boot
 // preflight across calls or generate an identity during an unclaimed preflight.
@@ -1610,15 +1577,15 @@ esp_err_t runtime_set_hardware_profile(uint8_t count,uint8_t mask){
 esp_err_t runtime_start(model::ConsortiumId consortium,model::OctopusId octopus,model::BootId current_boot,uint64_t config){
     BoundedSetupTimings<5> timing("startup",now_ms);timing.peer=octopus;timing.begin("total");
     if(!consortium||!octopus||!current_boot||!config||initialized.exchange(true))return ESP_ERR_INVALID_STATE;
-    if(psa_crypto_init()!=PSA_SUCCESS)return recovery_usb(octopus,ESP_FAIL,"Crypto initialization failed; physical recovery only");
+    if(psa_crypto_init()!=PSA_SUCCESS)return recovery_required(octopus,ESP_FAIL,"Crypto initialization failed; factory reset required");
     const auto group_stage=timing.begin("load_group");auto result=load_group(group);timing.finish(group_stage,result==ESP_OK,1);
-    if(result!=ESP_OK)return recovery_usb(octopus,result,"Membership journal needs physical recovery");
+    if(result!=ESP_OK)return recovery_required(octopus,result,"Saved membership is unreadable; factory reset required");
     RuntimeStartup startup;const auto validation_stage=timing.begin("startup_validation");
     const auto validated=validate_startup(octopus,group,startup,&identity,&timing);timing.finish(validation_stage,validated==ESP_OK,1);
-    if(validated!=ESP_OK)return recovery_usb(octopus,ESP_ERR_INVALID_STATE,"Membership authority journal needs physical recovery");
+    if(validated!=ESP_OK)return recovery_required(octopus,ESP_ERR_INVALID_STATE,"Saved membership is invalid; factory reset required");
     if(group.role==Group::unclaimed){
         const auto identity_stage=timing.begin("identity_load");result=platform::load_identity(octopus,identity);timing.finish(identity_stage,result==ESP_OK,1);
-        if(result!=ESP_OK)return recovery_usb(octopus,result,"Operational credential journal needs physical recovery");
+        if(result!=ESP_OK)return recovery_required(octopus,result,"Saved credentials are unreadable; factory reset required");
     }
     singleton=consortium;boot=current_boot;configuration=config;
     // The former separate Add credential has no role in either admission mode.
@@ -1630,9 +1597,9 @@ esp_err_t runtime_start(model::ConsortiumId consortium,model::OctopusId octopus,
     // delay boot or prevent the independent Matter setup from choosing a main.
     status.initialized=status.credential_ready=true;status.authority_ready=original_controller(group,identity.id);status.coordinator=group.role==Group::coordinator&&status.authority_ready;status.member=group.role==Group::member||group.role==Group::prepared;candidate_passive=status.member;status.epoch=group.epoch;status.membership_revision=group.revision;status.leaf_spki_sha256=identity.spki;status.phase=group.role==Group::prepared?"finishing_enrollment":(group.role==Group::unclaimed?"awaiting_setup":"idle");
     if(startup.passive()){status.authority_ready=false;status.coordinator=false;status.member=true;}
-    if(group.role==Group::retired){status.member=false;status.phase="retired";if(group.join_id&&group.mutation_id&&group.mutation_digest==group.join_digest){status.phase="enrollment_aborted";status.last_error="Enrollment cancelled; this Amity remains passive. Use physical reclaim to operate independently.";}}
-    if(startup.passive()&&ble_remote_set_controller_enabled(false)!=ESP_OK)return recovery_usb(octopus,ESP_FAIL,"Added device remote shutdown needs physical recovery");
-    if(xTaskCreateWithCaps(network_loop,"group_net",6144,nullptr,2,nullptr,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS||xTaskCreateWithCaps(usb_worker,"group_usb",12288,nullptr,1,nullptr,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS)return ESP_ERR_NO_MEM;
+    if(group.role==Group::retired){status.member=false;status.phase="retired";if(group.join_id&&group.mutation_id&&group.mutation_digest==group.join_digest){status.phase="enrollment_aborted";status.last_error="Enrollment cancelled; this Amity remains passive. Factory reset it to use it again.";}}
+    if(startup.passive()&&ble_remote_set_controller_enabled(false)!=ESP_OK)return recovery_required(octopus,ESP_FAIL,"Remote control could not be stopped; factory reset required");
+    if(xTaskCreateWithCaps(network_loop,"group_net",6144,nullptr,2,nullptr,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS)return ESP_ERR_NO_MEM;
     timing.done(true);return ESP_OK;
 }
 void runtime_configuration_changed(uint64_t revision,const std::string &hash){
@@ -1664,7 +1631,7 @@ esp_err_t runtime_claim_original_controller(){
     // this entry. The durable candidate decision wins any concurrent claim.
     if(group.role!=Group::unclaimed||group.join_id||candidate_passive||candidate_generation||candidate_deadline||!singleton)return ESP_ERR_INVALID_STATE;
     Group next;next.role=Group::coordinator;next.consortium=singleton;next.authority=identity.id;next.epoch=1;next.revision=1;
-    const auto saved=without_runtime_lock(guard,[&]{return save_group(next);});if(saved!=ESP_OK){candidate_passive=true;status.phase="recovery_usb";status.last_error="Controller setup could not be stored; restart to recover the saved role";return saved;}
+    const auto saved=without_runtime_lock(guard,[&]{return save_group(next);});if(saved!=ESP_OK){candidate_passive=true;status.phase="recovery_required";status.last_error="Controller setup could not be stored; restart to recover the saved role";return saved;}
     group=std::move(next);status.coordinator=true;status.authority_ready=true;status.member=false;status.epoch=1;status.membership_revision=1;status.phase="idle";return ESP_OK;
 }
 bool runtime_original_setup_eligible(){
@@ -2074,6 +2041,5 @@ std::vector<std::pair<model::OctopusId,std::string>> runtime_known_hostnames(){
     }
     return out;
 }
-esp_err_t runtime_crypto_self_test(){return admission_crypto_self_test()&&config_store::production_storage_self_test()?ESP_OK:ESP_FAIL;}
 } // namespace
 #endif

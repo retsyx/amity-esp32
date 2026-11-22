@@ -514,7 +514,6 @@ extern "C" void app_main() {
 #if !CONFIG_AMITY_PRODUCTION_UPDATES
     ESP_ERROR_CHECK(nvs_flash_init());
 #endif
-    ESP_ERROR_CHECK(amity::consortium::runtime_finish_reclaim(amity_matter_finish_network_reclaim));
     ESP_ERROR_CHECK(device_settings::init());
     device_settings::set_hostname_handler(rename_hostname);
     system_services::start_log_capture();
@@ -595,7 +594,7 @@ extern "C" void app_main() {
     const auto installed=hub.configuration_snapshot();
     ESP_ERROR_CHECK(amity::consortium::runtime_set_hardware_profile(hub.supported_tentacles(),hub.configured_tentacles_mask()));
     const auto group_start=amity::consortium::runtime_start(consortium_id,octopus_id,*boot,installed?installed->configuration.config_revision:1);
-    if(group_start!=ESP_OK)ESP_LOGE("amity","Consortium credentials need physical recovery; network actuation remains unavailable");
+    if(group_start!=ESP_OK)ESP_LOGE("amity","Consortium startup failed; factory reset required. Network actuation remains unavailable");
     if(group_start==ESP_OK){
         system_services::updates::start_group_updates(octopus_id,{
             [octopus_id](amity::system::OctopusId owner,bool maintenance){

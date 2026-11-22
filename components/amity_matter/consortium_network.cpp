@@ -143,19 +143,3 @@ esp_err_t install_consortium_network_hooks(){transaction=xSemaphoreCreateMutex()
     };
     amity::consortium::runtime_network_hooks(std::move(hooks));return ESP_OK;
 }
-
-// Called before Matter initializes, only after the physical reclaim marker and
-// original board identity have been validated. Preserve current station data;
-// remove only the pinned SDK driver's pending fail-safe rollback snapshots.
-extern "C" esp_err_t amity_matter_finish_network_reclaim(){
-    esp_err_t result=ESP_FAIL;
-    const bool dispatched=config_store::with_internal_flash_stack([&]{
-        auto& storage=chip::DeviceLayer::PersistedStorage::KeyValueStoreMgr();
-        for(const auto* key:{"wifi-ssid","wifi-pass"}){
-            const auto erased=storage.Delete(key);if(erased!=CHIP_NO_ERROR&&erased!=CHIP_ERROR_PERSISTED_STORAGE_VALUE_NOT_FOUND)return;
-            const auto checked=storage.Get(key,nullptr,0);if(checked!=CHIP_ERROR_PERSISTED_STORAGE_VALUE_NOT_FOUND)return;
-        }
-        result=ESP_OK;
-    });
-    return dispatched?result:ESP_FAIL;
-}

@@ -68,7 +68,7 @@ esp_err_t finish_factory_reset() {
     if (err != ESP_OK) return err;
     // Explicit reset ownership. amity_origin is the only retained identity
     // namespace; it has no operational credentials in this build.
-    for (const char *space : {"amity", "amity_system", "amity_local", "amity_group", "amity_config", "amity_export", "amity_reclaim", "amity_handover"}) {
+    for (const char *space : {"amity", "amity_system", "amity_local", "amity_group", "amity_config", "amity_export", "amity_handover"}) {
         Handle application;
         err = nvs_open_from_partition("amity_cfg", space, NVS_READWRITE, &application.value);
         if (err == ESP_OK) err = nvs_erase_all(application.value);
