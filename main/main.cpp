@@ -60,6 +60,17 @@ struct Input {
     int activity_target=-1;
 };
 std::atomic_bool input_lost{false};
+// The activity the input task last synchronized, as generation:target. The shared
+// Bluetooth host task stamps remote reports with it instead of taking the hub
+// lock. A report received before the input task observes a transition keeps the
+// older activity, and the controller quarantines it as stale.
+std::atomic<uint64_t> input_activity{uint32_t(-1)};
+uint64_t pack_activity(uint32_t generation,int target){return uint64_t{generation}<<32|static_cast<uint32_t>(target);}
+void stamp_activity(Input &input){
+    const auto activity=input_activity.load();
+    input.activity_generation=static_cast<uint32_t>(activity>>32);
+    input.activity_target=static_cast<int32_t>(static_cast<uint32_t>(activity));
+}
 std::atomic_bool original_interfaces_enabled{false};
 std::mutex admin_mdns_mutex;
 bool admin_mdns_registered=false;
@@ -140,8 +151,7 @@ void remote_key(uint16_t page,uint16_t usage,bool down,void *) {
     if(!original_interfaces_enabled.load())return;
     Input input{InputType::Atomic,page,usage,down};
     input.timestamp=esp_timer_get_time();
-    input.activity_generation=hub.remote_activity_generation();
-    input.activity_target=hub.remote_activity_target();
+    stamp_activity(input);
     if(xQueueSend(input_queue,&input,0)!=pdTRUE) input_lost.store(true);
 }
 void remote_siri(ble_remote_siri_event_t event,const uint8_t *data,size_t size,void *) {
@@ -152,8 +162,7 @@ void remote_siri(ble_remote_siri_event_t event,const uint8_t *data,size_t size,v
     else if(event==BLE_REMOTE_SIRI_TOUCH)input.type=InputType::SiriTouch;
     else return;
     input.timestamp=esp_timer_get_time();
-    input.activity_generation=hub.remote_activity_generation();
-    input.activity_target=hub.remote_activity_target();
+    stamp_activity(input);
     input.size=static_cast<uint8_t>(size);
     std::memcpy(input.data,data,size);
     if(xQueueSend(input_queue,&input,0)!=pdTRUE)input_lost.store(true);
@@ -341,7 +350,11 @@ void input_task(void *) {
     auto sync_activity=[&] {
         const bool setup=controller.activity_setup(hub.activity_setup_in_progress(),esp_timer_get_time());
         const bool selected=controller.activity_selected(hub.activity_selection(),esp_timer_get_time());
-        if(controller.synchronize(hub.remote_activity_generation(),hub.remote_activity_target())||selected||setup) {
+        const auto generation=hub.remote_activity_generation();const int target=hub.remote_activity_target();
+        const bool changed=controller.synchronize(generation,target);
+        // Reports stamped with this activity from now on are current.
+        input_activity.store(pack_activity(generation,target));
+        if(changed||selected||setup) {
             swipes.cancel();siri.activity_changed();
         }
     };
