@@ -41,8 +41,6 @@ public:
     bool press_remote_key_for_activity(uint8_t key,uint32_t generation,bool repeat=false){return press_key_for_activity(key,generation,repeat);}
     bool release_remote_key(uint8_t key){return local_coordinator_.load()&&local_.release_key(key);}
     uint32_t remote_input_epoch()const{return local_.input_epoch();}
-    bool press_timed_remote_key(uint8_t key,uint32_t generation,uint32_t selection,uint32_t input_epoch){return accepts_local_input()&&local_.press_timed_key(key,generation,selection,input_epoch);}
-    bool release_timed_remote_key(uint8_t key,uint32_t generation,uint32_t selection,uint32_t input_epoch){return local_coordinator_.load()&&local_.release_timed_key(key,generation,selection,input_epoch);}
     esp_err_t repair_remote_activity(uint32_t generation);
     esp_err_t stop_remote_zone(){return stop_remote_zone(remote_activity_generation());}
     esp_err_t stop_remote_zone(uint32_t generation);

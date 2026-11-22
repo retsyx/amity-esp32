@@ -22,8 +22,6 @@ public:
     esp_err_t request_activity(int,uint32_t* accepted_selection=nullptr,std::optional<system::ActivityId> expected={});esp_err_t repair_activity();uint32_t activity_selection()const;int activity_target()const;
     bool press_key(uint8_t,bool repeat=false);bool press_key_for_activity(uint8_t,uint32_t,bool repeat=false);
     uint32_t input_epoch()const;
-    bool press_timed_key(uint8_t,uint32_t generation,uint32_t selection,uint32_t input_epoch);
-    bool release_timed_key(uint8_t,uint32_t generation,uint32_t selection,uint32_t input_epoch);
     uint32_t activity_generation()const;bool release_key(uint8_t);bool standby();bool discover();
     Snapshot snapshot()const;void on_change(std::function<void(const Snapshot&)>);
     PlaybackState playback_state()const;

@@ -23,12 +23,8 @@ PREFIX = r'''
 #include <string>
 using esp_err_t=int;
 constexpr int ESP_OK=0,ESP_FAIL=-1,HTTP_GET=0,HTTP_POST=1,HTTP_OPTIONS=2;
-constexpr int ESP_LOG_WARN=2,ESP_LOG_INFO=3;
-struct KeyRequest {uint8_t key=0;uint16_t duration_ms=0;};
 unsigned timing_reads=0;
 int64_t esp_timer_get_time(){++timing_reads;return 0;}
-void key_log(int,const char*,const char*,...){assert(false&&"Readiness requests must not log key timing");}
-#define ESP_LOG_LEVEL(...) key_log(__VA_ARGS__)
 using Json=std::unique_ptr<cJSON,decltype(&cJSON_Delete)>;
 struct httpd_req_t {int method=HTTP_GET;size_t content_len=0;const char* uri="/api/ready";std::string response,status,type;std::map<std::string,std::string> headers;bool authenticated=false;};
 std::atomic_bool ui_enabled{true};
@@ -96,7 +92,6 @@ def main():
     request = (ROOT / 'components/web/request.cpp').read_text()
     actual = ('namespace web::stall {struct Response {Response(httpd_req_t*,size_t){}};} // web_stall_test.py covers it\n' + 'namespace web {\n' + function(request, 'esp_err_t response(httpd_req_t *req,') + function(request, 'esp_err_t json(httpd_req_t *req,') + '\n}\n'
               + function(source, 'esp_err_t send(httpd_req_t *req,cJSON *root)')
-              + function(source, 'struct KeyRequestTiming') + ';\n'
               + public + function(source, 'esp_err_t asset(httpd_req_t *req)'))
     cjson = ROOT / 'managed_components/espressif__cjson/cJSON'
     if not (cjson / 'cJSON.c').exists():

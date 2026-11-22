@@ -144,12 +144,12 @@ static void scoped_save_preserves_admitted_frames_and_timed_release(){
     assert(fixture_select(hub,0));run_one_command();settle(hub);
     fixture_tick=0;fixture_async_autocomplete=false;fixture_sent.clear();fixture_completed.clear();
     const auto generation=hub.activity_generation(),selection=hub.activity_selection(),epoch=hub.input_epoch();
-    assert(hub.press_timed_key(0x01,generation,selection,epoch));run_one_command();
+    assert(hub.press_key_for_activity(0x01,generation,true));run_one_command();
     assert(fixture_pending.size()==1&&fixture_pending.front().frame.data[1]==0x44);
     other.name="Edited other";assert(hub.configure_scoped({other,watch},selectors,{},controller,2)==ESP_OK);run_one_command();
     assert(hub.snapshot().current_activity==1&&hub.activity_generation()==generation&&hub.activity_selection()==selection&&hub.input_epoch()==epoch);
     assert(fixture_pending.size()==1&&fixture_sent.size()==1);
-    assert(hub.release_timed_key(0x01,generation,selection,epoch));run_one_command();
+    assert(hub.release_key(0x01));run_one_command();
     assert(fixture_pending.size()==2&&fixture_pending[0].frame.data[1]==0x44&&fixture_pending[1].frame.data[1]==0x45);
     fixture_complete_all(cec::TxResult::Success);run_idle(3);
     assert(fixture_completed.size()==2&&fixture_completed[0].data[1]==0x44&&fixture_completed[1].data[1]==0x45);

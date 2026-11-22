@@ -127,14 +127,14 @@ struct HubService::Impl : Adapter {
             :kind(k),repeat(r),cleanup_reservation(false),activity_bound(false),route_transition(false),owned_deferred(false),
              local_activity_step(false),activity_canceled(false),activity_started(false),activity_completed(false),
              owned_waiting(false),owned_input_announced(false),configuration_applied(false),configuration_reservation(false),
-             activity_reservation(false),selection_reservation(false),setup_blocked(false),selection_bound(false),selection_sent(false),
+             activity_reservation(false),selection_reservation(false),setup_blocked(false),selection_sent(false),
              value(static_cast<int16_t>(v)){}
         virtual ~Command()=default;
         virtual uint32_t receipt()const{return 0;}
         Kind kind;
         bool repeat:1,cleanup_reservation:1,activity_bound:1,route_transition:1,owned_deferred:1,local_activity_step:1;
         bool activity_canceled:1,activity_started:1,activity_completed:1,owned_waiting:1,owned_input_announced:1;
-        bool configuration_applied:1,configuration_reservation:1,activity_reservation:1,selection_reservation:1,setup_blocked:1,selection_bound:1;
+        bool configuration_applied:1,configuration_reservation:1,activity_reservation:1,selection_reservation:1,setup_blocked:1;
         bool selection_sent:1;
         int64_t input_admitted_us=0;
         std::shared_ptr<Reply> reply;
@@ -386,7 +386,7 @@ struct HubService::Impl : Adapter {
         // same order. Contention is rejected without blocking or persistence.
         if (configuration && xSemaphoreTake(configuration_gate, 0) != pdTRUE) return ESP_ERR_TIMEOUT;
         const auto unlock = [&] { if (configuration) xSemaphoreGive(configuration_gate); };
-        command->cleanup_reservation=(command->kind==Kind::Release&&command->selection_bound)||command->kind==Kind::OwnedFence||command->kind==Kind::KeyCleanup||
+        command->cleanup_reservation=command->kind==Kind::OwnedFence||command->kind==Kind::KeyCleanup||
             (command->kind==Kind::KeyEdges&&command->input().state.edge_count==1&&!command->input().state.edges[0].down);
         if (xSemaphoreTake(command->cleanup_reservation ? cleanup_slots : command_slots,reservation_wait)!=pdTRUE){unlock();return ESP_ERR_NO_MEM;}
         const auto error = commit ? commit() : ESP_OK;
@@ -405,7 +405,7 @@ struct HubService::Impl : Adapter {
             command->activity_reservation=true;++owner_activity_commands;
         }
         if(activity_request(*command)&&command->receipt()){command->selection_reservation=true;++activity_requests;}
-        if(command->kind==Kind::Key||(command->kind==Kind::Release&&!command->selection_bound))
+        if(command->kind==Kind::Key||command->kind==Kind::Release)
             command->input_admitted_us=esp_timer_get_time();
         command = owned.release();
         if (xQueueSend(commands, &command, 0) != pdTRUE) std::abort();
@@ -653,8 +653,7 @@ struct HubService::Impl : Adapter {
     bool stale_key(const Command &command) const {
         return command.key_generation != applied_key_generation ||
             command.release_generation != keys[static_cast<uint8_t>(command.value)].release_generation ||
-            (command.activity_bound && command.activity_generation != activity_hub.activity_generation()) ||
-            (command.selection_bound && command.expected_selection != activity_selection.load());
+            (command.activity_bound && command.activity_generation != activity_hub.activity_generation());
     }
     bool current_received(const Command& command) {
         auto* engine=adapter(command.received().received_adapter);
@@ -833,7 +832,6 @@ struct HubService::Impl : Adapter {
         case Kind::Release:
             // A completed timed web request belongs to its original activity
             // selection. It must not release a key newly pressed after setup.
-            if(command.selection_bound&&(command.activity_generation!=activity_hub.activity_generation()||command.expected_selection!=activity_selection.load()||command.key_generation!=key_generation.load()))break;
             activity_hub.release_key(static_cast<uint8_t>(command.value));
             // A short tap whose recipient is still being discovered is
             // finite: lookup may finish later, but cannot resurrect a hold.
@@ -1925,22 +1923,6 @@ bool HubService::press_key_for_activity(uint8_t key, uint32_t activity_generatio
     return impl_->enqueue(command);
 }
 uint32_t HubService::input_epoch()const{return impl_->key_generation.load();}
-bool HubService::press_timed_key(uint8_t key,uint32_t generation,uint32_t selection,uint32_t input_epoch){
-    if(!impl_->task||!impl_->local_coordinator.load())return false;
-    if(input_epoch!=impl_->key_generation.load())return true;
-    if(impl_->activity_setup_in_progress())return true;
-    if(key==0x40)return standby();
-    auto* command=new(std::nothrow)Impl::Command{Impl::Kind::Key,key,true};
-    if(command){command->key_generation=input_epoch;command->release_generation=(*impl_->release_generations)[key].load();command->activity_bound=command->selection_bound=true;command->activity_generation=generation;command->expected_selection=selection;}
-    return impl_->enqueue(command);
-}
-bool HubService::release_timed_key(uint8_t key,uint32_t generation,uint32_t selection,uint32_t input_epoch){
-    auto* command=new(std::nothrow)Impl::Command{Impl::Kind::Release,key};
-    if(command){command->key_generation=input_epoch;command->activity_bound=command->selection_bound=true;command->activity_generation=generation;command->expected_selection=selection;}
-    // This is exact cleanup in the existing bounded IPC. Wait for a cleanup
-    // reservation instead of applying an unfenced emergency raw-key release.
-    return impl_->submit(command,{},portMAX_DELAY)==ESP_OK;
-}
 uint32_t HubService::activity_generation() const {
     auto &p = *impl_; if (!p.lock) return 0;
     xSemaphoreTake(p.lock, portMAX_DELAY); const auto generation = p.cached.activity_generation;
