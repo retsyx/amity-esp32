@@ -1469,10 +1469,10 @@ esp_err_t runtime_open_enrollment(uint64_t generation){
     std::lock_guard<std::mutex> guard(lock);
     if(!status.initialized||!status.credential_ready||!generation||candidate_passive||candidate_deadline||group.role!=Group::unclaimed)return ESP_ERR_INVALID_STATE;
     const auto e=gatt_server_open(generation,identity.id,bootstrap_request);
-    if(e==ESP_OK){candidate_generation=generation;candidate_deadline=now_ms()+enrollment_window_ms;status.enrollment_open=true;status.phase="enrollment_open";}
+    if(e==ESP_OK){candidate_generation=generation;candidate_deadline=now_ms()+enrollment_window_ms;status.phase="enrollment_open";}
     return e;
 }
-void runtime_close_enrollment(){uint64_t generation;{std::lock_guard<std::mutex> guard(lock);generation=candidate_generation;candidate_generation=candidate_deadline=0;status.enrollment_open=false;if(group.role==Group::unclaimed&&!candidate_passive)status.phase="awaiting_setup";}gatt_server_close();defer_radio_release(generation);}
+void runtime_close_enrollment(){uint64_t generation;{std::lock_guard<std::mutex> guard(lock);generation=candidate_generation;candidate_generation=candidate_deadline=0;if(group.role==Group::unclaimed&&!candidate_passive)status.phase="awaiting_setup";}gatt_server_close();defer_radio_release(generation);}
 bool runtime_cancel_radio_workflows(){
     {std::lock_guard<std::mutex> persistence(persistence_lock);std::lock_guard<std::mutex> guard(lock);
         invitation_cancelled=true;

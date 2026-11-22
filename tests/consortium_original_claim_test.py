@@ -25,7 +25,7 @@ uint64_t now_ms(){return 100;}
 int bootstrap_request(std::string_view,std::string&){return ESP_OK;}
 template<class Callback>int gatt_server_open(uint64_t,model::OctopusId,Callback){++opened_count;return ESP_OK;}
 void gatt_server_close(){++closed_count;}void defer_radio_release(uint64_t generation){released=generation;}
-struct{bool initialized=true,credential_ready=true,coordinator=false,authority_ready=false,member=false,enrollment_open=false;uint64_t membership_revision=0;std::string phase="awaiting_setup",last_error;}status;
+struct{bool initialized=true,credential_ready=true,coordinator=false,authority_ready=false,member=false;uint64_t membership_revision=0;std::string phase="awaiting_setup",last_error;}status;
 unsigned writes=0;unsigned fault=0;
 std::function<void()> during_save;
 int save_group(const Group&next){if(during_save)during_save();++writes;if(fault==1)return ESP_FAIL;durable=next;return fault==2?ESP_FAIL:ESP_OK;}
@@ -57,7 +57,7 @@ int main(){
  reset();candidate_passive=true;assert(runtime_claim_original_controller()==ESP_ERR_INVALID_STATE&&!writes);
  reset();group.join_id=id<model::JoinId>(5);assert(runtime_claim_original_controller()==ESP_ERR_INVALID_STATE&&!writes);
  for(bool generation_only:{false,true}){reset();if(generation_only)candidate_generation=7;else candidate_deadline=42;assert(!runtime_original_setup_eligible()&&runtime_claim_original_controller()==ESP_ERR_INVALID_STATE&&!writes);}
- reset();candidate_generation=7;candidate_deadline=42;status.phase="enrollment_open";status.enrollment_open=true;assert(!runtime_original_setup_eligible());runtime_close_enrollment();assert(closed_count==1&&released==7&&!status.enrollment_open&&status.phase=="awaiting_setup"&&runtime_original_setup_eligible()&&!writes);assert(runtime_claim_original_controller()==ESP_OK); // Cancelling one uncommitted choice permits physical Matter setup again.
+ reset();candidate_generation=7;candidate_deadline=42;status.phase="enrollment_open";assert(!runtime_original_setup_eligible());runtime_close_enrollment();assert(closed_count==1&&released==7&&status.phase=="awaiting_setup"&&runtime_original_setup_eligible()&&!writes);assert(runtime_claim_original_controller()==ESP_OK); // Cancelling one uncommitted choice permits physical Matter setup again.
  reset();group.role=Group::prepared;candidate_passive=true;candidate_generation=7;candidate_deadline=42;status.phase="prepared";runtime_close_enrollment();assert(status.phase=="prepared"&&!runtime_original_setup_eligible()&&runtime_claim_original_controller()==ESP_ERR_INVALID_STATE);
  for(unsigned cut:{1u,2u}){reset();fault=cut;assert(runtime_claim_original_controller()==ESP_FAIL&&!status.authority_ready&&group.role==Group::unclaimed);assert((durable.role==Group::coordinator)==(cut==2));assert(candidate_passive&&!runtime_original_setup_eligible()&&runtime_claim_original_controller()==ESP_ERR_INVALID_STATE);group=durable;candidate_passive=false;fault=0;assert(runtime_claim_original_controller()==ESP_OK);if(cut==1)assert(status.authority_ready);} // Only a reboot/reload can resolve uncertain durable outcome.
  for(unsigned unavailable=0;unavailable<2;++unavailable){reset();if(!unavailable)status.initialized=false;else status.credential_ready=false;assert(runtime_claim_original_controller()==ESP_ERR_INVALID_STATE&&!writes);}

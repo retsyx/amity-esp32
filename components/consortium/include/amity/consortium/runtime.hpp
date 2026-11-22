@@ -8,7 +8,7 @@
 namespace amity::consortium {
 struct RuntimeStatus {
     bool initialized=false,credential_ready=false,coordinator=false,member=false;
-    bool enrollment_open=false,connected=false,synchronized=false;
+    bool connected=false,synchronized=false;
     bool authority_ready=false;
     uint32_t active_peers=0;uint64_t membership_revision=0;
     std::string phase,last_error,leaf_spki_sha256;
