@@ -57,17 +57,17 @@ std::shared_ptr<Active> setup(bool main=true){
  auto a=std::make_shared<Active>();a->peer=ident<model::OctopusId>(2);a->tls->authenticated=a->peer;group.peers.push_back({a->peer,"leaf","pin",true});
  LinkScope scope{ident<model::LinkId>(4),group.consortium,identity.id,a->peer,group.authority,ident<model::BootId>(5),ident<model::BootId>(6),1,7};
  assert(a->session.authenticate(scope,a->peer,main?PeerRole::actuator:PeerRole::coordinator,true)==Error::none);
- HelloFrame h;h.consortium_id=scope.consortium_id;h.octopus_id=a->peer;h.boot_id=scope.peer_boot_id;h.coordinator_epoch=1;h.config_revision=7;h.required_capabilities=known_capabilities;
- assert(a->session.hello(h,known_capabilities)==Error::none&&a->session.synchronized(7,true,true)==Error::none);
- a->status.id=a->peer;a->status.boot_id=scope.peer_boot_id;a->status.config_revision=7;a->status.negotiated_capabilities=known_capabilities;links.push_back(a);return a;
+ HelloFrame h;h.consortium_id=scope.consortium_id;h.octopus_id=a->peer;h.boot_id=scope.peer_boot_id;h.coordinator_epoch=1;h.config_revision=7;
+ assert(a->session.hello(h)==Error::none&&a->session.synchronized(7,true,true)==Error::none);
+ a->status.id=a->peer;a->status.boot_id=scope.peer_boot_id;a->status.config_revision=7;links.push_back(a);return a;
 }
 std::shared_ptr<Active> add_member(unsigned number){
  auto a=std::make_shared<Active>();a->peer=ident<model::OctopusId>(number);a->tls->authenticated=a->peer;group.peers.push_back({a->peer,"leaf","pin",true});
  LinkScope scope{ident<model::LinkId>(100+number),group.consortium,identity.id,a->peer,group.authority,ident<model::BootId>(5),ident<model::BootId>(200+number),1,7};
  assert(a->session.authenticate(scope,a->peer,PeerRole::actuator,true)==Error::none);
- HelloFrame h;h.consortium_id=scope.consortium_id;h.octopus_id=a->peer;h.boot_id=scope.peer_boot_id;h.coordinator_epoch=1;h.config_revision=7;h.required_capabilities=known_capabilities;
- assert(a->session.hello(h,known_capabilities)==Error::none&&a->session.synchronized(7,true,true)==Error::none);
- a->status.id=a->peer;a->status.boot_id=scope.peer_boot_id;a->status.config_revision=7;a->status.negotiated_capabilities=known_capabilities;links.push_back(a);return a;
+ HelloFrame h;h.consortium_id=scope.consortium_id;h.octopus_id=a->peer;h.boot_id=scope.peer_boot_id;h.coordinator_epoch=1;h.config_revision=7;
+ assert(a->session.hello(h)==Error::none&&a->session.synchronized(7,true,true)==Error::none);
+ a->status.id=a->peer;a->status.boot_id=scope.peer_boot_id;a->status.config_revision=7;links.push_back(a);return a;
 }
 std::string decode(const Json& value){const auto& hex=value.get("data")->string;std::string result;for(size_t i=0;i<hex.size();i+=2){auto n=[](char c){return c<='9'?c-'0':c-'a'+10;};result+=char((n(hex[i])<<4)|n(hex[i+1]));}return result;}
 std::string content(size_t size){std::string value;for(size_t i=0;i<size;++i)value+=char(i%256);return value;}
@@ -155,11 +155,10 @@ void sender_identity_and_late_result_fences(){
  });};assert(pull_logs(a->peer,[&](auto bytes){received+=bytes;return true;})==ESP_OK&&received==source&&requests==2);
  a=setup();requests=0;tick=[&]{pump(a,[&](const auto& peer,const auto& request){++requests;respond(peer,request,content(requests==1?2048:3072));});};
  received.clear();assert(pull_logs(a->peer,[&](auto bytes){received+=bytes;return true;})==ESP_FAIL&&received.size()==1024&&!a->cancelled&&!log_pull.busy);
- a=setup();a->status.negotiated_capabilities&=~peer_logs;assert(pull_logs(a->peer,[](auto){return true;})==ESP_ERR_NOT_SUPPORTED&&a->queue.empty());
  a=setup();group.peers.clear();assert(pull_logs(a->peer,[](auto){return true;})==ESP_ERR_INVALID_STATE&&a->queue.empty());
  a=setup(false);assert(pull_logs(a->peer,[](auto){return true;})==ESP_ERR_INVALID_STATE&&a->queue.empty());
  a=setup();status.authority_ready=false;assert(pull_logs(a->peer,[](auto){return true;})==ESP_ERR_INVALID_STATE&&a->queue.empty());
- std::cout<<"PASS exact peer/transfer/offset/boot fences, stable total, capability/current-roster/main authorization and late-result isolation\n";
+ std::cout<<"PASS exact peer/transfer/offset/boot fences, stable total, current-roster/main authorization and late-result isolation\n";
 }
 }
 int main(){using namespace amity::consortium;receiver_snapshot_lifecycle();receiver_errors_and_expiry();sender_exact_and_bounded();sender_failures_and_cancellation();sender_identity_and_late_result_fences();}

@@ -108,7 +108,7 @@ def main():
                     return route.fulfill(json=dict(octopus_id=MAIN, hostname='amity-main',
                         named_devices=[dict(octopus_id=n, hostname=name) for n, name in [(MAIN, 'amity-main'), (MEMBER, 'amity-bedroom'), (OFFLINE, 'amity-den')]],
                         membership=dict(membership_revision='1', peers=[dict(octopus_id=MEMBER, hostname='amity-bedroom', enrolled=True,
-                            ready=fixture['ready'], management_ready=fixture['management_ready'], capabilities=512),
+                            ready=fixture['ready'], management_ready=fixture['management_ready']),
                             dict(octopus_id=OFFLINE, enrolled=True, ready=False, management_ready=False)])))
                 values = {'config': config, 'activity-editor': editor,
                           'activity-editor/status': dict(version=fixture['version'], current_activity=-1, devices=[], device_choices=[],

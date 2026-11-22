@@ -47,14 +47,14 @@ unsigned sent=0;bool send(Active&,Kind kind,std::string_view payload,uint32_t){a
 bool current_peer_credential(const Active& active,const Group&){return active.peer==id<model::OctopusId>(3);}
 Error remember_hostname(model::OctopusId owner,const std::string& name,std::unique_lock<std::mutex>&){return hostnames.remember(owner,name,[](std::string_view){return !registry_failure;});}
 LinkScope scope(){return {id<model::LinkId>(5),id<model::ConsortiumId>(2),id<model::OctopusId>(4),id<model::OctopusId>(3),id<model::OctopusId>(4),id<model::BootId>(6),id<model::BootId>(7),1,1};}
-void start(Active& active,bool capable=true){auto sc=scope();active.peer=sc.peer_id;assert(active.session.authenticate(sc,sc.peer_id,PeerRole::actuator,true)==Error::none);HelloFrame h;h.consortium_id=sc.consortium_id;h.octopus_id=sc.peer_id;h.boot_id=sc.peer_boot_id;h.coordinator_epoch=1;h.config_revision=1;h.required_capabilities=known_capabilities&~(capable?0u:hostname_metadata);assert(active.session.hello(h,known_capabilities)==Error::none);}
+void start(Active& active){auto sc=scope();active.peer=sc.peer_id;assert(active.session.authenticate(sc,sc.peer_id,PeerRole::actuator,true)==Error::none);HelloFrame h;h.consortium_id=sc.consortium_id;h.octopus_id=sc.peer_id;h.boot_id=sc.peer_boot_id;h.coordinator_epoch=1;h.config_revision=1;assert(active.session.hello(h)==Error::none);}
 std::string packet(std::string name="remote-name",unsigned destination=4){auto sc=scope();return "{\"protocol_version\":1,\"consortium_id\":\""+sc.consortium_id.str()+"\",\"origin_octopus_id\":\""+sc.peer_id.str()+"\",\"origin_boot_id\":\""+sc.peer_boot_id.str()+"\",\"destination_octopus_id\":\""+id<model::OctopusId>(destination).str()+"\",\"destination_boot_id\":\""+sc.local_boot_id.str()+"\",\"coordinator_epoch\":\"1\",\"config_revision\":\"1\",\"kind\":\"device_status\",\"ttl_ms\":1000,\"payload\":{\"hostname\":\""+name+"\"}}";}
 '''
 SUITE=r'''
 int main(){
  for(auto good:{"a","living-room","123","a-b","abcdefghijklmnopqrstuvwxyz123456"})assert(valid_hostname(good));
  for(auto bad:{"","Living-room","amity.local","-room","room-","room name","a_b","abcdefghijklmnopqrstuvwxyz1234567"})assert(!valid_hostname(bad));
- reset();std::string response;assert(bootstrap_request("{\"phase\":\"identify\"}",response)==ESP_OK&&response.find("\"bootstrap_profile\":2")!=std::string::npos);
+ reset();std::string response;assert(bootstrap_request("{\"phase\":\"identify\"}",response)==ESP_OK&&response.find("\"octopus_id\"")!=std::string::npos);
  assert(bootstrap_request(prepare(),response)==ESP_OK&&current_name=="living-room"&&group.role==Group::prepared&&durable.join_hostname=="living-room"&&candidate_passive);
  assert(effects==std::vector<std::string>({"persist_hostname","membership","retire","seal_admission"}));
  Json prepared;JsonError detail;assert(parse_json(response,prepared,detail)&&prepared.get("hostname")->string=="living-room");
@@ -63,10 +63,10 @@ int main(){
  reset();network.set_hostname=[](const std::string&){return ESP_FAIL;};assert(bootstrap_request(prepare(),response)==ESP_FAIL&&!saves&&group.role==Group::unclaimed);
  reset();network.set_hostname=[](const std::string&){return ESP_OK;};assert(bootstrap_request(prepare(),response)==ESP_ERR_INVALID_STATE&&!saves);
  reset();save_failure=true;assert(bootstrap_request(prepare(),response)==ESP_FAIL&&group.role==Group::unclaimed&&current_name=="living-room"&&!candidate_passive); // A cut after name storage never invents membership.
- reset();auto old=proposal_bytes;old.replace(old.find("\"bootstrap_profile\":2"),21,"\"bootstrap_profile\":1");JoinProposal out;assert(!decode_join_proposal(old,out));
+ reset();auto old=proposal_bytes;old.replace(old.find("\"role\":\"actuator\""),18,"\"role\":\"observer\"");JoinProposal out;assert(!decode_join_proposal(old,out));
  auto invalid=proposal();invalid.candidate_hostname="Wrong Name";assert(encode_join_proposal(invalid).empty());
  reset();group.role=Group::coordinator;assert(bootstrap_request(prepare(),response)==ESP_ERR_INVALID_STATE&&effects.empty());
- std::cout<<"PASS actual induction: profile2 immutable DNS name, persist/apply before membership and network, exact ACK, unsupported/storage/apply errors and role rejection\n";
+ std::cout<<"PASS actual induction: immutable DNS name, persist/apply before membership and network, exact ACK, unsupported/storage/apply errors and role rejection\n";
  HostnameRegistry names;std::string stored;auto save=[&](std::string_view bytes){stored=bytes;return true;};
  for(unsigned n=1;n<=64;++n)assert(names.remember(id<model::OctopusId>(n),"device-"+std::to_string(n),save)==Error::none);
  assert(names.remember(id<model::OctopusId>(65),"full",save)==Error::queue_full);HostnameRegistry reboot;assert(reboot.restore(stored)&&reboot.lookup(id<model::OctopusId>(4))=="device-4");
@@ -77,7 +77,6 @@ int main(){
  assert(reboot.restore(stored)&&reboot.lookup(id<model::OctopusId>(4)).empty()&&reboot.lookup(id<model::OctopusId>(5))=="device-5");
  std::cout<<"PASS names: bounded64 identities, full-cap rejection, offline reboot retention, explicit durable removal and failed-storage rollback\n";
  reset();sent=0;{Active active;start(active);active.storage.incoming=packet();assert(exchange_hostname(active,{})&&active.status.hostname=="remote-name"&&hostnames.lookup(active.peer)=="remote-name"&&sent==1&&active.session.state()==ConnectionState::synchronizing);}
- reset();sent=0;{Active active;start(active,false);assert(exchange_hostname(active,{})&&sent==0&&hostnames.entries().empty());assert(!exchange_hostname(active,"required-name")&&sent==0);}
  for(unsigned failure=0;failure<4;++failure){reset();Active active;start(active);active.storage.incoming=packet(failure==0?"invalid.name":"remote-name",failure==1?99:4);if(failure==2)registry_failure=true;LinkTrace trace;assert(!exchange_hostname(active,failure==3?"other-name":"",&trace)&&hostnames.entries().empty()&&active.status.hostname.empty());if(failure==2)assert(trace.error==Error::storage_failure);if(failure==3)assert(trace.error==Error::identity_conflict);}
  reset();{Active active;start(active);const auto original=active.session.scope();auto* tls=active.tls;registry_failure=true;active.storage.incoming=packet();LinkTrace trace;assert(!exchange_hostname(active,{},&trace)&&trace.error==Error::storage_failure&&active.session.scope()==original&&active.tls==tls);registry_failure=false;active.storage.incoming=packet();assert(exchange_hostname(active,{},&trace)&&active.tls==tls&&active.session.scope()==original&&active.status.hostname=="remote-name");}
  reset();{Active active;start(active);LinkTrace trace;network.get_hostname={};assert(!exchange_hostname(active,{},&trace)&&trace.error==Error::not_ready);}

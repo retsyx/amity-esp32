@@ -51,12 +51,12 @@ void reset(bool main){
  lifecycle.factory_reset=[](model::OctopusId issuer){assert(quiesces&&issuer);events.push_back("marker");if(failure==5)return ESP_FAIL;++markers;return ESP_OK;};
  lifecycle.after_factory_reset=[]{assert(markers&&events.back()=="response_attempt");++restarts;events.push_back("restart");};
 }
-std::shared_ptr<Active> connection(bool receiver,bool management=false,uint32_t caps=known_capabilities){
+std::shared_ptr<Active> connection(bool receiver,bool management=false){
  auto active=std::make_shared<Active>();active->peer=ident<model::OctopusId>(3);active->tls->server=!receiver;active->tls->authenticated=active->peer;active->tls->allowed=group.peers;
  LinkScope sc{ident<model::LinkId>(5),group.consortium,identity.id,active->peer,group.authority,boot,ident<model::BootId>(7),1,1};
- assert(active->session.authenticate(sc,sc.peer_id,receiver?PeerRole::coordinator:PeerRole::actuator,true)==Error::none);HelloFrame hello;hello.consortium_id=sc.consortium_id;hello.octopus_id=sc.peer_id;hello.boot_id=sc.peer_boot_id;hello.coordinator_epoch=1;hello.config_revision=1;hello.required_capabilities=caps;
- assert(active->session.hello(hello,known_capabilities)==Error::none&&active->session.synchronized(1,true,true)==Error::none);if(management)active->session.restrict_management();
- active->ready=!management;active->management_ready=management;active->status.id=active->peer;active->status.boot_id=sc.peer_boot_id;active->status.config_revision=1;active->status.negotiated_capabilities=caps;active->status.ready=!management;active->status.management_ready=management;links.push_back(active);return active;
+ assert(active->session.authenticate(sc,sc.peer_id,receiver?PeerRole::coordinator:PeerRole::actuator,true)==Error::none);HelloFrame hello;hello.consortium_id=sc.consortium_id;hello.octopus_id=sc.peer_id;hello.boot_id=sc.peer_boot_id;hello.coordinator_epoch=1;hello.config_revision=1;
+ assert(active->session.hello(hello)==Error::none&&active->session.synchronized(1,true,true)==Error::none);if(management)active->session.restrict_management();
+ active->ready=!management;active->management_ready=management;active->status.id=active->peer;active->status.boot_id=sc.peer_boot_id;active->status.config_revision=1;active->status.ready=!management;active->status.management_ready=management;links.push_back(active);return active;
 }
 Envelope message(const std::shared_ptr<Active>& active){const auto& sc=active->session.scope();Envelope e;e.consortium_id=sc.consortium_id;e.origin_octopus_id=sc.peer_id;e.destination_octopus_id=sc.local_id;e.origin_boot_id=sc.peer_boot_id;e.destination_boot_id=sc.local_boot_id;e.coordinator_epoch=1;e.config_revision=1;e.kind=Kind::membership_event;e.ttl_ms=2000;e.payload=parsed("{\"phase\":\"factory_reset\"}");return e;}
 bool dispatch(const std::shared_ptr<Active>& active,const Envelope& e){const auto received=clock_ms;return active->session.admit(e,received,received)==Error::none&&retire_member(*active,e);}
@@ -119,15 +119,13 @@ void receiver_tests(){
  for(unsigned fault:{1u,5u}){reset(false);auto active=connection(true);failure=fault;assert(!dispatch(active,message(active))&&!markers&&!restarts&&!group_saves);}
  reset(false);auto active=connection(true);send_ok=false;assert(!dispatch(active,message(active))&&markers==1&&restarts==1); // LostACK still finishes explicitly authorized durable reset.
  reset(true);active=connection(false);assert(!dispatch(active,message(active))&&!group_saves&&!markers); // Main can never be reset by a member.
- reset(false);active=connection(true,false,known_capabilities&~factory_reset_removal);assert(!dispatch(active,message(active))&&!markers);
- std::cout<<"PASS actual target removal: exact scope/boots/capability, main denial, ready+management, quiescence before durable marker, originaldeadline/revocation, ACK-loss restart, no replay\n";
+ std::cout<<"PASS actual target removal: exact scope/boots, main denial, ready+management, quiescence before durable marker, originaldeadline/revocation, ACK-loss restart, no replay\n";
 }
 void source_tests(){
  const auto request=ident<model::MessageId>(30),other=ident<model::MessageId>(31);const auto peer=ident<model::OctopusId>(3);
  for(bool management:{false,true}){reset(true);auto active=connection(false,management);assert(runtime_remove_octopus(peer,request,1,active->status.boot_id)==ESP_OK&&group.peers.empty()&&revocations==1&&active->retiring);assert(parsed(runtime_removal_operation(peer,request)).get("stage")->string=="admitted");assert(runtime_remove_octopus(peer,request,1,active->status.boot_id)==ESP_OK&&group_saves==1);assert(runtime_remove_octopus(identity.id,request,1,{})==ESP_ERR_INVALID_ARG);clock_ms+=2000;assert(!finish_retirement(*active)&&sent.empty());assert(parsed(runtime_removal_operation(peer,request)).get("reset")->string=="unconfirmed");}
  reset(true);assert(runtime_remove_octopus(peer,request,1,{})==ESP_OK&&group.peers.empty());assert(parsed(runtime_removal_operation(peer,request)).get("reset")->string=="offline");assert(links.empty()&&sent.empty());
- reset(true);auto active=connection(false,false,known_capabilities&~factory_reset_removal);assert(runtime_remove_octopus(peer,request,1,{})==ESP_ERR_NOT_SUPPORTED&&group.peers.size()==1&&!group_saves);
- reset(true);active=connection(false);assert(runtime_remove_octopus(peer,request,2,{})==ESP_ERR_INVALID_STATE&&runtime_remove_octopus(peer,request,1,ident<model::BootId>(99))==ESP_ERR_INVALID_STATE&&!group_saves);
+ reset(true);auto active=connection(false);assert(runtime_remove_octopus(peer,request,2,{})==ESP_ERR_INVALID_STATE&&runtime_remove_octopus(peer,request,1,ident<model::BootId>(99))==ESP_ERR_INVALID_STATE&&!group_saves);
  reset(true);active=connection(false);active->refreshing=true;assert(runtime_remove_octopus(peer,request,1,active->status.boot_id)==ESP_ERR_INVALID_STATE&&!group_saves&&group.peers.size()==1&&!active->retiring);
  active->refreshing=false;configuration=2;assert(runtime_remove_octopus(peer,request,1,active->status.boot_id)==ESP_ERR_INVALID_STATE&&!group_saves&&group.peers.size()==1);
  reset(true);active=connection(false);disk_ok=false;assert(runtime_remove_octopus(peer,request,1,{})==ESP_FAIL&&group.peers.size()==1&&!active->retiring);
@@ -192,8 +190,8 @@ void inflight_status_does_not_hide_reset_ack(){
   assert(active->session.state()==ConnectionState::restricted&&!active->ready&&!active->management_ready&&!active->status.ready&&!active->status.management_ready);
   assert(active->session.admit(checked,clock_ms,clock_ms)!=Error::none&&active->removal_until==until&&clock_ms==100&&sent_timeouts.front()==2000);
  }
- for(unsigned fault=0;fault<10;++fault){
-  reset(true);auto active=connection(false,false,fault==9?known_capabilities&~qualified_lookup:known_capabilities);configuration=2;assert(active->session.advance_configuration(2)==Error::none);active->status.config_revision=2;
+ for(unsigned fault=0;fault<9;++fault){
+  reset(true);auto active=connection(false);configuration=2;assert(active->session.advance_configuration(2)==Error::none);active->status.config_revision=2;
   auto prior=inflight_frame(active,Kind::scoped_result,2);
   switch(fault){
    case 0:prior.origin_boot_id=ident<model::BootId>(99);break;
@@ -205,7 +203,6 @@ void inflight_status_does_not_hide_reset_ack(){
    case 6:prior.config_revision=3;break;
    case 7:prior.config_revision=0;break;
    case 8:prior.payload.get("snapshot")->object.emplace_back("unexpected",Json{});break;
-   default:break;
   }
   const auto request=ident<model::MessageId>(84);assert(runtime_remove_octopus(active->peer,request,1,{})==ESP_OK);
   active->tls->frames.push_back(envelope_json(prior,settings_json(prior.payload)));queue_reset_ack(active);
@@ -221,7 +218,7 @@ void inflight_status_does_not_hide_reset_ack(){
  reset(true);auto active=connection(false);const auto request=ident<model::MessageId>(85);assert(runtime_remove_octopus(active->peer,request,1,{})==ESP_OK);
  const auto status_frame=inflight_frame(active,Kind::scoped_result,1);for(unsigned n=0;n<32;++n)active->tls->frames.push_back(envelope_json(status_frame,settings_json(status_frame.payload)));queue_reset_ack(active);
  assert(!finish_retirement(*active)&&active->tls->next==32&&active->removal_until==2100);
- std::cout<<"PASS reset ACK follows current/obsolete in-flight typed observations/results without granting readiness; exact peer/boot/epoch, future config, schema, capability, deadline and 32-frame bounds remain fenced\n";
+ std::cout<<"PASS reset ACK follows current/obsolete in-flight typed observations/results without granting readiness; exact peer/boot/epoch, future config, schema, deadline and 32-frame bounds remain fenced\n";
 }
 void issued_removal_scope_denials(){
  for(unsigned fault=0;fault<13;++fault){

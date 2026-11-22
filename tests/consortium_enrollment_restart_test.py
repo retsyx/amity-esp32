@@ -72,8 +72,8 @@ void configure(Active& active,Group::Role role=Group::prepared,uint64_t commit_r
     group.join_digest=std::string(64,'a');group.join_hostname="amity-candidate";group.join_revision=3;group.peers.push_back({group.authority,"leaf","pin",role==Group::member});
     active.peer=group.authority;
     LinkScope scope{ident<model::LinkId>(1),group.consortium,group.joining_id,group.authority,group.authority,ident<model::BootId>(6),ident<model::BootId>(5),1,7};
-    HelloFrame hello;hello.consortium_id=scope.consortium_id;hello.octopus_id=scope.peer_id;hello.boot_id=scope.peer_boot_id;hello.coordinator_epoch=1;hello.config_revision=7;hello.required_capabilities=known_capabilities;
-    check(active.session.authenticate(scope,scope.peer_id,PeerRole::provisional_candidate,false)==Error::none&&active.session.hello(hello,known_capabilities)==Error::none,"provisional session did not authenticate");
+    HelloFrame hello;hello.consortium_id=scope.consortium_id;hello.octopus_id=scope.peer_id;hello.boot_id=scope.peer_boot_id;hello.coordinator_epoch=1;hello.config_revision=7;
+    check(active.session.authenticate(scope,scope.peer_id,PeerRole::provisional_candidate,false)==Error::none&&active.session.hello(hello)==Error::none,"provisional session did not authenticate");
     const auto incoming=[&](const std::string& payload){
         Envelope e;e.kind=Kind::enrollment_control;e.consortium_id=scope.consortium_id;e.origin_octopus_id=scope.peer_id;e.destination_octopus_id=scope.local_id;e.origin_boot_id=scope.peer_boot_id;e.destination_boot_id=scope.local_boot_id;e.coordinator_epoch=1;e.config_revision=7;e.ttl_ms=2000;return envelope_json(e,payload);
     };

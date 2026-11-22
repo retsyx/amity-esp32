@@ -31,9 +31,9 @@ namespace amity::consortium {
 std::shared_ptr<Active> initial(bool server){
  auto active=start(server);credentials_current=true;remembered=hostname_failures=0;const auto scope=active->session.scope();
  HelloFrame hello;hello.consortium_id=scope.consortium_id;hello.octopus_id=scope.peer_id;hello.boot_id=scope.peer_boot_id;
- hello.coordinator_epoch=scope.epoch;hello.config_revision=scope.config_revision;hello.required_capabilities=known_capabilities;
+ hello.coordinator_epoch=scope.epoch;hello.config_revision=scope.config_revision;
  assert(active->session.authenticate(scope,scope.peer_id,server?PeerRole::actuator:PeerRole::coordinator,true)==Error::none);
- assert(active->session.hello(hello,known_capabilities)==Error::none);
+ assert(active->session.hello(hello)==Error::none);
  active->ready=active->status.ready=false;active->context_ready=false;
  controls.snapshot=[](auto){return owner_state;};
  controls.synchronize=[](auto,const Json&){return Error::none;};

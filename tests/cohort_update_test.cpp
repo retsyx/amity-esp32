@@ -120,7 +120,7 @@ c::Json cohort(){return parse(u::cohort_status_json());}
 std::string phase(){return field(cohort(),"phase");}
 c::RuntimePeerStatus& add_peer(m::OctopusId owner,bool online=true,bool management=false){
     auto& n=nodes[owner];n.boot=identity<m::BootId>(owner==one?11:12);
-    c::RuntimePeerStatus peer;peer.id=owner;peer.boot_id=n.boot;peer.enrolled=true;peer.ready=online&&!management;peer.management_ready=online&&management;peer.negotiated_capabilities=c::known_capabilities;peer.firmware_identity=n.elf;peers.push_back(peer);return peers.back();
+    c::RuntimePeerStatus peer;peer.id=owner;peer.boot_id=n.boot;peer.enrolled=true;peer.ready=online&&!management;peer.management_ready=online&&management;peer.firmware_identity=n.elf;peers.push_back(peer);return peers.back();
 }
 void setup(){
     // Exercise every byte value, including NUL and JSON delimiters, on the wire.
@@ -166,7 +166,7 @@ void skipped_offline(){
     std::cout<<"PASS unavailable peer times out at120seconds; later peers stage and activate with primary\n";
 }
 void catchup(){
-    setup();add_peer(one,true,true);peers.front().negotiated_capabilities=c::peer_firmware_update;
+    setup();add_peer(one,true,true);
     assert(!peers.front().ready&&peers.front().management_ready);poll();assert(phase()=="distributing"&&cohort().get("automatic")->boolean);
     until([]{return nodes[one].selected;});assert(nodes[one].bytes==running_bytes&&running_reads==2&&staged_reads==0&&!nodes[local].selected);
     assert(find(one,"stage")<find(one,"activate"));

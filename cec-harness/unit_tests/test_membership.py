@@ -134,7 +134,7 @@ class Fixture:
         return {"octopus_id": identity, "hostname": hostname, "boot_id": boot,
                 "enrolled": True, "ready": True, "management_ready": True,
                 "supported_tentacles": self.capacity, "configured_tentacles_mask": (1 << self.capacity) - 1,
-                "capabilities": 0xffffffff, "firmware_identity": "fixture"}
+                "firmware_identity": "fixture"}
 
     def bump(self):
         self.config["config_revision"] = str(int(self.config["config_revision"]) + 1)

@@ -73,7 +73,7 @@ esp_err_t validate_release(std::string_view bytes,std::string_view proof,Release
     if(bytes.size()>4096){error="Firmware release information exceeds the supported size";return ESP_ERR_INVALID_ARG;}
     if(!parse_release_manifest(bytes,manifest,error))return ESP_ERR_INVALID_ARG;
     const auto* partition=esp_ota_get_next_update_partition(nullptr);
-    if(!partition||partition->size<=partition_release_bytes||manifest.image_bytes>partition->size-partition_release_bytes||!compatible_release(manifest,partition->size,2,2,c::known_capabilities,production(),error)||!signature(manifest,proof)){if(error.empty())error="Publisher signature is missing, invalid, untrusted or the image exceeds the available space";return ESP_ERR_INVALID_ARG;}
+    if(!partition||partition->size<=partition_release_bytes||manifest.image_bytes>partition->size-partition_release_bytes||!compatible_release(manifest,partition->size,2,2,production(),error)||!signature(manifest,proof)){if(error.empty())error="Publisher signature is missing, invalid, untrusted or the image exceeds the available space";return ESP_ERR_INVALID_ARG;}
     return ESP_OK;
 }
 esp_err_t stage_release(std::string_view bytes,std::string_view proof,std::string& error){

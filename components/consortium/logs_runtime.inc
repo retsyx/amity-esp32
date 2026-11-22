@@ -83,7 +83,6 @@ esp_err_t pull_logs(model::OctopusId owner,const std::function<bool(std::string_
         if(log_pull.busy||!original_controller(group,identity.id)||!status.authority_ready||!settings_enrolled(owner))return ESP_ERR_INVALID_STATE;
         for(const auto& candidate:links)if(candidate->peer==owner&&log_link_available(*candidate)){
             std::lock_guard<std::mutex> snapshot(candidate->mutex);
-            if(!(candidate->status.negotiated_capabilities&peer_logs))return ESP_ERR_NOT_SUPPORTED;
             active=candidate;link=candidate->session.scope().link_id;revision=candidate->status.config_revision;break;
         }
         if(!active)return ESP_ERR_INVALID_STATE;

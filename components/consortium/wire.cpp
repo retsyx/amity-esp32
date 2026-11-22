@@ -74,7 +74,7 @@ std::string synchronization_json(model::MessageId round,std::string_view phase,u
 const char *error_name(Error v) {
     switch(v) {
 #define E(a,b) case Error::a:return b
-    E(none,"OK");E(invalid_message,"INVALID_MESSAGE");E(unsupported_kind,"UNSUPPORTED_CAPABILITY");E(protocol_mismatch,"PROTOCOL_MISMATCH");E(unauthorized_role,"UNAUTHORIZED_ROLE");E(wrong_consortium,"WRONG_CONSORTIUM");E(stale_boot,"STALE_BOOT");E(stale_epoch,"STALE_EPOCH");E(stale_config,"STALE_CONFIG");E(expired,"EXPIRED");E(target_not_local,"TARGET_NOT_LOCAL");E(not_ready,"NOT_READY");E(queue_full,"QUEUE_FULL");E(duplicate,"DUPLICATE");E(identity_conflict,"IDENTITY_CONFLICT");E(unknown_outcome,"UNKNOWN_OUTCOME");E(storage_failure,"STORAGE_FAILURE");E(transaction_conflict,"TRANSACTION_CONFLICT");
+    E(none,"OK");E(invalid_message,"INVALID_MESSAGE");E(unsupported_kind,"UNSUPPORTED_KIND");E(protocol_mismatch,"PROTOCOL_MISMATCH");E(unauthorized_role,"UNAUTHORIZED_ROLE");E(wrong_consortium,"WRONG_CONSORTIUM");E(stale_boot,"STALE_BOOT");E(stale_epoch,"STALE_EPOCH");E(stale_config,"STALE_CONFIG");E(expired,"EXPIRED");E(target_not_local,"TARGET_NOT_LOCAL");E(not_ready,"NOT_READY");E(queue_full,"QUEUE_FULL");E(duplicate,"DUPLICATE");E(identity_conflict,"IDENTITY_CONFLICT");E(unknown_outcome,"UNKNOWN_OUTCOME");E(storage_failure,"STORAGE_FAILURE");E(transaction_conflict,"TRANSACTION_CONFLICT");
 #undef E
     }return "INVALID_MESSAGE";
 }
@@ -93,7 +93,7 @@ Error parse_envelope(std::string_view body,Envelope &out,JsonError *detail) {
     Envelope x;
     if(!id(v.get("consortium_id"),x.consortium_id)||!id(v.get("origin_octopus_id"),x.origin_octopus_id)||!id(v.get("origin_boot_id"),x.origin_boot_id)||!id(v.get("destination_octopus_id"),x.destination_octopus_id)||!id(v.get("destination_boot_id"),x.destination_boot_id)||!decimal(v.get("coordinator_epoch"),x.coordinator_epoch)||!decimal(v.get("config_revision"),x.config_revision)||!json_uint(v.get("ttl_ms"),ttl,1,10000))return Error::invalid_message;
     bool recognized=false;for(auto kind:{Kind::enrollment_control,Kind::membership_event,Kind::membership_result,Kind::snapshot_request,Kind::snapshot_chunk,Kind::update_begin,Kind::update_chunk,Kind::update_install,Kind::update_status,Kind::update_abort,Kind::update_result,Kind::device_status,Kind::settings_read,Kind::settings_write,Kind::settings_result,Kind::scoped_intent,Kind::scoped_result,Kind::synchronization,Kind::log_request,Kind::log_result})if(text_is(v.get("kind"),{kind_name(kind)})){x.kind=kind;recognized=true;break;}
-    if(!recognized||retired_kind(x.kind))return Error::unsupported_kind;
+    if(!recognized)return Error::unsupported_kind;
     if((x.kind==Kind::membership_event||x.kind==Kind::membership_result)&&ttl>2000)return Error::invalid_message;
     if(!payload(x.kind,*v.get("payload")))return Error::invalid_message;
     x.ttl_ms=ttl;x.payload=std::move(*v.get("payload"));
@@ -104,19 +104,18 @@ std::string hello_json(const HelloFrame &h){
     // Firmware is the fixed lowercase ELF digest supplied by runtime. The
     // optional transaction pair never authorizes an ordinary execution session.
     if(h.firmware_identity.size()!=64||!std::all_of(h.firmware_identity.begin(),h.firmware_identity.end(),[](char c){return (c>='0'&&c<='9')||(c>='a'&&c<='f');}))return {};
-    std::string out="{\"type\":\"hello\",\"protocol_min\":1,\"protocol_max\":1,\"consortium_id\":\""+h.consortium_id.str()+"\",\"octopus_id\":\""+h.octopus_id.str()+"\",\"boot_id\":\""+h.boot_id.str()+"\",\"coordinator_epoch\":\""+std::to_string(h.coordinator_epoch)+"\",\"config_revision\":\""+std::to_string(h.config_revision)+"\",\"config_hash\":\""+h.config_hash+"\",\"firmware_identity\":\""+h.firmware_identity+"\",\"required_capabilities\":"+std::to_string(h.required_capabilities)+",\"optional_capabilities\":"+std::to_string(h.optional_capabilities)+",\"frame_cap\":8192";
+    if(!h.supported_tentacles||h.supported_tentacles>amity::max_tentacles||h.configured_tentacles_mask>=(1u<<h.supported_tentacles))return {};
+    std::string out="{\"type\":\"hello\",\"consortium_id\":\""+h.consortium_id.str()+"\",\"octopus_id\":\""+h.octopus_id.str()+"\",\"boot_id\":\""+h.boot_id.str()+"\",\"coordinator_epoch\":\""+std::to_string(h.coordinator_epoch)+"\",\"config_revision\":\""+std::to_string(h.config_revision)+"\",\"config_hash\":\""+h.config_hash+"\",\"firmware_identity\":\""+h.firmware_identity+"\",\"frame_cap\":8192,\"supported_tentacles\":"+std::to_string(h.supported_tentacles)+",\"configured_tentacles_mask\":"+std::to_string(h.configured_tentacles_mask);
     if(h.pending_join_id)out+=",\"pending_join_id\":\""+h.pending_join_id->str()+"\",\"join_digest\":\""+h.join_digest+"\"";
-    if(h.hardware_profile){if(!h.supported_tentacles||h.supported_tentacles>amity::max_tentacles||h.configured_tentacles_mask>=(1u<<h.supported_tentacles))return {};out+=",\"supported_tentacles\":"+std::to_string(h.supported_tentacles)+",\"configured_tentacles_mask\":"+std::to_string(h.configured_tentacles_mask);}
     return out+"}";
 }
 Error parse_hello(std::string_view body,HelloFrame &out,JsonError *detail) {
     Json v;JsonError e;if(!parse_json(body,v,e,max_frame_bytes,2048)){if(detail)*detail=e;return Error::invalid_message;}
-    if(!closed(v,{"type","protocol_min","protocol_max","consortium_id","octopus_id","boot_id","coordinator_epoch","config_revision","config_hash","firmware_identity","required_capabilities","optional_capabilities","frame_cap"},{"pending_join_id","join_digest","supported_tentacles","configured_tentacles_mask"})||!text_is(v.get("type"),{"hello"}))return Error::invalid_message;
-    HelloFrame x;uint64_t low=0,high=0,required=0,optional=0,cap=0;
-    if(!json_uint(v.get("protocol_min"),low,1,255)||!json_uint(v.get("protocol_max"),high,low,255)||!id(v.get("consortium_id"),x.consortium_id)||!id(v.get("octopus_id"),x.octopus_id)||!id(v.get("boot_id"),x.boot_id)||!decimal(v.get("coordinator_epoch"),x.coordinator_epoch)||!decimal(v.get("config_revision"),x.config_revision)||!hex(v.get("config_hash"),64)||!json_string(v.get("firmware_identity"),x.firmware_identity,1,96)||!json_uint(v.get("required_capabilities"),required,0,UINT32_MAX)||(required&~known_capabilities)||!json_uint(v.get("optional_capabilities"),optional,0,UINT32_MAX)||!json_uint(v.get("frame_cap"),cap,512,max_frame_bytes))return Error::invalid_message;
+    if(!closed(v,{"type","consortium_id","octopus_id","boot_id","coordinator_epoch","config_revision","config_hash","firmware_identity","frame_cap","supported_tentacles","configured_tentacles_mask"},{"pending_join_id","join_digest"})||!text_is(v.get("type"),{"hello"}))return Error::invalid_message;
+    HelloFrame x;uint64_t cap=0,count=0,mask=0;
+    if(!id(v.get("consortium_id"),x.consortium_id)||!id(v.get("octopus_id"),x.octopus_id)||!id(v.get("boot_id"),x.boot_id)||!decimal(v.get("coordinator_epoch"),x.coordinator_epoch)||!decimal(v.get("config_revision"),x.config_revision)||!hex(v.get("config_hash"),64)||!json_string(v.get("firmware_identity"),x.firmware_identity,1,96)||!json_uint(v.get("frame_cap"),cap,512,max_frame_bytes)||
+       !json_uint(v.get("supported_tentacles"),count,1,amity::max_tentacles)||!json_uint(v.get("configured_tentacles_mask"),mask,0,(1u<<count)-1))return Error::invalid_message;
     if(v.get("pending_join_id")||v.get("join_digest")){model::JoinId join;if(!id(v.get("pending_join_id"),join)||!hex(v.get("join_digest"),64))return Error::invalid_message;x.pending_join_id=join;x.join_digest=v.get("join_digest")->string;}
-    if(v.get("supported_tentacles")||v.get("configured_tentacles_mask")){uint64_t count=0,mask=0;if(!json_uint(v.get("supported_tentacles"),count,1,amity::max_tentacles)||!json_uint(v.get("configured_tentacles_mask"),mask,0,(1u<<count)-1))return Error::invalid_message;x.supported_tentacles=count;x.configured_tentacles_mask=mask;x.hardware_profile=true;}
-    if(low>1||high<1)return Error::protocol_mismatch;
-    x.protocol_min=low;x.protocol_max=high;x.required_capabilities=required;x.optional_capabilities=optional;x.frame_cap=cap;x.config_hash=v.get("config_hash")->string;out=std::move(x);return Error::none;
+    x.supported_tentacles=count;x.configured_tentacles_mask=mask;x.frame_cap=cap;x.config_hash=v.get("config_hash")->string;out=std::move(x);return Error::none;
 }
 } // namespace amity::consortium

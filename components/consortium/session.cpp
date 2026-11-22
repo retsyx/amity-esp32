@@ -19,7 +19,7 @@ Error Session::authenticate(const LinkScope &scope,model::OctopusId peer,PeerRol
     if(scope.epoch!=1)return Error::stale_epoch;
     scope_=scope;role_=role;active_=active;state_=ConnectionState::negotiating;return Error::none;
 }
-Error Session::hello(const HelloFrame &h,uint32_t supported) {
+Error Session::hello(const HelloFrame &h) {
     if(state_!=ConnectionState::negotiating)return Error::not_ready;
     if(h.octopus_id!=scope_.peer_id)return Error::identity_conflict;
     if(h.consortium_id!=scope_.consortium_id)return Error::wrong_consortium;
@@ -28,8 +28,6 @@ Error Session::hello(const HelloFrame &h,uint32_t supported) {
     scope_.peer_boot_id=h.boot_id;
     if(h.coordinator_epoch!=scope_.epoch)return Error::stale_epoch;
     if(!h.supported_tentacles||h.supported_tentacles>amity::max_tentacles||h.configured_tentacles_mask>=(1u<<h.supported_tentacles))return Error::invalid_message;
-    if(h.protocol_min>1||h.protocol_max<1||(h.required_capabilities&~supported)||((h.required_capabilities|supported)&~known_capabilities))return Error::protocol_mismatch;
-    capabilities_=(h.required_capabilities|h.optional_capabilities)&supported;
     state_=active_?ConnectionState::synchronizing:ConnectionState::restricted;return Error::none;
 }
 Error Session::synchronized(uint64_t config,bool membership,bool owner_metadata) {
@@ -40,7 +38,6 @@ Error Session::synchronized(uint64_t config,bool membership,bool owner_metadata)
 Error Session::begin_synchronization(uint64_t target,model::LinkId new_link) {
     if(!active_||role_==PeerRole::provisional_candidate||
        (state_!=ConnectionState::ready&&state_!=ConnectionState::synchronizing))return Error::not_ready;
-    if(!(capabilities_&chunked_snapshots))return Error::unsupported_kind;
     if(!target||target<scope_.config_revision)return Error::stale_config;
     if(new_link&&new_link==scope_.link_id)return Error::identity_conflict;
     if(new_link)scope_.link_id=new_link;
@@ -48,11 +45,10 @@ Error Session::begin_synchronization(uint64_t target,model::LinkId new_link) {
 }
 Error Session::advance_configuration(uint64_t revision){
     if(state_!=ConnectionState::ready||!active_||role_==PeerRole::provisional_candidate)return Error::not_ready;
-    if(!(capabilities_&live_configuration))return Error::unsupported_kind;
     if(revision<=scope_.config_revision)return Error::stale_config;
     scope_.config_revision=revision;return Error::none;
 }
-void Session::disconnect(){state_=ConnectionState::disconnected;active_=false;management_=false;capabilities_=0;}
+void Session::disconnect(){state_=ConnectionState::disconnected;active_=false;management_=false;}
 void Session::restrict_lifecycle(){management_=false;state_=ConnectionState::restricted;}
 void Session::restrict_management(){restrict_lifecycle();management_=true;}
 Error Session::common(const Envelope &e,uint64_t received,uint64_t now,bool stale,bool synchronization_discard)const {
@@ -72,7 +68,6 @@ Error Session::common(const Envelope &e,uint64_t received,uint64_t now,bool stal
     return permitted(e.kind,stale||synchronization_discard)?Error::none:Error::unauthorized_role;
 }
 bool Session::permitted(Kind kind,bool discarding)const {
-    if(retired_kind(kind))return false;
     if(kind==Kind::synchronization)return active_&&role_!=PeerRole::provisional_candidate&&
         (state_==ConnectionState::ready||state_==ConnectionState::synchronizing);
     if(!discarding&&state_==ConnectionState::synchronizing)return role_!=PeerRole::provisional_candidate&&(kind==Kind::device_status||kind==Kind::snapshot_request||kind==Kind::snapshot_chunk);
@@ -83,7 +78,7 @@ bool Session::permitted(Kind kind,bool discarding)const {
     if(!active_)return false;
     if(kind==Kind::device_status)return true;
     if(is_log_kind(kind))return role_==PeerRole::coordinator?kind==Kind::log_request:role_==PeerRole::actuator&&kind==Kind::log_result;
-    if(kind==Kind::snapshot_request||kind==Kind::snapshot_chunk)return ((capabilities_&live_configuration)||(discarding&&state_==ConnectionState::synchronizing))&&role_!=PeerRole::provisional_candidate;
+    if(kind==Kind::snapshot_request||kind==Kind::snapshot_chunk)return role_!=PeerRole::provisional_candidate;
     if(is_settings_kind(kind))return role_==PeerRole::coordinator?kind!=Kind::settings_result:role_==PeerRole::actuator&&kind==Kind::settings_result;
     if(is_update_kind(kind))return role_==PeerRole::coordinator?kind!=Kind::update_result:role_==PeerRole::actuator&&kind==Kind::update_result;
     if(role_==PeerRole::coordinator)return kind==Kind::scoped_intent||kind==Kind::membership_event;
@@ -96,40 +91,31 @@ Error Session::admit(const Envelope& e,uint64_t received,uint64_t now){
 }
 Error Session::typed(const Envelope& e)const{
     if(e.kind==Kind::synchronization){
-        if(!(capabilities_&chunked_snapshots))return Error::unsupported_kind;
         if(!valid_envelope_payload(e.kind,e.payload))return Error::invalid_message;
         const bool begin=e.payload.get("phase")->string=="begin";
         if(begin!=(role_==PeerRole::coordinator))return Error::unauthorized_role;
         uint64_t target=0;decimal(e.payload.get("config_revision"),target);
         if(begin&&target<scope_.config_revision)return Error::stale_config;
     }
-    if((e.kind==Kind::membership_event||e.kind==Kind::membership_result)&&(!(capabilities_&lifecycle_journal)||!(capabilities_&factory_reset_removal)||e.ttl_ms>2000))return Error::unsupported_kind;
+    if((e.kind==Kind::membership_event||e.kind==Kind::membership_result)&&e.ttl_ms>2000)return Error::unsupported_kind;
     if(e.kind==Kind::scoped_intent){
         model::OwnedIntent intent;
-        if(!(capabilities_&qualified_lookup)||!(capabilities_&owner_repeated_keys)||parse_owned_intent(e.payload,intent)!=Error::none)return Error::unsupported_kind;
+        if(parse_owned_intent(e.payload,intent)!=Error::none)return Error::unsupported_kind;
         if(intent.kind!=model::OwnedIntentKind::key_edges&&(intent.target.port.consortium_id!=scope_.consortium_id||intent.target.port.octopus_id!=scope_.local_id))return Error::target_not_local;
     }
-    if(e.kind==Kind::scoped_result&&!(capabilities_&qualified_lookup))return Error::unsupported_kind;
-    if(is_settings_kind(e.kind)&&!(capabilities_&per_adapter_settings))return Error::unsupported_kind;
-    if(is_log_kind(e.kind)){
-        if(!(capabilities_&peer_logs))return Error::unsupported_kind;
-        if(!valid_log_payload(e.kind,e.payload))return Error::invalid_message;
-    }
-    if(e.kind==Kind::device_status&&!(capabilities_&hostname_metadata))return Error::unsupported_kind;
-    if((e.kind==Kind::snapshot_request||e.kind==Kind::snapshot_chunk)&&!(capabilities_&chunked_snapshots))return Error::unsupported_kind;
-    if(is_update_kind(e.kind)&&!(capabilities_&peer_firmware_update))return Error::unsupported_kind;
+    if(is_log_kind(e.kind)&&!valid_log_payload(e.kind,e.payload))return Error::invalid_message;
     if(e.kind==Kind::update_chunk&&!valid_payload(e))return Error::invalid_message;
     return Error::none;
 }
 Error Session::discard_stale(const Envelope& e,uint64_t received,uint64_t now){
-    if(state_!=ConnectionState::ready||!active_||role_==PeerRole::provisional_candidate||!(capabilities_&live_configuration))return Error::not_ready;
+    if(state_!=ConnectionState::ready||!active_||role_==PeerRole::provisional_candidate)return Error::not_ready;
     auto error=common(e,received,now,true);if(error!=Error::none)return error;
     if(!valid_payload(e))return Error::invalid_message;
     error=typed(e);if(error!=Error::none)return error;
     return Error::none;
 }
 Error Session::discard_synchronization_frame(const Envelope& e,uint64_t received,uint64_t now){
-    if(state_!=ConnectionState::synchronizing||!active_||role_==PeerRole::provisional_candidate||!(capabilities_&chunked_snapshots))return Error::not_ready;
+    if(state_!=ConnectionState::synchronizing||!active_||role_==PeerRole::provisional_candidate)return Error::not_ready;
     if(e.kind==Kind::synchronization)return Error::unsupported_kind; // The runtime must correlate control rounds explicitly.
     auto error=common(e,received,now,false,true);if(error!=Error::none)return error;
     if(!valid_payload(e))return Error::invalid_message;

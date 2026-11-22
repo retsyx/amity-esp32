@@ -90,7 +90,7 @@ bool gatt_client_exchange(bool encrypted,std::string_view input,std::string& out
     ++encrypted_exchanges;assert(input.substr(0,10)=="encrypted:");Json request;JsonError detail;assert(parse_json(input.substr(10),request,detail));
     const auto phase=request.get("phase")->string;
     if(phase==fail_phase)return false;
-    if(phase=="identify")out="{\"phase\":\"identity\",\"bootstrap_profile\":2,\"octopus_id\":\""+ident<model::OctopusId>(bad_identity?4:3).str()+"\",\"leaf\":\""+hex("candidate-leaf")+"\",\"networked\":"+(networked?"true":"false")+"}";
+    if(phase=="identify")out="{\"phase\":\"identity\",\"octopus_id\":\""+ident<model::OctopusId>(bad_identity?4:3).str()+"\",\"leaf\":\""+hex("candidate-leaf")+"\",\"networked\":"+(networked?"true":"false")+"}";
     else if(phase=="prepare"){
         JoinProposal proposal;assert(decode_join_proposal(request.get("proposal")->string,proposal));
         assert(proposal.coordinator_id==identity.id&&proposal.coordinator_leaf==identity.der&&proposal.coordinator_pin==identity.spki);

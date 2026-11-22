@@ -50,7 +50,7 @@ void frame_tests(std::string_view body){
 }
 
 LinkScope scope(){return {ident<m::LinkId>(1),ident<m::ConsortiumId>(2),ident<m::OctopusId>(3),ident<m::OctopusId>(4),ident<m::OctopusId>(4),ident<m::BootId>(5),ident<m::BootId>(6),1,7};}
-HelloFrame hello(const LinkScope& s){HelloFrame h;h.consortium_id=s.consortium_id;h.octopus_id=s.peer_id;h.boot_id=s.peer_boot_id;h.coordinator_epoch=s.epoch;h.config_revision=s.config_revision;h.required_capabilities=known_capabilities;return h;}
+HelloFrame hello(const LinkScope& s){HelloFrame h;h.consortium_id=s.consortium_id;h.octopus_id=s.peer_id;h.boot_id=s.peer_boot_id;h.coordinator_epoch=s.epoch;h.config_revision=s.config_revision;return h;}
 Envelope envelope(const LinkScope& s){Envelope e;e.consortium_id=s.consortium_id;e.origin_octopus_id=s.peer_id;e.destination_octopus_id=s.local_id;e.origin_boot_id=s.peer_boot_id;e.destination_boot_id=s.local_boot_id;e.coordinator_epoch=s.epoch;e.config_revision=s.config_revision;e.ttl_ms=10000;e.kind=Kind::device_status;JsonError detail;assert(parse_json("{\"hostname\":\"member\"}",e.payload,detail));return e;}
 std::string packet(const LinkScope& s,Kind kind,const std::string& payload){return "{\"protocol_version\":1,\"consortium_id\":\""+s.consortium_id.str()+"\",\"origin_octopus_id\":\""+s.peer_id.str()+"\",\"origin_boot_id\":\""+s.peer_boot_id.str()+"\",\"destination_octopus_id\":\""+s.local_id.str()+"\",\"destination_boot_id\":\""+s.local_boot_id.str()+"\",\"coordinator_epoch\":\"1\",\"config_revision\":\"7\",\"kind\":\""+kind_name(kind)+"\",\"ttl_ms\":1000,\"payload\":"+payload+"}";}
 m::OwnedIntent action(const LinkScope& s){m::OwnedIntent x;x.kind=m::OwnedIntentKind::activity;x.target={{s.consortium_id,s.local_id,0,m::Side::back},"Player"};x.generation=1;x.selected=true;x.source=x.target;return x;}
@@ -88,7 +88,7 @@ void envelope_tests(const std::string& body){
 void session_tests(){
     const auto s=scope();auto h=hello(s);Session session;auto e=envelope(s);e.kind=Kind::scoped_intent;auto intent=action(s);JsonError detail;assert(parse_json(owned_intent_json(intent),e.payload,detail));
     assert(session.authenticate(s,ident<m::OctopusId>(99),PeerRole::coordinator,true)==Error::identity_conflict);assert(session.authenticate(s,s.peer_id,PeerRole::coordinator,true)==Error::none);assert(session.admit(e,0,0)==Error::not_ready);
-    h.required_capabilities|=0x80000000u;assert(session.hello(h,known_capabilities)==Error::protocol_mismatch);h=hello(s);assert(session.hello(h,known_capabilities)==Error::none);assert(session.synchronized(7,true,false)==Error::not_ready);assert(session.synchronized(8,true,true)==Error::stale_config);assert(session.synchronized(7,true,true)==Error::none);
+    assert(session.hello(h)==Error::none);assert(session.synchronized(7,true,false)==Error::not_ready);assert(session.synchronized(8,true,true)==Error::stale_config);assert(session.synchronized(7,true,true)==Error::none);
     assert(session.admit(e,100,101)==Error::none);assert(session.admit(e,100,102)==Error::none);
     // An authenticated current original controller needs no renewed grant,
     // including after an idle interval beyond the previous grant period.
@@ -99,8 +99,8 @@ void session_tests(){
     assert(session.admit(e,5200,15200)==Error::invalid_message);
     intent.edges[0].down=false;assert(parse_json(owned_intent_json(intent),e.payload,detail));assert(session.admit(e,5700,5700)==Error::none);
     session.disconnect();assert(session.admit(e,6000,6000)==Error::not_ready);
-    assert(session.authenticate(s,s.peer_id,PeerRole::coordinator,false)==Error::none&&session.hello(h,known_capabilities)==Error::none);assert(session.admit(e,0,0)==Error::unauthorized_role);
-    auto unknown=s;unknown.peer_boot_id={};assert(session.authenticate(unknown,s.peer_id,PeerRole::coordinator,true)==Error::none&&session.hello(h,known_capabilities)==Error::none&&session.scope().peer_boot_id==s.peer_boot_id);
+    assert(session.authenticate(s,s.peer_id,PeerRole::coordinator,false)==Error::none&&session.hello(h)==Error::none);assert(session.admit(e,0,0)==Error::unauthorized_role);
+    auto unknown=s;unknown.peer_boot_id={};assert(session.authenticate(unknown,s.peer_id,PeerRole::coordinator,true)==Error::none&&session.hello(h)==Error::none&&session.scope().peer_boot_id==s.peer_boot_id);
 }
 void owner_activity_selection_tests(){
     auto request=action(scope());request.target.osd_name.clear();Json value;JsonError detail;m::OwnedIntent decoded;
@@ -139,7 +139,6 @@ void synchronization_tests(){
     const auto original=scope();JsonError detail;
     const auto payload=[&](std::string_view phase,uint64_t revision){return "{\"round_id\":\""+ident<m::MessageId>(120).str()+"\",\"phase\":\""+std::string(phase)+"\",\"config_revision\":\""+std::to_string(revision)+"\"}";};
     const auto encoded=packet(original,Kind::synchronization,payload("begin",8));Envelope begin;
-    assert(static_cast<unsigned>(Kind::synchronization)==43&&!retired_kind(Kind::synchronization));
     assert(parse_envelope(encoded,begin)==Error::none&&begin.kind==Kind::synchronization);
     model::MessageId round;std::string phase;uint64_t target=0;
     assert(parse_synchronization(begin.payload,round,phase,target)==Error::none&&round==ident<m::MessageId>(120)&&phase=="begin"&&target==8);
@@ -151,10 +150,9 @@ void synchronization_tests(){
     assert(parse_envelope(replace(encoded,"\"phase\":\"begin\"","\"phase\":\"begin\",\"extra\":true"),begin)==Error::invalid_message);
     assert(parse_envelope(replace(encoded,ident<m::MessageId>(120).str(),std::string(32,'0')),begin)==Error::invalid_message);
     assert(parse_envelope(encoded,begin)==Error::none);
-    const auto start=[&](Session& value,PeerRole role=PeerRole::coordinator,uint32_t capabilities=known_capabilities,bool active=true){
+    const auto start=[&](Session& value,PeerRole role=PeerRole::coordinator,bool active=true){
         auto sc=original;if(role==PeerRole::actuator)sc.coordinator_id=sc.local_id;
-        auto h=hello(sc);h.required_capabilities=capabilities;
-        assert(value.authenticate(sc,sc.peer_id,role,active)==Error::none&&value.hello(h,known_capabilities)==Error::none);
+        assert(value.authenticate(sc,sc.peer_id,role,active)==Error::none&&value.hello(hello(sc))==Error::none);
     };
     Session member;start(member);
     assert(member.state()==ConnectionState::synchronizing&&member.admit(begin,100,100)==Error::none);
@@ -210,8 +208,7 @@ void synchronization_tests(){
     assert(member.discard_synchronization_frame(stale_work,100,101)==Error::not_ready);
     member.restrict_management();assert(member.begin_synchronization(8)==Error::not_ready&&member.synchronized(8,true,true)==Error::not_ready);
     member.restrict_lifecycle();assert(member.begin_synchronization(8)==Error::not_ready&&member.admit(begin,100,101)==Error::unauthorized_role);
-    Session no_chunks;start(no_chunks,PeerRole::coordinator,known_capabilities&~chunked_snapshots);assert(no_chunks.begin_synchronization(8)==Error::unsupported_kind&&no_chunks.admit(begin,100,100)==Error::unsupported_kind);
-    Session management;start(management,PeerRole::coordinator,known_capabilities&~live_configuration);assert(management.synchronized(7,true,true)==Error::none);management.restrict_management();assert(management.admit(begin,100,100)==Error::unauthorized_role&&management.begin_synchronization(8)==Error::not_ready);
+    Session management;start(management);assert(management.synchronized(7,true,true)==Error::none);management.restrict_management();assert(management.admit(begin,100,100)==Error::unauthorized_role&&management.begin_synchronization(8)==Error::not_ready);
     assert(management.discard_synchronization_frame(stale_work,100,101)==Error::not_ready);
     Session controller;start(controller,PeerRole::actuator);assert(controller.begin_synchronization(8)==Error::none);
     for(const auto role:{PeerRole::coordinator,PeerRole::actuator}){
@@ -220,13 +217,13 @@ void synchronization_tests(){
             assert(value.admit(message,100,100)==((std::string_view(phase)=="begin")== (role==PeerRole::coordinator)?Error::none:Error::unauthorized_role));
         }
     }
-    for(const auto role:{PeerRole::coordinator,PeerRole::provisional_candidate}){Session passive;start(passive,role,known_capabilities,false);assert(passive.begin_synchronization(8)==Error::not_ready&&passive.admit(begin,100,100)==Error::unauthorized_role);}
+    for(const auto role:{PeerRole::coordinator,PeerRole::provisional_candidate}){Session passive;start(passive,role,false);assert(passive.begin_synchronization(8)==Error::not_ready&&passive.admit(begin,100,100)==Error::unauthorized_role);}
     Session negotiating;assert(negotiating.authenticate(original,original.peer_id,PeerRole::coordinator,true)==Error::none&&negotiating.begin_synchronization(8)==Error::not_ready);
 }
 void logical_session_restart_tests(){
     const auto original=scope();Session session;JsonError detail;
     assert(session.authenticate(original,original.peer_id,PeerRole::coordinator,true)==Error::none);
-    assert(session.hello(hello(original),known_capabilities)==Error::none&&session.synchronized(7,true,true)==Error::none);
+    assert(session.hello(hello(original))==Error::none&&session.synchronized(7,true,true)==Error::none);
     auto remembered=envelope(original);
     assert(session.admit(remembered,100,100)==Error::none);
     const auto logical_link=ident<m::LinkId>(143);
@@ -249,15 +246,11 @@ void logical_session_restart_tests(){
 void original_controller_tests(){
     using namespace amity::consortium::platform;const auto local=ident<m::OctopusId>(2);Group group;assert(controller_membership_compatible(group)&&!original_controller(group,local));group.role=Group::coordinator;group.authority=local;group.epoch=1;assert(original_controller(group,local)&&!original_controller(group,ident<m::OctopusId>(3)));
     for(auto role:{Group::member,Group::prepared}){group.role=role;assert(controller_membership_compatible(group)&&!original_controller(group,local));}group.role=Group::coordinator;group.epoch=2;assert(!controller_membership_compatible(group));
-    for(auto role:{PeerRole::coordinator,PeerRole::actuator}){const auto sc=scope();Session session;assert(session.authenticate(sc,sc.peer_id,role,true)==Error::none&&session.hello(hello(sc),known_capabilities)==Error::none&&session.synchronized(7,true,true)==Error::none);for(unsigned restricted=0;restricted<2;++restricted){if(restricted)session.restrict_management();for(unsigned number:{0u,1u,2u,3u,4u,5u,6u,12u,13u,18u,19u,20u,21u,22u,23u,24u,25u,26u,33u,34u,35u,36u}){auto e=envelope(sc);e.kind=static_cast<Kind>(number);assert(retired_kind(e.kind)&&session.admit(e,100,100)==Error::unauthorized_role);}}}
-    auto profile=hello(scope());assert(execution_profile_supported(profile,true,true,4,15));profile.required_capabilities&=~qualified_lookup;assert(!execution_profile_supported(profile,true,true,1,1));profile.optional_capabilities|=qualified_lookup;assert(execution_profile_supported(profile,true,true,1,1));assert(!execution_profile_supported(profile,false,true,1,1)&&!execution_profile_supported(profile,true,false,4,15));
-    profile.required_capabilities&=~live_configuration;assert(!execution_profile_supported(profile,true,true,4,15));profile.optional_capabilities|=live_configuration;assert(execution_profile_supported(profile,true,true,4,15));
 }
 void live_configuration_tests(){
     const auto old=scope();Session session;JsonError detail;
-    const auto start=[&](Session& value,PeerRole role=PeerRole::coordinator,uint32_t caps=known_capabilities){
-        auto h=hello(old);h.required_capabilities=caps;
-        assert(value.authenticate(old,old.peer_id,role,true)==Error::none&&value.hello(h,known_capabilities)==Error::none&&value.synchronized(old.config_revision,true,true)==Error::none);
+    const auto start=[&](Session& value,PeerRole role=PeerRole::coordinator){
+        assert(value.authenticate(old,old.peer_id,role,true)==Error::none&&value.hello(hello(old))==Error::none&&value.synchronized(old.config_revision,true,true)==Error::none);
     };
     start(session);
     auto status=envelope(old);assert(session.admit(status,100,100)==Error::none);
@@ -296,39 +289,30 @@ void live_configuration_tests(){
     assert(session.discard_stale(foreign,100,103)==Error::none); // Discarding obsolete work grants no execution authority.
     auto snapshot=envelope(current);snapshot.kind=Kind::snapshot_request;
     assert(session.admit(snapshot,100,104)==Error::none);snapshot.kind=Kind::snapshot_chunk;assert(session.admit(snapshot,100,104)==Error::none);
-    Session missing;start(missing,PeerRole::coordinator,known_capabilities&~live_configuration);
-    assert(missing.advance_configuration(8)==Error::unsupported_kind&&missing.admit(snapshot,100,104)==Error::stale_config);
-    snapshot.config_revision=7;assert(missing.admit(snapshot,100,104)==Error::unauthorized_role);
-    missing.restrict_management();auto update=envelope(old);update.kind=Kind::update_begin;assert(missing.admit(update,100,104)==Error::none);
-    assert(missing.advance_configuration(8)==Error::not_ready); // Older peers remain update-capable, never operational.
-    Session no_chunks;start(no_chunks,PeerRole::coordinator,known_capabilities&~chunked_snapshots);assert(no_chunks.admit(snapshot,100,104)==Error::unsupported_kind);
+    Session management;start(management);management.restrict_management();auto update=envelope(old);update.kind=Kind::update_begin;assert(management.admit(update,100,104)==Error::none);
+    assert(management.advance_configuration(8)==Error::not_ready); // Different firmware remains update-capable, never operational.
     Session actuator;start(actuator,PeerRole::actuator);assert(actuator.advance_configuration(8)==Error::none);
     auto wrong_role=foreign;assert(actuator.discard_stale(wrong_role,100,104)==Error::unauthorized_role);
-    Session no_hostname;start(no_hostname,PeerRole::actuator,known_capabilities&~hostname_metadata);assert(no_hostname.advance_configuration(8)==Error::none);
-    auto name=envelope(old);name.kind=Kind::device_status;assert(parse_json("{\"hostname\":\"member\"}",name.payload,detail));assert(no_hostname.discard_stale(name,100,104)==Error::unsupported_kind);
+    Session named;start(named,PeerRole::actuator);assert(named.advance_configuration(8)==Error::none);
+    auto name=envelope(old);name.kind=Kind::device_status;assert(parse_json("{\"hostname\":\"member\"}",name.payload,detail));assert(named.discard_stale(name,100,104)==Error::none);
     session.restrict_lifecycle();assert(session.advance_configuration(9)==Error::not_ready&&session.discard_stale(stale,100,104)==Error::not_ready);
     Session negotiating;assert(negotiating.authenticate(old,old.peer_id,PeerRole::coordinator,true)==Error::none);assert(negotiating.advance_configuration(8)==Error::not_ready);
 }
 void hello_profile_tests(){
     auto value=hello(scope());value.firmware_identity=std::string(64,'a');value.config_hash=std::string(64,'b');
-    HelloFrame parsed;const auto legacy=hello_json(value);assert(parse_hello(legacy,parsed)==Error::none);
-    assert(!parsed.hardware_profile&&parsed.supported_tentacles==1&&parsed.configured_tentacles_mask==1);
-    assert(legacy.find("supported_tentacles")==std::string::npos); // Closed legacy extended profile stays unchanged.
-    value.hardware_profile=true;
+    HelloFrame parsed;
     for(uint8_t count=1;count<=4;++count)for(uint8_t mask=0;mask<32;++mask){
         value.supported_tentacles=count;value.configured_tentacles_mask=mask;const auto body=hello_json(value);
-        if(mask<(1u<<count)){assert(!body.empty()&&parse_hello(body,parsed)==Error::none);assert(parsed.hardware_profile&&parsed.supported_tentacles==count&&parsed.configured_tentacles_mask==mask);}
+        if(mask<(1u<<count)){assert(!body.empty()&&parse_hello(body,parsed)==Error::none);assert(parsed.supported_tentacles==count&&parsed.configured_tentacles_mask==mask);}
         else assert(body.empty());
     }
     value.supported_tentacles=4;value.configured_tentacles_mask=0;
     const auto all_unassigned=hello_json(value);assert(parse_hello(all_unassigned,parsed)==Error::none&&parsed.configured_tentacles_mask==0);
     for(const auto &body:{replace(all_unassigned,"\"supported_tentacles\":4", "\"supported_tentacles\":0"),replace(all_unassigned,"\"supported_tentacles\":4", "\"supported_tentacles\":5"),replace(all_unassigned,"\"supported_tentacles\":4", "\"supported_tentacles\":\"4\""),replace(all_unassigned,"\"configured_tentacles_mask\":0", "\"configured_tentacles_mask\":16"),replace(all_unassigned,"\"configured_tentacles_mask\":0", "\"configured_tentacles_mask\":true"),replace(all_unassigned,",\"supported_tentacles\":4", ""),replace(all_unassigned,",\"configured_tentacles_mask\":0", "")})assert(parse_hello(body,parsed)==Error::invalid_message);
-    assert(parse_hello(replace(all_unassigned,"\"required_capabilities\":"+std::to_string(known_capabilities),"\"required_capabilities\":2147483648"),parsed)==Error::invalid_message);
-    assert(parse_hello(replace(all_unassigned,"\"optional_capabilities\":0","\"optional_capabilities\":4294967295"),parsed)==Error::none);
     Session session;auto sc=scope();assert(session.authenticate(sc,sc.peer_id,PeerRole::coordinator,true)==Error::none);
-    value.supported_tentacles=1;value.configured_tentacles_mask=2;assert(session.hello(value,known_capabilities)==Error::invalid_message);
-    value.supported_tentacles=5;value.configured_tentacles_mask=0;assert(hello_json(value).empty()&&session.hello(value,known_capabilities)==Error::invalid_message);
-    value.supported_tentacles=4;value.configured_tentacles_mask=0;assert(session.hello(value,known_capabilities)==Error::none);
+    value.supported_tentacles=1;value.configured_tentacles_mask=2;assert(session.hello(value)==Error::invalid_message);
+    value.supported_tentacles=5;value.configured_tentacles_mask=0;assert(hello_json(value).empty()&&session.hello(value)==Error::invalid_message);
+    value.supported_tentacles=4;value.configured_tentacles_mask=0;assert(session.hello(value)==Error::none);
 }
 void adapter_index_tests(){
     Json value;JsonError detail;const auto s=scope();
@@ -368,7 +352,7 @@ void update_tests() {
     assert(!valid(Kind::update_result,replace(result,"\"error\":\"\"","\"error\":\"arbitrary text\"")));
     for(auto role:{PeerRole::coordinator,PeerRole::actuator,PeerRole::provisional_candidate}) {
         auto sc=scope();Session session;auto h=hello(sc);assert(session.authenticate(sc,sc.peer_id,role,true)==Error::none);
-        assert(session.hello(h,known_capabilities)==Error::none);
+        assert(session.hello(h)==Error::none);
         auto e=envelope(sc);e.kind=Kind::update_begin;
         assert(session.admit(e,100,100)!=Error::none); // Never before synchronization.
         const auto synchronized=session.synchronized(7,true,true);
@@ -379,14 +363,9 @@ void update_tests() {
         assert(session.admit(e,100,100)==(role==PeerRole::coordinator?Error::unauthorized_role:Error::none));
         e.destination_boot_id=ident<m::BootId>(999);assert(session.admit(e,100,100)==Error::stale_boot);
     }
-    {auto sc=scope();Session management;auto peer=hello(sc);peer.required_capabilities=peer_firmware_update|lifecycle_journal;peer.optional_capabilities=0;
-     assert(management.authenticate(sc,sc.peer_id,PeerRole::coordinator,true)==Error::none&&management.hello(peer,known_capabilities)==Error::none&&management.synchronized(7,true,true)==Error::none);management.restrict_management();auto message=envelope(sc);message.kind=Kind::update_begin;assert(management.admit(message,0,0)==Error::none);
-     for(auto kind:{Kind::scoped_intent,static_cast<Kind>(2),static_cast<Kind>(18),static_cast<Kind>(7)}){message.kind=kind;assert(management.admit(message,0,0)!=Error::none);}}
-
-    auto sc=scope();Session legacy;auto h=hello(sc);h.required_capabilities=known_capabilities&~peer_firmware_update;
-    assert(legacy.authenticate(sc,sc.peer_id,PeerRole::coordinator,true)==Error::none);
-    assert(legacy.hello(h,known_capabilities&~peer_firmware_update)==Error::none&&legacy.synchronized(7,true,true)==Error::none);
-    auto e=envelope(sc);e.kind=Kind::update_begin;assert(legacy.admit(e,0,0)==Error::unsupported_kind);
+    {auto sc=scope();Session management;auto peer=hello(sc);
+     assert(management.authenticate(sc,sc.peer_id,PeerRole::coordinator,true)==Error::none&&management.hello(peer)==Error::none&&management.synchronized(7,true,true)==Error::none);management.restrict_management();auto message=envelope(sc);message.kind=Kind::update_begin;assert(management.admit(message,0,0)==Error::none);
+     for(auto kind:{Kind::scoped_intent,Kind::settings_write,Kind::snapshot_request}){message.kind=kind;assert(management.admit(message,0,0)!=Error::none);}}
 }
 void binary_update_tests(){
     const auto begin=ident<m::MessageId>(40);
@@ -432,7 +411,7 @@ void binary_update_tests(){
 
     assert(parse_envelope(binary,received)==Error::none);
     Session session;const auto sc=scope();
-    assert(session.authenticate(sc,sc.peer_id,PeerRole::coordinator,true)==Error::none&&session.hello(hello(sc),known_capabilities)==Error::none);
+    assert(session.authenticate(sc,sc.peer_id,PeerRole::coordinator,true)==Error::none&&session.hello(hello(sc))==Error::none);
     assert(session.admit(received,100,100)==Error::unauthorized_role);
     assert(session.discard_synchronization_frame(received,100,100)==Error::none);
     assert(session.synchronized(7,true,true)==Error::none&&session.admit(received,100,100)==Error::none);

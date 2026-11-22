@@ -47,14 +47,14 @@ bool send(Active &,Kind kind,std::string_view,uint32_t){return kind==Kind::membe
 void check(bool value,const char *message){if(!value)throw std::runtime_error(message);}
 template<class T>T ident(unsigned n){char text[33];std::snprintf(text,sizeof(text),"%032x",n);return *T::parse(text);}
 LinkScope scope(uint64_t config=7){return {ident<m::LinkId>(1),ident<m::ConsortiumId>(2),ident<m::OctopusId>(3),ident<m::OctopusId>(4),ident<m::OctopusId>(3),ident<m::BootId>(5),ident<m::BootId>(6),1,config};}
-void start(Active &active,uint64_t config=7,uint32_t capabilities=known_capabilities){
+void start(Active &active,uint64_t config=7){
     active.removal_request=ident<m::MessageId>(32);active.removal_until=clock_ms+2000;configuration=config;
-    const auto sc=scope(config);HelloFrame hello;hello.consortium_id=sc.consortium_id;hello.octopus_id=sc.peer_id;hello.boot_id=sc.peer_boot_id;hello.coordinator_epoch=sc.epoch;hello.config_revision=sc.config_revision;hello.required_capabilities=capabilities;
+    const auto sc=scope(config);HelloFrame hello;hello.consortium_id=sc.consortium_id;hello.octopus_id=sc.peer_id;hello.boot_id=sc.peer_boot_id;hello.coordinator_epoch=sc.epoch;hello.config_revision=sc.config_revision;
     active.peer=sc.peer_id;active.tls->authenticated=sc.peer_id;identity.id=sc.local_id;boot=sc.local_boot_id;
     group={};group.role=platform::Group::coordinator;group.authority=sc.coordinator_id;group.consortium=sc.consortium_id;group.epoch=sc.epoch;group.revision=2;
     removal_operations.clear();removal_operations.push_back({active.peer,active.removal_request,active.removal_until,"pending",false,sc});
     check(active.session.authenticate(sc,sc.peer_id,PeerRole::actuator,true)==Error::none,"authenticate failed");
-    check(active.session.hello(hello,known_capabilities)==Error::none&&active.session.synchronized(config,true,true)==Error::none,"session did not synchronize");
+    check(active.session.hello(hello)==Error::none&&active.session.synchronized(config,true,true)==Error::none,"session did not synchronize");
 }
 Envelope envelope(Kind kind,uint64_t config=7){const auto s=scope(config);Envelope e;e.kind=kind;e.consortium_id=s.consortium_id;e.origin_octopus_id=s.peer_id;e.origin_boot_id=s.peer_boot_id;e.destination_octopus_id=s.local_id;e.destination_boot_id=s.local_boot_id;e.coordinator_epoch=s.epoch;e.config_revision=s.config_revision;e.ttl_ms=2000;return e;}
 std::string packet(const Envelope&e,std::string payload){return "{\"protocol_version\":1,\"consortium_id\":\""+e.consortium_id.str()+"\",\"origin_octopus_id\":\""+e.origin_octopus_id.str()+"\",\"origin_boot_id\":\""+e.origin_boot_id.str()+"\",\"destination_octopus_id\":\""+e.destination_octopus_id.str()+"\",\"destination_boot_id\":\""+e.destination_boot_id.str()+"\",\"coordinator_epoch\":\""+std::to_string(e.coordinator_epoch)+"\",\"config_revision\":\""+std::to_string(e.config_revision)+"\",\"kind\":\""+kind_name(e.kind)+"\",\"ttl_ms\":2000,\"payload\":"+payload+"}";}
@@ -95,15 +95,13 @@ void settings_retirement_tests(){
      check(finish_retirement(active)&&active.transport.next==3,"repeated settings observation blocked the reset acknowledgment");}
     {Active active;start(active);active.transport.frames={settings_reply(),acknowledgement()};
      check(finish_retirement(active)&&active.transport.next==2,"unrelated operation IDs blocked the matching reset acknowledgment");}
-    {Active active;start(active,7,known_capabilities&~per_adapter_settings);active.transport.frames={settings_reply(),acknowledgement()};
-     check(!finish_retirement(active)&&active.transport.next==1&&active.session.state()==ConnectionState::restricted,"settings drain ignored negotiated capability or retained management permission");}
     {Active active;start(active);active.transport.frames={packet(envelope(Kind::settings_read),"{\"request_id\":\"00000000000000000000000000000100\"}"),acknowledgement()};
      check(!finish_retirement(active)&&active.transport.next==1,"settings work was admitted during retirement");}
     {Active active;start(active);auto malformed=settings_payload;malformed.replace(malformed.find("\"applied\""),9,"\"failed\"");active.transport.frames={packet(envelope(Kind::settings_result),malformed),acknowledgement()};
      check(!finish_retirement(active)&&active.transport.next==1,"malformed settings reply was drained");}
     {Active active;start(active);for(unsigned i=0;i<33;++i)active.transport.frames.push_back(settings_reply());active.transport.frames.push_back(acknowledgement());
      check(!finish_retirement(active)&&active.transport.next==32,"settings reply drain exceeded32 frames");}
-    std::cout<<"PASS actual retirement behind settings replies: exact ACK required; scope/capability/32-frame/2s fences retained; no settings work or restored authority\n";
+    std::cout<<"PASS actual retirement behind settings replies: exact ACK required; scope/32-frame/2s fences retained; no settings work or restored authority\n";
 }
 int main(){try{retirement_tests();settings_retirement_tests();return 0;}catch(const std::exception&e){std::cerr<<"FAIL "<<e.what()<<'\n';return 1;}}
 '''

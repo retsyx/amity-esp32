@@ -144,10 +144,9 @@ esp_err_t runtime_stage_update(model::OctopusId,std::string payload,uint32_t ttl
 struct RuntimePeerStatus {
     model::OctopusId id;model::BootId boot_id;
     uint64_t config_revision=0;
-    uint32_t negotiated_capabilities=0;
     uint8_t supported_tentacles=1,configured_tentacles_mask=1;
     std::string firmware_identity,hostname;
-    bool management_ready=false,ready=false,enrolled=false,provisional=false,hardware_profile=false;
+    bool management_ready=false,ready=false,enrolled=false,provisional=false;
     // The member's latest report over its current connection.
     bool wifi_known=false;int8_t wifi_rssi=0;uint8_t wifi_channel=0;
 };

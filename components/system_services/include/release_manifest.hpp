@@ -12,7 +12,6 @@ struct ReleaseManifest {
     uint64_t image_bytes=0,slot_bytes=0,storage_write=0;
     uint64_t config_read_min=0,config_read_max=0,config_write=0;
     uint64_t storage_read_min=0,storage_read_max=0,rollback_readable_max=0;
-    uint32_t required_capabilities=0;
 };
 // Manifest strings and keys use a closed ASCII vocabulary, and all counters
 // except the small format tag are decimal strings. Sorted minimal serialization
@@ -21,6 +20,6 @@ bool parse_release_manifest(std::string_view,ReleaseManifest&,std::string& error
 std::string compiled_hardware_profile();
 std::string compiled_hardware_mapping_sha256();
 bool compatible_release(const ReleaseManifest&,uint64_t actual_slot_bytes,
-    uint64_t installed_storage,uint64_t rollback_readable_max,uint32_t capabilities,
+    uint64_t installed_storage,uint64_t rollback_readable_max,
     bool production_target,std::string& error);
 } // namespace system_services::updates

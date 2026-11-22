@@ -111,13 +111,13 @@ void feed(Active& active,const Envelope& e){active.tls->incoming.push_back(packe
 SnapshotManifest manifest(model::OctopusId owner,model::BootId boot,uint64_t revision,std::string_view kind,std::string_view payload){
  SnapshotManifest m;m.transfer_id=random_id<model::MessageId>();m.owner_octopus_id=owner;m.owner_boot_id=boot;m.config_revision=revision;m.total_length=payload.size();m.payload_hash=sha256(payload);m.document_kind=kind;return m;
 }
-std::shared_ptr<Active> start(bool server,uint32_t caps=known_capabilities){
+std::shared_ptr<Active> start(bool server){
  auto a=std::make_shared<Active>();
  const auto coordinator=ident<model::OctopusId>(2),member=ident<model::OctopusId>(3);const auto mainboot=ident<model::BootId>(4),memberboot=ident<model::BootId>(5);
  LinkScope scope{ident<model::LinkId>(6),ident<model::ConsortiumId>(1),server?coordinator:member,server?member:coordinator,coordinator,server?mainboot:memberboot,server?memberboot:mainboot,1,7};
- a->peer=scope.peer_id;a->tls->authenticated=a->peer;a->status.id=a->peer;a->status.boot_id=scope.peer_boot_id;a->status.config_revision=7;a->status.ready=true;a->status.negotiated_capabilities=caps;
- HelloFrame h;h.consortium_id=scope.consortium_id;h.octopus_id=scope.peer_id;h.boot_id=scope.peer_boot_id;h.coordinator_epoch=1;h.config_revision=7;h.required_capabilities=caps;
- assert(a->session.authenticate(scope,scope.peer_id,server?PeerRole::actuator:PeerRole::coordinator,true)==Error::none&&a->session.hello(h,known_capabilities)==Error::none&&a->session.synchronized(7,true,true)==Error::none);
+ a->peer=scope.peer_id;a->tls->authenticated=a->peer;a->status.id=a->peer;a->status.boot_id=scope.peer_boot_id;a->status.config_revision=7;a->status.ready=true;
+ HelloFrame h;h.consortium_id=scope.consortium_id;h.octopus_id=scope.peer_id;h.boot_id=scope.peer_boot_id;h.coordinator_epoch=1;h.config_revision=7;
+ assert(a->session.authenticate(scope,scope.peer_id,server?PeerRole::actuator:PeerRole::coordinator,true)==Error::none&&a->session.hello(h)==Error::none&&a->session.synchronized(7,true,true)==Error::none);
  clock_ms=100;controls={};updates={};restart_fences.clear();controls.restart_session=[](auto owner,auto peer_boot,auto old_link){restart_fences.emplace_back(owner,peer_boot,old_link);return true;};network={};network.get_hostname=[server]{return server?"amity-main":"amity-member";};configuration=7;configuration_hash=std::string(64,'a');status={};status.authority_ready=server;identity.id=scope.local_id;group={};group.consortium=scope.consortium_id;group.role=server?Group::coordinator:Group::member;group.authority=coordinator;group.epoch=1;links={a};on_send={};shutdowns=0;diagnostic_logs.clear();key_transfer_logs.clear();
  return a;
 }
@@ -265,8 +265,6 @@ void rejected_frames(){
   switch(failure){case 0:e.origin_boot_id=ident<model::BootId>(99);break;case 1:e.origin_octopus_id=ident<model::OctopusId>(99);break;case 2:e.config_revision=9;break;case 3:e.consortium_id=ident<model::ConsortiumId>(99);break;case 4:m.owner_octopus_id=original.peer_id;e=inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(m,"begin",0));break;}
   feed(*a,e);assert(!synchronize(*a,false,true,8)&&applied==0&&a->session.scope()==original);
  }
- auto old=start(false,known_capabilities&~live_configuration);controls.snapshot=[](auto){return owner_state;};controls.synchronize=[](auto,const Json&){return Error::none;};
- assert(!synchronize(*old,false,true,8)&&old->tls->sent.empty()&&old->session.scope().config_revision==7);
 }
 void immutable_queue(){
  auto a=start(true);on_send={};const auto original=a->session.scope();

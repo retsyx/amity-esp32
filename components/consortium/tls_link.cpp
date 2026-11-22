@@ -91,8 +91,6 @@ bool TlsLink::setup(const Identity &identity,const std::vector<Peer> &peers,bool
 #if defined(MBEDTLS_SSL_SESSION_TICKETS)
     mbedtls_ssl_conf_session_tickets(&config,MBEDTLS_SSL_SESSION_TICKETS_DISABLED);
 #endif
-    static const char *profiles[]={"amity-consortium-v1.hardware","amity-consortium-v1.extended",nullptr};
-    if(mbedtls_ssl_conf_alpn_protocols(&config,profiles))return false;
     if(mbedtls_ssl_conf_own_cert(&config,&own,&key)||mbedtls_ssl_setup(&ssl,&config))return false;
     if(!is_server){if(!expected)return false;const std::string dns="o-"+expected.str()+".amity.invalid";if(mbedtls_ssl_set_hostname(&ssl,dns.c_str()))return false;}
     // Application frames span short TLS records. Send each record immediately
@@ -122,8 +120,6 @@ bool TlsLink::handshake(){
     }
     return finished(false,MBEDTLS_ERR_SSL_TIMEOUT);
 }
-bool TlsLink::extended_profile()const{const auto *profile=mbedtls_ssl_get_alpn_protocol(&ssl);return profile&&(strcmp(profile,"amity-consortium-v1.extended")==0||strcmp(profile,"amity-consortium-v1.hardware")==0);}
-bool TlsLink::hardware_profile()const{const auto *profile=mbedtls_ssl_get_alpn_protocol(&ssl);return profile&&strcmp(profile,"amity-consortium-v1.hardware")==0;}
 bool TlsLink::send(std::string_view body,bool bulk){
     auto bytes=frame(body,bulk);if(bytes.empty())return false;
     if(!handshake())return false;

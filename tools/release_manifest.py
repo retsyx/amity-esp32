@@ -57,7 +57,6 @@ def manifest(image,profile='development',signing_key_id='',sdkconfig=None):
     value=dict(format=1,release_id='amity-'+version+'-'+hashlib.sha256(data).hexdigest()[:12],firmware_version=version,
         image_bytes=str(len(data)),image_sha256=hashlib.sha256(data).hexdigest(),image_elf_sha256=data[176:208].hex(),
         chip='esp32s3',hardware_profiles=[hardware],partition_layout='amity-8m-ota3d0000-v1',slot_bytes=str(0x3d0000),
-        protocol=dict(min='1',max='1',required_capabilities='401472',optional_capabilities='2089544'),
         configuration=formats(3,3,3),storage=formats(2,2,2),origin=formats(1,1,1),factory=formats(1,4,4),
         bootloader='esp-idf6.1-rollback-v1',security_profile=profile,rollback_readable_max='2',source_commit=commit,
         source_tree_sha256=tree_identity(),source_dirty=dirty,dependencies=DEPENDENCIES,signing_key_id=signing_key_id)
@@ -68,7 +67,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--image',type=Path,required=True);parser.add_argument('--output',type=Path)
     parser.add_argument('--sdkconfig',type=Path,help='Cross-check compiled image identity against this exact build configuration')
-    parser.add_argument('--compatibility-capabilities',type=lambda text:int(text,0),help='Optional capability ceiling for an older installer; never changes image bytes or the required floor');parser.add_argument('--signing-key',type=Path);parser.add_argument('--profile',choices=['development','production'],default='development')
+    parser.add_argument('--signing-key',type=Path);parser.add_argument('--profile',choices=['development','production'],default='development')
     args=parser.parse_args();key=None;key_id=''
     if args.signing_key:
         from cryptography.hazmat.primitives import serialization,hashes
@@ -79,10 +78,6 @@ def main():
         key_id=hashlib.sha256(public).hexdigest()
     if args.profile=='production' and key is None:raise ValueError('Production release requires a publisher signing key')
     value=manifest(args.image,args.profile,key_id,args.sdkconfig)
-    if args.compatibility_capabilities is not None:
-        ceiling=args.compatibility_capabilities
-        if ceiling<0 or ceiling>0xffffffff or int(value['protocol']['required_capabilities'])&~ceiling:raise ValueError('Compatibility ceiling excludes the required protocol floor')
-        value['protocol']['optional_capabilities']=str(int(value['protocol']['optional_capabilities'])&ceiling)
     data=canonical(value)
     output=args.output or args.image.with_suffix('.release.json');output.write_bytes(data)
     if key:

@@ -20,7 +20,7 @@ class Session {
 public:
     // authenticated_peer must come from exact-leaf mTLS, never the Hello body.
     Error authenticate(const LinkScope &, model::OctopusId authenticated_peer,PeerRole,bool active_membership);
-    Error hello(const HelloFrame &,uint32_t supported_capabilities);
+    Error hello(const HelloFrame &);
     Error synchronized(uint64_t applied_config_revision,bool membership_current,bool owner_metadata_current);
     // Restart configuration exchange on the same authenticated stream. A
     // supplied fresh logical link fences old work without changing TLS or
@@ -47,12 +47,11 @@ public:
     // Drain observations/results already on the authenticated stream before
     // lifecycle restriction. This never restores permission to execute work.
     Error discard_lifecycle_frame(const Envelope &,uint64_t received_at_ms,uint64_t now_ms);
-    uint32_t negotiated_capabilities() const {return capabilities_;}
 private:
     Error common(const Envelope &,uint64_t,uint64_t,bool stale=false,bool synchronization_discard=false) const;
     Error typed(const Envelope &) const;
     bool permitted(Kind,bool discarding=false) const;
     LinkScope scope_;ConnectionState state_=ConnectionState::disconnected;PeerRole role_=PeerRole::actuator;
-    bool active_=false,management_=false;uint32_t capabilities_=0;
+    bool active_=false,management_=false;
 };
 } // namespace amity::consortium

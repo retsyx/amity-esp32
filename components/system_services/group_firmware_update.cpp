@@ -65,7 +65,7 @@ void fail_job(const std::string& error){
 }
 bool authority(){const auto state=c::runtime_status();return state.initialized&&state.coordinator&&state.authority_ready&&!state.member&&firmware_ready();}
 std::optional<c::RuntimePeerStatus> peer(m::OctopusId owner){for(const auto& p:c::runtime_peers())if(p.id==owner)return p;return {};}
-bool available(const c::RuntimePeerStatus& p){return p.enrolled&&!p.provisional&&(p.ready||p.management_ready)&&(p.negotiated_capabilities&c::peer_firmware_update);}
+bool available(const c::RuntimePeerStatus& p){return p.enrolled&&!p.provisional&&(p.ready||p.management_ready);}
 std::string report_job(const Cohort& value){
     std::string out="{\"job_id\":"+quote(value.id?value.id.str():"")+",\"phase\":"+quote(value.phase)+",\"automatic\":"+(value.automatic?"true":"false")+",\"error\":"+quote(value.error)+",\"firmware_version\":"+quote(value.release.firmware_version)+",\"image_elf_sha256\":"+quote(value.release.image_elf_sha256)+",\"image_bytes\":\""+std::to_string(value.release.image_bytes)+"\",\"targets\":[";
     for(const auto& target:value.targets){if(out.back()!='[')out+=',';out+="{\"octopus_id\":"+quote(target.owner.str())+",\"offset\":\""+std::to_string(target.offset)+"\",\"phase\":"+quote(target.phase)+",\"error\":"+quote(target.error)+"}";}

@@ -35,7 +35,7 @@ bool synchronize(Active&,bool,bool,uint64_t,const Envelope*,LinkTrace*){assert(f
 
 SUITE = r'''
 namespace amity::consortium {
-std::shared_ptr<Active> connection(bool server,bool matching,bool provisional,uint32_t capabilities=known_capabilities){
+std::shared_ptr<Active> connection(bool server,bool matching,bool provisional){
  auto active=std::make_shared<Active>();active->ready=active->status.ready=false;
  const auto main=ident<model::OctopusId>(2),member=ident<model::OctopusId>(3);
  group={};group.role=server?Group::coordinator:(provisional?Group::prepared:Group::member);
@@ -45,7 +45,6 @@ std::shared_ptr<Active> connection(bool server,bool matching,bool provisional,ui
  HelloFrame peer;peer.consortium_id=group.consortium;peer.octopus_id=active->tls->authenticated;
  peer.boot_id=ident<model::BootId>(server?5:4);peer.coordinator_epoch=1;peer.config_revision=server?2:7;
  peer.config_hash=std::string(64,'a');peer.firmware_identity=matching?hex(std::string(32,char(0xab))):std::string(64,'c');
- peer.required_capabilities=capabilities;peer.optional_capabilities=0;peer.hardware_profile=true;
  peer.supported_tentacles=1;peer.configured_tentacles_mask=1;
  if(provisional){group.join_id=ident<model::JoinId>(8);group.join_digest=std::string(64,'d');group.joining_id=member;group.join_hostname="member";peer.pending_join_id=group.join_id;peer.join_digest=group.join_digest;}
  active->tls->incoming.push_back(hello_json(peer));
@@ -59,8 +58,8 @@ Envelope inbound(const Active& active,Kind kind){
  message.origin_boot_id=scope.peer_boot_id;message.destination_boot_id=scope.local_boot_id;
  message.coordinator_epoch=scope.epoch;message.config_revision=scope.config_revision;message.ttl_ms=1000;message.kind=kind;return message;
 }
-void mismatched(bool server,bool provisional,uint32_t capabilities){
- auto active=connection(server,false,provisional,capabilities);const auto* tls=active->tls.get();LinkTrace trace;
+void mismatched(bool server,bool provisional){
+ auto active=connection(server,false,provisional);const auto* tls=active->tls.get();LinkTrace trace;
  assert(establish(*active,server,&trace));
  const auto scope=active->session.scope();const auto hello_frames=active->tls->raw_sent.size();
  assert(active->peer==scope.peer_id&&active->claimed_boot==scope.peer_boot_id&&!active->execution_supported);
@@ -85,13 +84,12 @@ void mismatched(bool server,bool provisional,uint32_t capabilities){
  ++configuration;assert(synchronize_connection(*active,server,true,configuration,&trace));
  assert(active->session.scope()==scope&&active->management_ready&&!active->ready&&synchronization_entries==0);
  assert(send(*active,server?Kind::update_begin:Kind::update_result,"{}"));
- if(capabilities&factory_reset_removal){assert(active->session.admit(inbound(*active,server?Kind::membership_result:Kind::membership_event),100,100)==Error::none);}
+ assert(active->session.admit(inbound(*active,server?Kind::membership_result:Kind::membership_event),100,100)==Error::none);
 }
 }
 int main(){using namespace amity::consortium;
  for(bool server:{false,true})for(bool provisional:{false,true}){
-  mismatched(server,provisional,known_capabilities);
-  mismatched(server,provisional,peer_firmware_update);
+  mismatched(server,provisional);
   auto active=connection(server,true,provisional);LinkTrace trace;assert(establish(*active,server,&trace));
   assert(active->execution_supported&&!active->management_ready&&active->session.state()==ConnectionState::synchronizing);
   assert(!synchronize_connection(*active,server,true,0,&trace)&&synchronization_entries==1); // Normal synchronization path remains selected.
@@ -103,7 +101,7 @@ int main(){using namespace amity::consortium;
 
 def main():
     source = (ROOT / 'components/consortium/runtime.cpp').read_text()
-    prefix = PREFIX.replace('struct FakeTls{', 'struct FakeTls{\n std::vector<std::string> raw_sent;std::vector<bool> raw_bulk;bool send(const std::string& value,bool bulk=false){raw_sent.push_back(value);raw_bulk.push_back(bulk);return true;}bool extended_profile()const{return true;}bool hardware_profile()const{return true;}')
+    prefix = PREFIX.replace('struct FakeTls{', 'struct FakeTls{\n std::vector<std::string> raw_sent;std::vector<bool> raw_bulk;bool send(const std::string& value,bool bulk=false){raw_sent.push_back(value);raw_bulk.push_back(bulk);return true;}')
     prefix = prefix.replace('model::OctopusId peer;', 'model::OctopusId peer;model::BootId claimed_boot;')
     prefix = prefix.replace('struct Active{', function(source, 'struct LinkTrace {').rstrip() + ';\nstruct Active{')
     prefix = prefix.replace('bool send(Active&,Kind,std::string_view,uint32_t ttl=1000);', '')

@@ -15,12 +15,12 @@ c::LinkScope scope(c::PeerRole role){
     value.local_boot_id=ident<m::BootId>('5');value.peer_boot_id=ident<m::BootId>('6');value.epoch=1;value.config_revision=7;
     return value;
 }
-c::Session session(c::PeerRole role,uint32_t capabilities=c::known_capabilities,bool active=true){
+c::Session session(c::PeerRole role,bool active=true){
     const auto link=scope(role);c::Session value;
     assert(value.authenticate(link,link.peer_id,role,active)==c::Error::none);
     c::HelloFrame hello;hello.consortium_id=link.consortium_id;hello.octopus_id=link.peer_id;hello.boot_id=link.peer_boot_id;
-    hello.coordinator_epoch=1;hello.config_revision=7;hello.optional_capabilities=capabilities;
-    assert(value.hello(hello,c::known_capabilities)==c::Error::none);
+    hello.coordinator_epoch=1;hello.config_revision=7;
+    assert(value.hello(hello)==c::Error::none);
     if(active)assert(value.synchronized(7,true,true)==c::Error::none);
     return value;
 }
@@ -99,10 +99,7 @@ void authorization_tests(){
         }
         value.restrict_management();assert(value.admit(envelope,100,101)==c::Error::none);
         assert(value.admit(message(value,rejected),100,101)==c::Error::unauthorized_role);
-        auto no_cap=session(role,c::known_capabilities&~c::peer_logs);
-        assert(no_cap.admit(message(no_cap,accepted),100,101)==c::Error::unsupported_kind);
-        no_cap.restrict_management();assert(no_cap.admit(message(no_cap,accepted),100,101)==c::Error::unsupported_kind);
-        auto passive=session(role,c::known_capabilities,false);passive.restrict_management();
+        auto passive=session(role,false);passive.restrict_management();
         assert(passive.admit(message(passive,accepted),100,101)==c::Error::unauthorized_role);
         auto synchronizing=session(role);assert(synchronizing.begin_synchronization(7)==c::Error::none);
         assert(synchronizing.admit(envelope,100,101)==c::Error::unauthorized_role);
@@ -111,10 +108,10 @@ void authorization_tests(){
         assert(retiring.admit(envelope,100,101)==c::Error::unauthorized_role);
         assert(retiring.discard_lifecycle_frame(envelope,100,101)==(role==c::PeerRole::actuator?c::Error::none:c::Error::unsupported_kind));
     }
-    auto provisional=session(c::PeerRole::provisional_candidate,c::known_capabilities,false);
+    auto provisional=session(c::PeerRole::provisional_candidate,false);
     assert(provisional.admit(message(provisional,c::Kind::log_request),100,101)==c::Error::unauthorized_role);
 }
 int main(){
     codec_tests();authorization_tests();
-    std::cout<<"PASS log codec bounds, binary chunks, closed payloads, authenticated roles/capabilities, management and late-frame drains\n";
+    std::cout<<"PASS log codec bounds, binary chunks, closed payloads, authenticated roles, management and late-frame drains\n";
 }

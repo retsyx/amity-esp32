@@ -74,7 +74,7 @@ esp_err_t send_snapshot(model::OctopusId owner){
  return runtime_send_owned_result(owner,{},report);
 }
 std::shared_ptr<Active> connection(unsigned link=7,unsigned peer_boot=8,unsigned owner=3){
- auto a=std::make_shared<Active>();a->peer=ident<model::OctopusId>(owner);a->status.id=a->peer;a->status.boot_id=a->claimed_boot=ident<model::BootId>(peer_boot);a->tls->authenticated=a->peer;a->tls->allowed={{a->peer,"leaf","pin",true}};a->status.config_revision=1;a->status.negotiated_capabilities=known_capabilities;
+ auto a=std::make_shared<Active>();a->peer=ident<model::OctopusId>(owner);a->status.id=a->peer;a->status.boot_id=a->claimed_boot=ident<model::BootId>(peer_boot);a->tls->authenticated=a->peer;a->tls->allowed={{a->peer,"leaf","pin",true}};a->status.config_revision=1;
  const LinkScope scope{ident<model::LinkId>(link),ident<model::ConsortiumId>(1),ident<model::OctopusId>(2),a->peer,ident<model::OctopusId>(2),ident<model::BootId>(4),a->status.boot_id,1,1};
  assert(a->session.authenticate(scope,scope.peer_id,PeerRole::actuator,true)==Error::none);return a;
 }
@@ -100,8 +100,8 @@ void closure(){
 void duplicate_connections(){
  for(bool ready:{false,true}){
   reset();auto old=connection(),duplicate=connection(9);old->ready=ready;old->status.ready=ready;links={old,duplicate};unsigned fences=0;
-  const auto original=old->session.scope();HelloFrame hello;hello.consortium_id=original.consortium_id;hello.octopus_id=original.peer_id;hello.boot_id=original.peer_boot_id;hello.coordinator_epoch=1;hello.required_capabilities=known_capabilities;
-  assert(old->session.hello(hello,known_capabilities)==Error::none);if(ready)assert(old->session.synchronized(1,true,true)==Error::none);
+  const auto original=old->session.scope();HelloFrame hello;hello.consortium_id=original.consortium_id;hello.octopus_id=original.peer_id;hello.boot_id=original.peer_boot_id;hello.coordinator_epoch=1;
+  assert(old->session.hello(hello)==Error::none);if(ready)assert(old->session.synchronized(1,true,true)==Error::none);
   const auto state=old->session.state();
   old->refreshing=!ready;old->queue.push_back({Kind::device_status,"{\"hostname\":\"canonical-work\"}",1000,clock_ms,1,{}});
   controls.disconnected=[&](auto,auto,auto){++fences;old->queue.clear();old->context_ready=false;return true;};
@@ -214,8 +214,8 @@ void queues(){
  reset();a=connection();links={a};assert(send_snapshot(a->peer)==ESP_OK);clock_ms+=1000;assert(send_snapshot(a->peer)==ESP_OK&&a->queue.size()==1);
  // A quiet authenticated stream needs no periodic permission before fresh input.
  reset();a=connection();links={a};
- const auto scope=a->session.scope();HelloFrame hello;hello.consortium_id=scope.consortium_id;hello.octopus_id=scope.peer_id;hello.boot_id=scope.peer_boot_id;hello.coordinator_epoch=1;hello.required_capabilities=known_capabilities;
- assert(a->session.hello(hello,known_capabilities)==Error::none&&a->session.synchronized(1,true,true)==Error::none);
+ const auto scope=a->session.scope();HelloFrame hello;hello.consortium_id=scope.consortium_id;hello.octopus_id=scope.peer_id;hello.boot_id=scope.peer_boot_id;hello.coordinator_epoch=1;
+ assert(a->session.hello(hello)==Error::none&&a->session.synchronized(1,true,true)==Error::none);
  clock_ms+=60000;assert(runtime_send_owned(down())==ESP_OK&&a->queue.size()==1&&a->queue.front().ttl==500);
 }
 void initial_context(){
@@ -252,8 +252,8 @@ void future_context_is_recaptured(){
  // The exchange may take longer than the ordinary action TTL. No old payload
  // or deadline is retained, so configuration alone cannot create or expire an admitted action.
  clock_ms+=1150;assert(a->queue.empty()&&!a->cancelled);
- const auto scope=a->session.scope();HelloFrame hello;hello.consortium_id=scope.consortium_id;hello.octopus_id=scope.peer_id;hello.boot_id=scope.peer_boot_id;hello.coordinator_epoch=1;hello.config_revision=1;hello.required_capabilities=known_capabilities;
- assert(a->session.hello(hello,known_capabilities)==Error::none&&a->session.synchronized(1,true,true)==Error::none);
+ const auto scope=a->session.scope();HelloFrame hello;hello.consortium_id=scope.consortium_id;hello.octopus_id=scope.peer_id;hello.boot_id=scope.peer_boot_id;hello.coordinator_epoch=1;hello.config_revision=1;
+ assert(a->session.hello(hello)==Error::none&&a->session.synchronized(1,true,true)==Error::none);
  assert(a->session.advance_configuration(2)==Error::none);a->status.config_revision=2;a->context_ready=false;a->refreshing=true;a->context_requested=false;
  unsigned requested=0;controls.ready=[&](auto,auto,auto){++requested;return true;};assert(initialize_context(*a)&&requested==1&&!a->context_ready&&a->context_requested);
  action.kind=model::OwnedIntentKind::key_edges;assert(runtime_send_owned(action)==ESP_ERR_INVALID_STATE&&a->queue.empty());
@@ -282,8 +282,8 @@ void asynchronous_context_failure_is_scoped(){
  const auto original=a->session.scope();done(model::OwnedContextResult::stale);assert(!a->cancelled&&a->session.scope()==original&&diagnostic_logs.empty());
  configuration=2;a->refreshing=true;done(model::OwnedContextResult::published);
  assert(a->refreshing&&!a->context_ready&&a->context_requested&&!a->cancelled); // Old success cannot finish a newer target revision.
- HelloFrame hello;hello.consortium_id=original.consortium_id;hello.octopus_id=original.peer_id;hello.boot_id=original.peer_boot_id;hello.coordinator_epoch=1;hello.config_revision=1;hello.required_capabilities=known_capabilities;
- assert(a->session.hello(hello,known_capabilities)==Error::none&&a->session.synchronized(1,true,true)==Error::none&&a->session.advance_configuration(2)==Error::none);
+ HelloFrame hello;hello.consortium_id=original.consortium_id;hello.octopus_id=original.peer_id;hello.boot_id=original.peer_boot_id;hello.coordinator_epoch=1;hello.config_revision=1;
+ assert(a->session.hello(hello)==Error::none&&a->session.synchronized(1,true,true)==Error::none&&a->session.advance_configuration(2)==Error::none);
  configuration=2;a->status.config_revision=2;a->context_requested=false;a->context_ready=false;
  std::function<void(model::OwnedContextResult)> newer;
  controls.ready=[&](auto,uint64_t revision,auto completed){assert(revision==2);newer=std::move(completed);return true;};assert(initialize_context(*a));
@@ -296,8 +296,8 @@ void asynchronous_context_failure_is_scoped(){
 void asynchronous_context_ignores_ended_logical_session(){
  reset();configuration=1;auto a=connection();links={a};group.consortium=a->session.scope().consortium_id;a->context_ready=false;
  const auto original=a->session.scope();const auto transport=a->tls;
- HelloFrame hello;hello.consortium_id=original.consortium_id;hello.octopus_id=original.peer_id;hello.boot_id=original.peer_boot_id;hello.coordinator_epoch=1;hello.config_revision=1;hello.required_capabilities=known_capabilities;
- assert(a->session.hello(hello,known_capabilities)==Error::none&&a->session.synchronized(1,true,true)==Error::none);
+ HelloFrame hello;hello.consortium_id=original.consortium_id;hello.octopus_id=original.peer_id;hello.boot_id=original.peer_boot_id;hello.coordinator_epoch=1;hello.config_revision=1;
+ assert(a->session.hello(hello)==Error::none&&a->session.synchronized(1,true,true)==Error::none);
  std::function<void(model::OwnedContextResult)> old_completed,new_completed;
  controls.ready=[&](auto owner,uint64_t revision,auto completed){assert(owner==a->peer&&revision==1);old_completed=std::move(completed);return true;};
  assert(initialize_context(*a)&&a->context_requested&&!a->context_ready);
@@ -417,7 +417,7 @@ void codec_and_session(){
  input=down();input.edge_count=2;input.edges[1]={input.edges[0].key,false};text=owned_intent_json(input);assert(!text.empty()&&parse_json(text,bad,error)&&parse_owned_intent(bad,parsed)==Error::none&&parsed.edge_count==2&&!parsed.edges[1].down&&!bad.get("target"));
  input.edges[1].key=0x42;assert(parse_json(owned_intent_json(input),bad,error)&&parse_owned_intent(bad,parsed)==Error::invalid_message);input=down();
  LinkScope scope{ident<model::LinkId>(7),ident<model::ConsortiumId>(1),ident<model::OctopusId>(3),ident<model::OctopusId>(2),ident<model::OctopusId>(2),ident<model::BootId>(8),ident<model::BootId>(4),1,1};
- Session session;assert(session.authenticate(scope,scope.peer_id,PeerRole::coordinator,true)==Error::none);HelloFrame h;h.consortium_id=scope.consortium_id;h.octopus_id=scope.peer_id;h.boot_id=scope.peer_boot_id;h.coordinator_epoch=1;h.required_capabilities=known_capabilities;assert(session.hello(h,known_capabilities)==Error::none&&session.synchronized(1,true,true)==Error::none);
+ Session session;assert(session.authenticate(scope,scope.peer_id,PeerRole::coordinator,true)==Error::none);HelloFrame h;h.consortium_id=scope.consortium_id;h.octopus_id=scope.peer_id;h.boot_id=scope.peer_boot_id;h.coordinator_epoch=1;assert(session.hello(h)==Error::none&&session.synchronized(1,true,true)==Error::none);
  Envelope e;e.consortium_id=scope.consortium_id;e.origin_octopus_id=scope.peer_id;e.destination_octopus_id=scope.local_id;e.origin_boot_id=scope.peer_boot_id;e.destination_boot_id=scope.local_boot_id;e.coordinator_epoch=e.config_revision=1;e.kind=Kind::scoped_intent;e.ttl_ms=500;e.payload=value;
  assert(session.admit(e,100,100)==Error::none);
  input=down();text=owned_intent_json(input);assert(parse_json(text,e.payload,error)&&session.admit(e,60000,60000)==Error::none); // Fresh input after long idle needs no grant.

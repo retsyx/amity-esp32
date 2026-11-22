@@ -43,8 +43,6 @@ struct TlsLink {
     bool handshake();
     bool usable()const{return configured&&!transport_failed&&!incoming_failed;}
     bool established()const{return handshaken&&usable();}
-    bool extended_profile()const;
-    bool hardware_profile()const;
     // The caller supplies framing class; TLS does not inspect application data.
     bool send(std::string_view,bool bulk=false);
     enum class ReceiveResult {pending,frame,expired,failed};

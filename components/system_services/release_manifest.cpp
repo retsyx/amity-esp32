@@ -43,7 +43,7 @@ std::string compiled_hardware_mapping_sha256(){
 }
 bool parse_release_manifest(std::string_view text,ReleaseManifest& out,std::string& error){
     const auto fail=[&](const char* message){error=message;return false;};c::Json value;c::JsonError detail;ReleaseManifest m;uint64_t format=0;
-    if(!c::parse_json(text,value,detail,8192)||!c::closed(value,{"format","release_id","firmware_version","image_bytes","image_sha256","image_elf_sha256","chip","hardware_profiles","partition_layout","slot_bytes","protocol","configuration","storage","origin","factory","bootloader","security_profile","rollback_readable_max","source_commit","source_tree_sha256","source_dirty","dependencies","signing_key_id"},{"hardware_mapping_sha256"}))return fail("Invalid or unsupported release manifest fields");
+    if(!c::parse_json(text,value,detail,8192)||!c::closed(value,{"format","release_id","firmware_version","image_bytes","image_sha256","image_elf_sha256","chip","hardware_profiles","partition_layout","slot_bytes","configuration","storage","origin","factory","bootloader","security_profile","rollback_readable_max","source_commit","source_tree_sha256","source_dirty","dependencies","signing_key_id"},{"hardware_mapping_sha256"}))return fail("Invalid or unsupported release manifest fields");
     std::string chip,layout,bootloader;
     if(!c::json_uint(value.get("format"),format,1,1)||!token(value.get("release_id"),m.release_id,1,96)||!token(value.get("firmware_version"),m.firmware_version,1,31)||
        !token(value.get("image_sha256"),m.image_sha256,64,64)||!hex(m.image_sha256,64)||!token(value.get("image_elf_sha256"),m.image_elf_sha256,64,64)||!hex(m.image_elf_sha256,64)||
@@ -64,20 +64,15 @@ bool parse_release_manifest(std::string_view text,ReleaseManifest& out,std::stri
     uint64_t origin_min,origin_max,origin_write,factory_min,factory_max,factory_write;
     if(!bounds(value.get("configuration"),m.config_read_min,m.config_read_max,m.config_write)||!bounds(value.get("storage"),m.storage_read_min,m.storage_read_max,m.storage_write)||
        !bounds(value.get("origin"),origin_min,origin_max,origin_write)||origin_min>1||origin_max<1||origin_write!=1||!bounds(value.get("factory"),factory_min,factory_max,factory_write)||factory_min>1||factory_max<4||factory_write!=4)return fail("Unsupported configuration, origin or factory format");
-    const auto* protocol=value.get("protocol");uint64_t low,high,required,optional;
-    if(!protocol||!c::closed(*protocol,{"min","max","required_capabilities","optional_capabilities"})||!c::decimal(protocol->get("min"),low)||!c::decimal(protocol->get("max"),high)||low>1||high<1||
-       !c::decimal(protocol->get("required_capabilities"),required)||required>UINT32_MAX||!c::decimal(protocol->get("optional_capabilities"),optional)||optional>UINT32_MAX||(required&~c::known_capabilities))return fail("Unsupported consortium protocol or capabilities");
-    m.required_capabilities=static_cast<uint32_t>(required);
     const auto* dependencies=value.get("dependencies");if(!dependencies||!c::closed(*dependencies,{"esp_idf","esp_matter","connectedhomeip","homekit"}))return fail("Missing dependency identities");
     for(const auto& dependency:dependencies->object){std::string commit;if(!token(&dependency.second,commit,40,40)||!hex(commit,40))return fail("Invalid dependency commit");}
     m.canonical=canonical(value);
     if(text!=m.canonical)return fail("Manifest must use canonical RFC8785 JSON bytes");
     out=std::move(m);return true;
 }
-bool compatible_release(const ReleaseManifest& m,uint64_t slot,uint64_t installed,uint64_t rollback,uint32_t capabilities,bool production,std::string& error){
+bool compatible_release(const ReleaseManifest& m,uint64_t slot,uint64_t installed,uint64_t rollback,bool production,std::string& error){
     if(m.image_bytes>slot||m.slot_bytes>slot||m.image_bytes>m.slot_bytes){error="Image exceeds the installed OTA partition";return false;}
     if(m.config_read_min>3||m.config_read_max<3||m.config_write!=3||installed<m.storage_read_min||installed>m.storage_read_max||m.storage_write>rollback||m.storage_write>m.rollback_readable_max){error="Release is incompatible with installed configuration or rollback storage";return false;}
-    if(m.required_capabilities&~capabilities){error="Release requires an unsupported control capability";return false;}
     if(production!=(m.security_profile=="production")){error="A remote update cannot change the provisioned security profile";return false;}
     if(production&&m.signing_key_id.empty()){error="Production release requires a trusted publisher signature";return false;}
     return true;
