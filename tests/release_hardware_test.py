@@ -119,6 +119,20 @@ class HardwareReleaseTests(unittest.TestCase):
                 self.assertNotIn('hardware_mapping_sha256', value)
                 self.assertFalse(self.accepts(name, value | {'hardware_mapping_sha256': '0' * 64}))
 
+    def test_semver_build_metadata_release_is_admitted(self):
+        # Release tags may carry semver build metadata. Every generated
+        # release must pass the firmware's own manifest rule.
+        def versioned(version):
+            path = self.image('versioned.bin', {'AMITY_BOARD_LEGACY_1T': 'y'})
+            image = bytearray(path.read_bytes()); image[48:80] = version.ljust(32, b'\0'); path.write_bytes(image)
+            return path
+        for version in [b'0.2.0+rc1', b'1.0.0-rc.1+build.5']:
+            value = self.manifest(versioned(version))
+            self.assertEqual(value['firmware_version'], version.decode())
+            self.assertTrue(self.accepts('legacy', value), value['release_id'])
+        with self.assertRaisesRegex(ValueError, 'release identifier'):
+            self.manifest(versioned(b'0.2.0 rc1'))
+
     def test_generator_rejects_stale_config_and_unknown_or_ambiguous_images(self):
         config = development(); image = self.image('checks.bin', config)
         sdkconfig = self.base / 'sdkconfig.json'

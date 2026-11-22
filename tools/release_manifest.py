@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import sys
 
 sys.path.insert(0,str(Path(__file__).resolve().parent))
@@ -32,7 +33,11 @@ def manifest(image,signing_key_id='',sdkconfig=None):
     hardware,mapping=image_identity(data,read_config(metadata) if metadata.exists() else None)
     if sdkconfig and not metadata.exists():raise ValueError('Explicit SDK configuration does not exist')
     digest=hashlib.sha256(data).hexdigest()
-    value=dict(format=1,release_id='amity-'+version+'-'+digest[:12],firmware_version=version,
+    # Firmware admits release identifiers of [A-Za-z0-9._-] only. Semver build
+    # metadata keeps its '+' in firmware_version.
+    release_id='amity-'+version.replace('+','_')+'-'+digest[:12]
+    if not re.fullmatch(r'[A-Za-z0-9._-]{1,96}',release_id):raise ValueError('Application version cannot form a release identifier')
+    value=dict(format=1,release_id=release_id,firmware_version=version,
         image_bytes=str(len(data)),image_sha256=digest,image_elf_sha256=data[176:208].hex(),
         hardware_profiles=[hardware],signing_key_id=signing_key_id)
     if mapping:value['hardware_mapping_sha256']=mapping
