@@ -184,6 +184,5 @@ sh "$root/tests/local_remote_approval_test.sh"
 sh "$root/tests/cohort_update_test.sh"
 
 sh "$root/tests/configuration_replacement_test.sh"
-PYTHONPATH="$root/cec-harness" python3 -m unittest discover -s "$root/cec-harness/unit_tests" -q
 
 python3 "$root/tests/production_profile_test.py"

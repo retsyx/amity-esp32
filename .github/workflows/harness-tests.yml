@@ -1,0 +1,62 @@
+# Copyright 2026.
+# This file is part of Amity-esp32.
+# Amity-esp32 is free software: you can redistribute it and/or modify it under the terms of the
+# GNU General Public License as published by the Free Software Foundation, either version 3 of the
+# License, or (at your option) any later version.
+
+name: Harness tests
+
+# The soak browser test drives the shipping UI, so UI changes run it too.
+on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - 'cec-harness/**'
+      - 'components/web_admin/assets/**'
+      - '.github/workflows/harness-tests.yml'
+  pull_request:
+    paths:
+      - 'cec-harness/**'
+      - 'components/web_admin/assets/**'
+      - '.github/workflows/harness-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  harness:
+    name: Harness unit and soak browser tests
+    # Branch pushes cover pull requests from this repository; only forks need the PR run.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out firmware
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Run harness unit tests
+        run: PYTHONPATH=cec-harness python3 -m unittest discover -s cec-harness/unit_tests -q
+
+      - name: Install browser test dependencies
+        run: |
+          python3 -m pip install -c cec-harness/runtime-requirements.txt playwright
+          python3 -m playwright install --with-deps chromium
+
+      - name: Run soak browser test
+        run: PYTHONPATH=cec-harness python3 cec-harness/browser_tests/soak_browser.py
