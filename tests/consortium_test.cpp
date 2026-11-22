@@ -462,8 +462,15 @@ void radio_and_gesture_tests(){
     Button bootheld;assert(bootheld.update(true,0)==G::none);assert(bootheld.update(true,50)==G::none);assert(bootheld.update(true,20000)==G::none);assert(bootheld.update(false,20001)==G::none);assert(bootheld.update(false,20051)==G::none);
 }
 void bootstrap_tests(){
-    BootstrapRecords records;auto rid=ident<m::MessageId>(1);records.connect(5);assert(records.fragment(4,rid,8,0,"abcd")==BootstrapRecords::Result::stale);assert(records.fragment(5,rid,4097,0,"abcd")==BootstrapRecords::Result::invalid);assert(records.fragment(5,rid,8,0,"abcd")==BootstrapRecords::Result::incomplete);assert(records.fragment(5,rid,8,1,"X")==BootstrapRecords::Result::conflicting);assert(records.fragment(5,rid,8,0,"abcd")==BootstrapRecords::Result::incomplete);assert(records.fragment(5,rid,8,4,"efgh")==BootstrapRecords::Result::complete);CipherCounter counter;assert(counter.consume()==1);assert(records.finish(rid,"ciphertext"));assert(records.fragment(5,rid,8,0,"abcdefgh")==BootstrapRecords::Result::duplicate);assert(records.cached_response()=="ciphertext");assert(counter.consume()==2); // duplicate consumed no counter
-    records.disconnect();records.connect(6);assert(records.fragment(5,rid,8,0,"abcdefgh")==BootstrapRecords::Result::stale);CipherCounter end(UINT32_MAX);assert(!end.consume());
+    using R=BootstrapRecords::Result;BootstrapRecords records;records.connect(5);
+    assert(records.fragment(4,1,8,0,"abcd")==R::stale);assert(records.fragment(5,1,4097,0,"abcd")==R::invalid);
+    assert(records.fragment(5,1,8,4,"efgh")==R::invalid); // A record starts at offset zero.
+    assert(records.fragment(5,1,8,0,"abcd")==R::incomplete);
+    assert(records.fragment(5,1,8,0,"abcd")==R::invalid&&records.fragment(5,2,8,4,"efgh")==R::invalid&&records.fragment(5,1,9,4,"efgh")==R::invalid);
+    assert(records.fragment(5,1,8,4,"efgh")==R::complete&&records.request()=="abcdefgh");
+    assert(records.fragment(5,2,4,0,"next")==R::invalid); // No new record while one is being processed.
+    records.finish();assert(records.request().empty()&&records.fragment(5,2,4,0,"next")==R::complete);
+    records.disconnect();records.connect(6);assert(records.fragment(5,3,8,0,"abcdefgh")==R::stale);
 }
 
 int main(int argc,char** argv){assert(argc==2);(void)argv;const auto power=packet(scope(),Kind::scoped_intent,owned_intent_json(action(scope())));json_tests();frame_tests(power);envelope_tests(power);hello_profile_tests();adapter_index_tests();session_tests();owner_activity_selection_tests();raw_key_edge_tests();synchronization_tests();logical_session_restart_tests();live_configuration_tests();update_tests();binary_update_tests();original_controller_tests();radio_and_gesture_tests();bootstrap_tests();std::cout<<"PASS consortium scoped-intent protocol, same-stream synchronization barriers and exact authority/boots/config/message-expiry fences, candidate join/abort state, update authorization, bootstrap/radio/gestures and all retired graph kinds\n";}

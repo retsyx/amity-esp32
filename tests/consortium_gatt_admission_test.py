@@ -31,6 +31,8 @@ constexpr uint16_t BLE_HS_CONN_HANDLE_NONE=0xffff;
 unsigned pdMS_TO_TICKS(unsigned value){return value;}
 int xQueueSend(void*,const void*,unsigned);
 int xQueueReceive(void*,void*,unsigned);
+unsigned uxQueueMessagesWaiting(void*);
+void vTaskDeleteWithCaps(void*);
 int ble_gap_terminate(uint16_t,int);
 int ble_gap_adv_stop();
 uint64_t clock_ms=100;
@@ -64,15 +66,18 @@ int xQueueSend(void* handle,const void* bytes,unsigned wait){
     memcpy(queue.storage+((queue.head+queue.count)%queue.capacity)*queue.item_size,bytes,queue.item_size);
     ++queue.count;return pdTRUE;
 }
+bool return_empty=false;
+unsigned uxQueueMessagesWaiting(void* handle){return static_cast<StaticQueue_t*>(handle)->count;}
 int xQueueReceive(void* handle,void* bytes,unsigned){
-    auto& queue=*static_cast<StaticQueue_t*>(handle);if(!queue.count)throw StopWorker{};
+    auto& queue=*static_cast<StaticQueue_t*>(handle);if(!queue.count){if(return_empty)return 0;throw StopWorker{};}
     memcpy(bytes,queue.storage+queue.head*queue.item_size,queue.item_size);
     queue.head=(queue.head+1)%queue.capacity;--queue.count;return pdTRUE;
 }
 int ble_gap_terminate(uint16_t,int){++terminations;return 0;}
 int ble_gap_adv_stop(){++advert_stops;return 0;}
 void check(bool good,const char* message){if(!good)throw std::runtime_error(message);}
-void run(){try{worker(nullptr);}catch(const StopWorker&){}check(!processing_record&&!outstanding_work,"worker retained work");}
+void vTaskDeleteWithCaps(void*){}
+void run(){try{worker_work();}catch(const StopWorker&){}check(!processing_record&&!outstanding_work,"worker retained work");}
 void submit(uint32_t rid,uint8_t endpoint,std::string_view bytes,size_t total=0,size_t offset=0){
     Work work;work.generation=generation;work.session=server_session;work.connection=server_connection;
     work.record=rid;work.endpoint=endpoint;work.total=total?total:bytes.size();work.offset=offset;work.length=bytes.size();
@@ -80,7 +85,7 @@ void submit(uint32_t rid,uint8_t endpoint,std::string_view bytes,size_t total=0,
 }
 void reset(){
     close_channel();fail_queue_creation=false;work_queue=create_work_queue();
-    generation=7;server_session=9;server_connection=31;server_open=true;server_sealed=false;deadline=180100;
+    generation=7;server_session=9;server_connection=31;server_open=true;server_sealed=false;worker_running=true;return_empty=false;deadline=180100;
     server_id="00000000000000000000000000000001";
     clock_ms=100;failed_proofs=0;outstanding_work=0;processing_record=false;
     response_record=response_offset=response_endpoint=response_status=0;srv_response.clear();
@@ -114,9 +119,13 @@ void handshake_flow(){
     reset();run();check(!constructors,"idle boot executed admission crypto");
     submit(1,0,"pub",6);run();check(!constructors&&channel_live,"incomplete request ran crypto or lost assembly");
     submit(1,0,"lic",6,3);run();check(constructors==1&&handshakes==1&&response_status==1,"complete handshake did not run");
-    submit(1,0,"public");run();check(handshakes==1,"duplicate repeated the handshake");
     submit(2,1,"secret");run();check(handlers==1&&decryptions==1&&srv_response=="secret","encrypted setup changed");
     ++server_session;++server_connection;submit(3,0,"public");run();check(constructors==2&&handshakes==2,"reconnect reused the previous channel");
+}
+void worker_exits_when_closed(){
+    reset();server_open=false;return_empty=true;worker_work();check(!worker_running,"closed window kept its worker");
+    Work late;late.close=true;check(post_work(late)&&!outstanding_work,"late close was queued without a worker");
+    late.close=false;check(!post_work(late)&&!outstanding_work,"data work was queued without a worker");
 }
 void stale_work(){
     for(unsigned mutation=0;mutation<5;++mutation){
@@ -128,7 +137,7 @@ void stale_work(){
     reset();submit(1,0,"pub",6);run();clock_ms+=30000;submit(1,0,"lic",6,3);run();
     check(!constructors&&terminations==1,"expired assembly started crypto");
 }
-int main(){try{queue_storage_and_capacity();handshake_flow();stale_work();std::cout<<"PASS actual candidate worker: persistent copied queue records,16-slot FIFO/overflow/ring reuse; handshake per connection, duplicate reuse and exact stale-work fences\n";return 0;}catch(const std::exception& error){std::cerr<<"FAIL "<<error.what()<<'\n';return 1;}}
+int main(){try{queue_storage_and_capacity();handshake_flow();worker_exits_when_closed();stale_work();std::cout<<"PASS actual candidate worker: persistent copied queue records,16-slot FIFO/overflow/ring reuse; handshake per connection, worker exit after the window and exact stale-work fences\n";return 0;}catch(const std::exception& error){std::cerr<<"FAIL "<<error.what()<<'\n';return 1;}}
 '''
 
 
@@ -138,7 +147,6 @@ def main():
     # placement seams here; the firmware ELF checks their actual sections.
     assert 'DRAM_ATTR StaticQueue_t work_queue_control;' in source
     assert 'EXT_RAM_BSS_ATTR uint8_t work_queue_storage[' in source
-    assert 'EXT_RAM_BSS_ATTR BootstrapRecords records;' in source
     assert 'work_queue=create_work_queue();' in source
     assert 'xQueueCreate(16,sizeof(Work))' not in source
     actual = source[source.index('struct Work {'):source.index('int access(uint16_t connection,')]

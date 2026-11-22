@@ -41,21 +41,23 @@ uint64_t generation=0,deadline=0,server_session=0;
 uint16_t server_connection=BLE_HS_CONN_HANDLE_NONE,attribute_handle=0;
 std::string srv_response,advertised_name,server_id;uint32_t server_callback_cookie=0;
 BootstrapHandler server_handler;
-bool server_open=false,server_sealed=false,registered=false;
+bool server_open=false,server_sealed=false,registered=false,worker_running=false;
 std::atomic_uint failed_proofs{0};
 std::atomic_bool processing_record{false},channel_live{false};
 std::atomic_uint outstanding_work{0};
-bool post_work(const Work &work){++outstanding_work;if(work_queue&&xQueueSend(work_queue,&work,0)==pdTRUE)return true;--outstanding_work;return false;}
+// Callers hold state_mutex. Without a worker there is no channel to close.
+bool post_work(const Work &work){if(!worker_running)return work.close;++outstanding_work;if(work_queue&&xQueueSend(work_queue,&work,0)==pdTRUE)return true;--outstanding_work;return false;}
 struct WorkFinished {~WorkFinished(){processing_record=false;--outstanding_work;}};
 uint16_t cancelled_server=BLE_HS_CONN_HANDLE_NONE,cancelled_client=BLE_HS_CONN_HANDLE_NONE;
 uint32_t response_record=0;uint16_t response_offset=0;
 uint8_t response_endpoint=0,response_status=0;
 std::unique_ptr<AdmissionServer> server_channel;
-EXT_RAM_BSS_ATTR BootstrapRecords records;
+BootstrapRecords records;
 uint64_t channel_generation=0,channel_session=0,channel_started=0,record_started=0;
-uint32_t pending_record=0;uint8_t pending_endpoint=0,last_endpoint=0;
+uint32_t pending_record=0;uint8_t pending_endpoint=0;
 void close_channel(){server_channel.reset();channel_live=false;channel_generation=channel_session=channel_started=record_started=0;pending_record=0;records.disconnect();}
-void worker(void*){
+// Runs only while a setup window is open or its channel is still closing.
+void worker_work(){
     Work work;
     while(true){
         if(xQueueReceive(work_queue,&work,pdMS_TO_TICKS(100))!=pdTRUE){
@@ -63,6 +65,8 @@ void worker(void*){
                 uint16_t connection;{std::lock_guard<std::mutex> guard(state_mutex);connection=server_connection;}
                 close_channel();++failed_proofs;if(connection!=BLE_HS_CONN_HANDLE_NONE)ble_gap_terminate(connection,BLE_ERR_REM_USER_CONN_TERM);
             }
+            std::lock_guard<std::mutex> guard(state_mutex);
+            if(!server_open&&!channel_live&&!uxQueueMessagesWaiting(work_queue)){worker_running=false;return;}
             continue;
         }
         processing_record=true;WorkFinished finished;
@@ -83,12 +87,10 @@ void worker(void*){
             close_channel();++failed_proofs;ble_gap_terminate(work.connection,BLE_ERR_REM_USER_CONN_TERM);continue;
         }
         if(!record_started){pending_record=work.record;pending_endpoint=work.endpoint;record_started=now_ms();}
-        char rid[33];snprintf(rid,sizeof(rid),"%032x",static_cast<unsigned>(work.record));auto parsed=model::MessageId::parse(rid);if(!parsed)continue;
-        const auto result=records.fragment(work.generation,*parsed,work.total,work.offset,std::string_view(reinterpret_cast<char*>(work.bytes),work.length));
+        const auto result=records.fragment(work.generation,work.record,work.total,work.offset,std::string_view(reinterpret_cast<char*>(work.bytes),work.length));
         if(result==BootstrapRecords::Result::incomplete)continue;
         std::string response;bool good=false;
-        if(result==BootstrapRecords::Result::duplicate&&last_endpoint==work.endpoint){response=std::string(records.cached_response());good=true;record_started=0;}
-        else if(result==BootstrapRecords::Result::complete){
+        if(result==BootstrapRecords::Result::complete){
             const auto request=records.request();
             if(!work.endpoint){
                 if(!server_channel)server_channel=std::make_unique<AdmissionServer>(own_id);
@@ -100,8 +102,8 @@ void worker(void*){
                 good=handler&&server_channel->decrypt(request,plaintext)&&handler(plaintext,reply)==ESP_OK&&!reply.empty()&&server_channel->encrypt(reply,response);
                 if(!plaintext.empty())std::fill(plaintext.begin(),plaintext.end(),0);
             }
-            good=good&&!response.empty()&&response.size()<=4096&&records.finish(*parsed,response);
-            if(good){last_endpoint=work.endpoint;record_started=0;}
+            good=good&&!response.empty()&&response.size()<=4096;
+            if(good){records.finish();record_started=0;}
         }
         if(!good){++failed_proofs;close_channel();}
         {std::lock_guard<std::mutex> guard(state_mutex);
@@ -110,6 +112,7 @@ void worker(void*){
         if(failed_proofs>=5){std::lock_guard<std::mutex> guard(state_mutex);const bool was_open=server_open;server_open=false;if(was_open)ble_gap_adv_stop();if(server_connection!=BLE_HS_CONN_HANDLE_NONE)ble_gap_terminate(server_connection,BLE_ERR_REM_USER_CONN_TERM);}
     }
 }
+void worker(void*){worker_work();vTaskDeleteWithCaps(nullptr);}
 int access(uint16_t connection,uint16_t,ble_gatt_access_ctxt *context,void*){
     std::lock_guard<std::mutex> guard(state_mutex);if(!server_open||now_ms()>=deadline||failed_proofs>=5||server_connection!=connection)return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
     if(context->op==BLE_GATT_ACCESS_OP_WRITE_CHR){const auto length=OS_MBUF_PKTLEN(context->om);if(length<7||length>BLE_ATT_ATTR_MAX_LEN)return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;uint8_t bytes[BLE_ATT_ATTR_MAX_LEN];if(os_mbuf_copydata(context->om,0,length,bytes))return BLE_ATT_ERR_UNLIKELY;
@@ -241,7 +244,6 @@ esp_err_t gatt_register(){if(registered)return ESP_ERR_INVALID_STATE;work_queue=
     static ble_gatt_chr_def chars[2]{};chars[0].uuid=&record_uuid.u;chars[0].access_cb=access;chars[0].flags=BLE_GATT_CHR_F_READ|BLE_GATT_CHR_F_WRITE;chars[0].val_handle=&attribute_handle;
     static std::vector<ble_gatt_svc_def> services;ble_gatt_svc_def service{};service.type=BLE_GATT_SVC_TYPE_PRIMARY;service.uuid=&service_uuid.u;service.characteristics=chars;services.push_back(service);
     if(chip::DeviceLayer::Internal::BLEMgrImpl().ConfigureExtraServices(services,false)!=CHIP_NO_ERROR)return ESP_ERR_INVALID_STATE;
-    if(xTaskCreateWithCaps(worker,"group_admission",16384,nullptr,2,nullptr,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS)return ESP_ERR_NO_MEM;
     registered=true;return ESP_OK;
 }
 esp_err_t gatt_server_open(uint64_t gen,model::OctopusId own_id,BootstrapHandler handler){
@@ -254,6 +256,10 @@ esp_err_t gatt_server_open(uint64_t gen,model::OctopusId own_id,BootstrapHandler
     fields.name=reinterpret_cast<const uint8_t*>(advertised_name.data());fields.name_len=advertised_name.size();fields.name_is_complete=1;
     int result=ble_gap_adv_set_fields(&fields);if(result)return ESP_FAIL;
     ble_gap_adv_params params{};params.conn_mode=BLE_GAP_CONN_MODE_UND;params.disc_mode=BLE_GAP_DISC_MODE_GEN;server_open=true;
+    if(!worker_running){
+        if(xTaskCreateWithCaps(worker,"group_admission",16384,nullptr,2,nullptr,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS){server_open=false;return ESP_ERR_NO_MEM;}
+        worker_running=true;
+    }
     result=ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC,nullptr,180000,&params,server_gap,reinterpret_cast<void*>(static_cast<uintptr_t>(server_callback_cookie)));
     if(result){server_open=false;return ESP_FAIL;}return ESP_OK;
 }
