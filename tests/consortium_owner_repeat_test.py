@@ -220,6 +220,27 @@ void queues(){
  assert(a->session.hello(hello)==Error::none&&a->session.synchronized(1,true,true)==Error::none);
  clock_ms+=60000;assert(runtime_send_owned(down())==ESP_OK&&a->queue.size()==1&&a->queue.front().ttl==500);
 }
+void every_adapter_context_reaches_the_link(){
+ // A main with no selection captures one context per adapter of a member.
+ // Its owner task publishes them back to back before the link task writes.
+ // Each covers only its own adapter, so every one must reach the member.
+ reset();auto a=connection();links={a};group.consortium=a->session.scope().consortium_id;a->context_ready=false;
+ const auto context=[](uint8_t tentacle,uint64_t generation){auto c=down();c.kind=model::OwnedIntentKind::context;c.target.osd_name.clear();c.target.port.tentacle_id=tentacle;c.generation=generation;return c;};
+ controls.ready=[&](auto,uint64_t,auto completed){
+  for(const uint8_t tentacle:{uint8_t(0),uint8_t(1)})assert(runtime_send_owned(context(tentacle,5))==ESP_OK);
+  completed(model::OwnedContextResult::published);return true;};
+ assert(initialize_context(*a));std::vector<std::string> written;before_send=[&]{written.push_back(written_payload);};
+ while(!a->queue.empty())assert(pump(*a));
+ assert(written.size()==2&&written[0].find("\"tentacle_id\":0")!=std::string::npos&&written[1].find("\"tentacle_id\":1")!=std::string::npos);
+ // A newer context replaces only its own adapter's queued context, and an
+ // activity selection, which sets every adapter's context, replaces them all.
+ assert(runtime_send_owned(context(0,6))==ESP_OK&&runtime_send_owned(context(1,6))==ESP_OK&&runtime_send_owned(context(0,7))==ESP_OK);
+ assert(a->queue.size()==2&&a->queue[0].owned->target.port.tentacle_id==1&&a->queue[1].owned->target.port.tentacle_id==0&&a->queue[1].owned->generation==7);
+ auto selection=down();selection.kind=model::OwnedIntentKind::activity;selection.target.osd_name.clear();selection.generation=8;
+ assert(runtime_send_owned(selection)==ESP_OK&&a->queue.size()==1&&a->queue[0].owned->kind==model::OwnedIntentKind::activity);
+ // A context never replaces a queued selection.
+ assert(runtime_send_owned(context(1,8))==ESP_OK&&a->queue.size()==2&&a->queue[0].owned->kind==model::OwnedIntentKind::activity);
+}
 void initial_context(){
  reset();auto a=connection();links={a};a->context_ready=false;
  auto i=down();assert(runtime_send_owned(i)==ESP_ERR_INVALID_STATE&&a->queue.empty());
@@ -518,7 +539,7 @@ void codec_and_session(){
 }
 
 }
-int main(){using namespace amity::consortium;closure();duplicate_connections();unclaimed_disconnects();connection_launch();full_roster_replacement();queues();initial_context();future_context_is_recaptured();asynchronous_context_failure_is_scoped();asynchronous_context_ignores_ended_logical_session();capture_retries_without_restart();diagnostic_lines_fit_capture();release_sender_timing();all_key_sender_timing();restart_flags_gate_front_doors_before_scope_rotation();authorization();codec_and_session();std::cout<<"PASS qualified transport: actual FIFO/key-up capacity, down/up/tap sender timing outside locks, full-roster replacement and healthy-link reuse, link loss/replacement fences, scoped codecs, stale boots/config, original message TTL and ordered button state without periodic grants\\n";}
+int main(){using namespace amity::consortium;closure();duplicate_connections();unclaimed_disconnects();connection_launch();full_roster_replacement();queues();initial_context();every_adapter_context_reaches_the_link();future_context_is_recaptured();asynchronous_context_failure_is_scoped();asynchronous_context_ignores_ended_logical_session();capture_retries_without_restart();diagnostic_lines_fit_capture();release_sender_timing();all_key_sender_timing();restart_flags_gate_front_doors_before_scope_rotation();authorization();codec_and_session();std::cout<<"PASS qualified transport: actual FIFO/key-up capacity, down/up/tap sender timing outside locks, full-roster replacement and healthy-link reuse, link loss/replacement fences, scoped codecs, stale boots/config, original message TTL and ordered button state without periodic grants\\n";}
 '''
 def main():
  source=(ROOT/'components/consortium/runtime.cpp').read_text()

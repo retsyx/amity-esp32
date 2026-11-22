@@ -78,12 +78,19 @@ struct LinkTrace {
 };
 static bool pure_key_release(const model::OwnedIntent& intent){return intent.kind==model::OwnedIntentKind::key_edges&&intent.edge_count==1&&!intent.edges[0].down;}
 static bool selection_intent(const model::OwnedIntent& intent){return intent.kind==model::OwnedIntentKind::activity||intent.kind==model::OwnedIntentKind::context;}
+// A newer selection replaces only queued work it supersedes. An activity
+// selection sets the context of every adapter on its owner; a context covers
+// only its own adapter port and never replaces a queued activity selection.
+static bool replaces_queued(const model::OwnedIntent& next,const model::OwnedIntent& queued){
+    if(next.kind==model::OwnedIntentKind::activity)return selection_intent(queued);
+    return next.kind==model::OwnedIntentKind::context&&queued.kind==model::OwnedIntentKind::context&&queued.target.port==next.target.port;
+}
 static bool queued_cleanup(const Queued& queued){
     return queued.owned&&pure_key_release(*queued.owned);
 }
 // A late press is dropped, so its hold never starts. Releases, activity
 // selections and admitted image bytes are delivered late rather than lost;
-// a newer selection replaces an older queued one instead.
+// a newer selection replaces the queued selections it supersedes instead.
 static bool queued_expires(const Queued& queued){
     return !queued.firmware_stream&&!(queued.owned&&(pure_key_release(*queued.owned)||selection_intent(*queued.owned)));
 }
@@ -1705,9 +1712,8 @@ static esp_err_t queue_control(model::OctopusId owner,Kind kind,uint32_t ttl,std
     for(auto &active:links)if(active->peer==owner&&!active->cancelled&&!active->retiring&&!active->restart_requested&&!active->execution_fenced&&active->ready){
         if(expected_link&&active->session.scope().link_id!=*expected_link)continue;
         std::lock_guard<std::mutex> qguard(active->mutex);const auto now=now_ms();dropped.now=now;
-        const bool selection=owned&&selection_intent(*owned);
         active->queue.erase(std::remove_if(active->queue.begin(),active->queue.end(),[&](const auto& queued){
-            if(selection&&queued.owned&&selection_intent(*queued.owned))return true;
+            if(owned&&queued.owned&&replaces_queued(*owned,*queued.owned))return true;
             const bool expired=queued_expired(queued,now);
             if(expired&&queued.snapshot)retries.dropped(*active,queued);
             else if(expired)dropped.intents.push_back(queued);
