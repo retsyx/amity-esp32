@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Run actual discovery/admission runtime against deterministic task/radio seams."""
-import argparse
 from pathlib import Path
 import os
 import shlex
@@ -245,9 +244,7 @@ int main(){return amity::consortium::run_tests();}
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source', type=Path, default=ROOT / 'components/consortium/runtime.cpp')
-    source = parser.parse_args().source.read_text()
+    source = (ROOT / 'components/consortium/runtime.cpp').read_text()
     names = ['std::string proposal_json(', 'void admission_failed(', 'void invite_worker_work(', 'RuntimeAdmissionStatus runtime_admission_status(',
              'esp_err_t runtime_scan_admission(', 'esp_err_t runtime_cancel_admission(', 'esp_err_t runtime_add_octopus(']
     actual = function((ROOT / 'components/consortium/settings_runtime.inc').read_text(), 'bool settings_hostname_pending(') + ''.join(function(source, name) for name in names)

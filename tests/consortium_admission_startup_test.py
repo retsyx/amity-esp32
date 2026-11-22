@@ -244,10 +244,9 @@ int main(){using namespace amity::consortium;try{startup_tests();fresh_public_pr
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source', type=Path, default=ROOT / 'components/consortium/runtime.cpp')
     parser.add_argument('--only', choices=['startup', 'network', 'headless', 'ipv4'])
     args = parser.parse_args()
-    source = args.source.read_text()
+    source = (ROOT / 'components/consortium/runtime.cpp').read_text()
     actual = ('#define socket amity::consortium::fake_socket\n#define close amity::consortium::fake_close\n#define getaddrinfo amity::consortium::fake_getaddrinfo\n#define freeaddrinfo amity::consortium::fake_freeaddrinfo\n'
               + function(source, 'bool connection_available(')
               + function(source, 'void ensure_connection(')

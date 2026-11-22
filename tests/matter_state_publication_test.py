@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Run actual Matter publication against a blocked CHIP task and bounded queue."""
 
-import argparse
 import os
 from pathlib import Path
 import shlex
@@ -149,21 +148,13 @@ int main(){
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--source', type=Path, default=ROOT / 'components/amity_matter/amity_matter.cpp')
-    args = parser.parse_args()
-    source = args.source.read_text()
-    actual = ''
-    if 'std::mutex state_publication_mutex;' in source:
-        actual += source[source.index('std::mutex state_publication_mutex;'):source.index('std::atomic<bool> started')]
-        actual += function(source, 'void publish_state(intptr_t)')
-        actual += function(source, 'extern "C" esp_err_t amity_matter_flush_state(')
-    else:
-        actual += 'extern "C" esp_err_t amity_matter_flush_state(void){return ESP_OK;}\n'
+    source = (ROOT / 'components/amity_matter/amity_matter.cpp').read_text()
+    actual = source[source.index('std::mutex state_publication_mutex;'):source.index('std::atomic<bool> started')]
+    actual += function(source, 'void publish_state(intptr_t)')
+    actual += function(source, 'extern "C" esp_err_t amity_matter_flush_state(')
     actual += function(source, 'extern "C" esp_err_t amity_matter_update_state(')
-    if args.source == ROOT / 'components/amity_matter/amity_matter.cpp':
-        polling = function((ROOT / 'main/main.cpp').read_text(), 'void remote_battery_task(')
-        assert polling.index('amity_matter_flush_state();') < polling.index('vTaskDelay(')
+    polling = function((ROOT / 'main/main.cpp').read_text(), 'void remote_battery_task(')
+    assert polling.index('amity_matter_flush_state();') < polling.index('vTaskDelay(')
     with tempfile.TemporaryDirectory(prefix='amity-matter-publication-') as directory:
         cpp, binary = Path(directory) / 'test.cpp', Path(directory) / 'test'
         cpp.write_text(PREFIX + actual + SUITE)

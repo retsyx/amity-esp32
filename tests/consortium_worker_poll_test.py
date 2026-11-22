@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Exercise the actual operational IPC pump and incremental receive callsite."""
 from pathlib import Path
-import argparse
 import os
 import shlex
 import subprocess
@@ -240,9 +239,7 @@ void firmware_dispatch_failure_restarts_upload_on_the_same_tls(){
 int main(){using namespace amity::consortium;admission_after_iteration_clock_does_not_expire_fresh_input();original_queue_deadline_and_clock_reversal_remain_fenced();pending_receive_keeps_pumping();partial_plaintext_deadline_recovers_on_idle_socket();partial_encrypted_record_keeps_original_outer_bound();bulk_prefix_allows_retransmission_and_keeps_fixed_outer_bound();bulk_class_never_authorizes_controls();application_failures_restart_scope_without_replaying_work();invalid_local_ipc_restarts_scope_without_sending_or_replaying();fatal_receive_ends_worker_without_recovery();retiring_does_not_pump_ordinary_work_during_partial_receive();aged_firmware_survives_control_pruning_and_stays_before_validation();worker_still_discards_expired_controls_activation_and_stale_firmware();aged_firmware_keeps_existing_fifo_capacity();firmware_dispatch_failure_restarts_upload_on_the_same_tls();std::cout<<"PASS actual operational worker: queue-lock admission ordering and original TTL/future-clock fences; plaintext2s/encrypted5s and input deadlines; bulk retransmission7s/fixed60s outer bound; class validation rejects bulk controls; sameTLS recovery without replay, responsive IPC and retirement fences; aged firmware bytes/stage retain bounded FIFO order; rejected upload/flash failures abort receiving on the same healthy TLS\n";}
 '''
 def main():
-    parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source',type=Path,default=ROOT/'components/consortium/runtime.cpp')
-    source=parser.parse_args().source.read_text()
+    source=(ROOT/'components/consortium/runtime.cpp').read_text()
     # Include the actual queue-clock placement, before or after mutex ownership.
     queue_start=source.index('\n',source.index('        if(!active->retiring&&!refresh_local_hostname(*active))'))+1
     receive_start=source.index('        fd_set reads;',queue_start)

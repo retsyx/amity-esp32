@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Exercise actual incremental TLS receive with timed, nonblocking SDK seams."""
-import argparse
 import os
 from pathlib import Path
 import shlex
@@ -352,17 +351,11 @@ int main(){using namespace amity::consortium::platform;try{
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source', type=Path, default=ROOT / 'components/consortium/tls_link.cpp')
-    source = parser.parse_args().source.read_text()
+    source = (ROOT / 'components/consortium/tls_link.cpp').read_text()
     actual = (function(source, 'int receive_socket(') + function(source, 'int send_socket(')
               + function(source, 'bool TlsLink::handshake(') + function(source, 'bool TlsLink::receive(') + function(source, 'bool TlsLink::send('))
-    if 'TlsLink::ReceiveResult TlsLink::poll_receive(' in source:
-        actual += (function(source, 'TlsLink::ReceiveResult TlsLink::receive_failed(') if 'TlsLink::ReceiveResult TlsLink::receive_failed(' in source else '') + function(source, 'TlsLink::ReceiveResult TlsLink::receive_expired(') + function(source, 'TlsLink::ReceiveResult TlsLink::expire_receive(') + function(source, 'TlsLink::ReceiveResult TlsLink::poll_receive(')
-    else:
-        # Before/after regression: exercise the previous actual blocking read
-        # through the same worker-turn seam, rather than fail at extraction.
-        actual += 'TlsLink::ReceiveResult TlsLink::poll_receive(std::string& out){return receive(out)?ReceiveResult::frame:ReceiveResult::failed;}\n'
+    actual += (function(source, 'TlsLink::ReceiveResult TlsLink::receive_failed(') + function(source, 'TlsLink::ReceiveResult TlsLink::receive_expired(')
+               + function(source, 'TlsLink::ReceiveResult TlsLink::expire_receive(') + function(source, 'TlsLink::ReceiveResult TlsLink::poll_receive('))
     with tempfile.TemporaryDirectory(prefix='amity-tls-receive-') as directory:
         cpp, binary = Path(directory) / 'test.cpp', Path(directory) / 'test'
         cpp.write_text(timing_support() + PREFIX + actual + SUITE)

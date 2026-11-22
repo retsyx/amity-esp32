@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run actual removal admission, dispatch, one-shot permit and result cache with real Session/codecs."""
 from pathlib import Path
-import argparse,os,shlex,subprocess,tempfile
+import os,shlex,subprocess,tempfile
 from consortium_gatt_callback_test import function
 ROOT=Path(__file__).resolve().parents[1]
 PREFIX=r'''
@@ -237,8 +237,7 @@ int main(){amity::consortium::codec_tests();amity::consortium::receiver_tests();
 '''
 
 def main():
- parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--source',type=Path,default=ROOT/'components/consortium/runtime.cpp')
- source=parser.parse_args().source.read_text();private=(ROOT/'components/consortium/removal_runtime.inc').read_text()
+ source=(ROOT/'components/consortium/runtime.cpp').read_text();private=(ROOT/'components/consortium/removal_runtime.inc').read_text()
  actual=function((ROOT/'components/consortium/tls_link.cpp').read_text(),'std::string envelope_json(')+''.join(function(source,name) for name in ['void request_session_restart(', 'void context_capture_completed(', 'bool initialize_context(', 'bool lifecycle_receive(','bool finish_retirement(','bool retire_member(','esp_err_t runtime_remove_octopus(','std::string runtime_removal_operation('])
  with tempfile.TemporaryDirectory(prefix='amity-removal-') as temp:
   temp=Path(temp);(temp/'esp_err.h').write_text('#pragma once\nusing esp_err_t=int;constexpr int ESP_OK=0,ESP_ERR_INVALID_ARG=1,ESP_ERR_INVALID_STATE=2,ESP_ERR_NO_MEM=3,ESP_ERR_TIMEOUT=4,ESP_FAIL=5,ESP_ERR_NOT_FOUND=6,ESP_ERR_NOT_SUPPORTED=7;\n')

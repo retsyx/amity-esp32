@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Compile actual runtime retirement paths with real wire/session code."""
 import os
-import argparse
 from pathlib import Path
 import shlex
 import subprocess
@@ -108,9 +107,7 @@ int main(){try{retirement_tests();settings_retirement_tests();return 0;}catch(co
 
 
 def main():
-    parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source',type=Path,default=ROOT/'components/consortium/runtime.cpp')
-    source=parser.parse_args().source.read_text()
+    source=(ROOT/'components/consortium/runtime.cpp').read_text()
     trace = function(source, 'struct LinkTrace {').rstrip() + ';\n'
     actual = function(source, 'bool lifecycle_receive(Active &active,') + function(source, 'bool finish_retirement(Active &active)')
     operation = function((ROOT / 'components/consortium/removal_runtime.inc').read_text(), 'struct RemovalOperation {').rstrip() + ';\nstd::vector<RemovalOperation> removal_operations;\n'

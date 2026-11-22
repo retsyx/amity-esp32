@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Run actual admission code with real OpenSSL-backed PSA primitives."""
-import argparse
 import os
 from pathlib import Path
 import shlex
@@ -110,9 +109,7 @@ int main(){
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source', type=Path, default=ROOT / 'components/consortium/admission_crypto.cpp')
-    source = parser.parse_args().source.read_text()
+    source = (ROOT / 'components/consortium/admission_crypto.cpp').read_text()
     # Replace SDK adapter headers, not any production algorithm or state logic.
     source = '\n'.join(line for line in source.splitlines()
                        if not line.startswith('#include "'))

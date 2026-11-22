@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Run the actual in-place synchronizer against scripted authenticated TLS I/O."""
 from pathlib import Path
-import argparse
 import os
 import shlex
 import subprocess
@@ -264,9 +263,7 @@ int main(){using namespace amity::consortium;terminal_receive_trace();coordinato
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source', type=Path, default=ROOT / 'components/consortium/runtime.cpp')
-    source = parser.parse_args().source.read_text()
+    source = (ROOT / 'components/consortium/runtime.cpp').read_text()
     # Run the same queue block as the link task, including break-on-expired-
     # causal-work and send-time TTL reduction; no copy of its decisions.
     start = source.index('\n', source.index('        if(!active->retiring&&!refresh_local_hostname(*active))')) + 1

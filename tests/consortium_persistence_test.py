@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 """Block actual runtime persistence while exercising admission and competing mutations."""
 from pathlib import Path
-import argparse, os, shlex, subprocess, tempfile
+import os, shlex, subprocess, tempfile
 from consortium_gatt_callback_test import function
 
 ROOT = Path(__file__).resolve().parents[1]
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source',type=Path,default=ROOT/'components/consortium/runtime.cpp')
-    source = parser.parse_args().source.read_text()
+    source = (ROOT/'components/consortium/runtime.cpp').read_text()
     names = ['void request_session_restart(', 'Error remember_hostname(', 'void remember_live_hostname(',
              'esp_err_t runtime_remove_octopus(',
              'esp_err_t runtime_forget_removed_octopus(', 'RuntimeStatus runtime_status(',

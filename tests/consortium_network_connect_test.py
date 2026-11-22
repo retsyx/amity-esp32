@@ -5,7 +5,6 @@ Only the CHIP driver, clock, network interface and FreeRTOS seams are faked.
 The production connection callback and stage_connect body are compiled unchanged.
 No hardware, credentials, or networking are used.
 """
-import argparse
 import os
 from pathlib import Path
 import shlex
@@ -145,10 +144,7 @@ int main(){
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source', type=Path, default=Path(__file__).resolve().parents[1] /
-                        'components/amity_matter/consortium_network.cpp')
-    source = parser.parse_args().source.read_text()
+    source = (Path(__file__).resolve().parents[1] / 'components/amity_matter/consortium_network.cpp').read_text()
     callback = function(source, 'class Callback final:') + ' callback;\n'
     actual = function(source, 'esp_err_t stage_connect(')
     with tempfile.TemporaryDirectory(prefix='amity-network-connect-') as directory:

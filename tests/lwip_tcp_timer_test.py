@@ -5,7 +5,6 @@ The unchanged SDK initialization, estimator and expiry expressions execute with
 controlled ACK timing. This models established TCP loss-recovery latency; it
 does not inject packet loss or claim to measure the bench network.
 """
-import argparse
 import os
 from pathlib import Path
 import re
@@ -159,10 +158,7 @@ def actual_source():
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--defaults-source', type=Path, default=ROOT / 'sdkconfig.defaults')
-    args = parser.parse_args()
-    defaults = args.defaults_source.read_text()
+    defaults = (ROOT / 'sdkconfig.defaults').read_text()
     interval = setting(defaults, 'CONFIG_LWIP_TCP_TMR_INTERVAL')
     initial_rto = setting(defaults, 'CONFIG_LWIP_TCP_RTO_TIME')
     assert interval > 0 and initial_rto == 1500, 'Keep positive TCP ticks and the1500ms initial RTO'

@@ -5,7 +5,6 @@ The native library uses its upstream software crypto configuration, not ESP32
 accelerators. NVS, random-fill and task clock are host seams; certificate parsing,
 self signatures, key pairing, mutual TLS and the firmware callbacks are real.
 """
-import argparse
 import os
 from pathlib import Path
 import shlex
@@ -44,9 +43,6 @@ PREFIX=r'''
 constexpr int ESP_ERR_NVS_NOT_FOUND=22;
 namespace amity::consortium::platform {
 uint64_t clock_ms=0;unsigned full_checks=0;
-#ifndef OBSERVE_REDUNDANT_VALIDATION
-#define OBSERVE_REDUNDANT_VALIDATION false
-#endif
 uint64_t now_ms(){return clock_ms;}
 unsigned pdMS_TO_TICKS(unsigned n){return n/10;}
 void vTaskDelay(unsigned ticks){clock_ms+=std::max(1u,ticks)*10;}
@@ -155,7 +151,7 @@ void binding_and_callback(const Identity& authority,const Identity& member,const
   check(!certificate_binding(crt,member.id,pin),"leaf profile constraint lost");crt.version=version;crt.MBEDTLS_PRIVATE(ext_types)=extensions;crt.MBEDTLS_PRIVATE(key_usage)=usage;crt.MBEDTLS_PRIVATE(ca_istrue)=ca;crt.MBEDTLS_PRIVATE(sig_md)=md;
  }
  TlsLink link;link.allowed={peer(member)};uint32_t flags=MBEDTLS_X509_BADCERT_EXPIRED|MBEDTLS_X509_BADCERT_FUTURE;
- full_checks=0;TlsLink::verify(&link,&crt,0,&flags);std::cout<<"trusted_verify_full_validations="<<full_checks<<"\n";check(!flags&&link.authenticated==member.id&&(full_checks==0||OBSERVE_REDUNDANT_VALIDATION),"trusted callback repeated full validation or lost clock policy");
+ full_checks=0;TlsLink::verify(&link,&crt,0,&flags);std::cout<<"trusted_verify_full_validations="<<full_checks<<"\n";check(!flags&&link.authenticated==member.id&&full_checks==0,"trusted callback repeated full validation or lost clock policy");
  for(const auto initial:{uint32_t(MBEDTLS_X509_BADCERT_BAD_KEY),uint32_t(MBEDTLS_X509_BADCERT_NOT_TRUSTED),uint32_t(MBEDTLS_X509_BADCERT_CN_MISMATCH)}){
   flags=initial|MBEDTLS_X509_BADCERT_EXPIRED;TlsLink::verify(&link,&crt,0,&flags);check(flags==initial,"callback erased non-clock verification failure");
  }
@@ -182,7 +178,7 @@ int main(){using namespace amity::consortium;using namespace amity::consortium::
  const auto third=make_identity(4);
  roster_capacity(authority,member,outsider,third);
  connection_capacity(authority,member,outsider,third);
- full_checks=0;check(connect(authority,member,{peer(member)}),"valid real mutual TLS failed");std::cout<<"mutual_tls_full_validations="<<full_checks<<"\n";check(full_checks==0||OBSERVE_REDUNDANT_VALIDATION,"TLS setup/verify repeated full trusted leaf signatures");
+ full_checks=0;check(connect(authority,member,{peer(member)}),"valid real mutual TLS failed");std::cout<<"mutual_tls_full_validations="<<full_checks<<"\n";check(full_checks==0,"TLS setup/verify repeated full trusted leaf signatures");
  // A changed certificate with the same stable ID is still an unknown leaf.
  const auto changed_member=make_identity(2);check(!connect(authority,changed_member,{peer(member)}),"unlisted same-ID certificate completed TLS");
  int fds[2];tcp_pair(fds);
@@ -214,8 +210,7 @@ def native_library():
     return source,build
 
 def main():
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--tls-source',type=Path,default=ROOT/'components/consortium/tls_link.cpp');parser.add_argument('--observe-redundant-validation',action='store_true',help='Record the old validation count for before/after evidence while keeping all security assertions');args=parser.parse_args()
-    source,build=native_library();credentials=(ROOT/'components/consortium/credentials.cpp').read_text();tls=args.tls_source.read_text()
+    source,build=native_library();credentials=(ROOT/'components/consortium/credentials.cpp').read_text();tls=(ROOT/'components/consortium/tls_link.cpp').read_text()
     actual='}\nnamespace amity::consortium {\n'+function((ROOT/'components/consortium/wire.cpp').read_text(),'bool decimal(')+'}\nnamespace amity::consortium::platform {\n'+''.join(function(credentials,name) for name in ['std::string hex(', 'bool unhex(', 'std::string sha256(', 'bool certificate_binding(', 'bool parse_certificate(', 'bool decode_identity(', 'bool certificate(', 'bool pinned_leaf(', 'esp_err_t load_identity(', 'esp_err_t load_group(', 'esp_err_t save_group('])
     actual=actual.replace('bool certificate(std::string_view der,model::OctopusId id,std::string &pin){','bool certificate(std::string_view der,model::OctopusId id,std::string &pin){++full_checks;')
     actual+=''.join(function(tls,name) for name in ['int send_socket(', 'int receive_socket(', 'void reject_handshake(', 'TlsLink::TlsLink(', 'TlsLink::~TlsLink()', 'int TlsLink::verify(', 'bool TlsLink::setup(', 'bool TlsLink::handshake('])
@@ -223,6 +218,6 @@ def main():
     with tempfile.TemporaryDirectory(prefix='amity-tls-credentials-') as directory:
         cpp,binary=Path(directory)/'test.cpp',Path(directory)/'test';cpp.write_text(timing_support()+PREFIX+actual+suite)
         include=[ROOT/'components/consortium',ROOT/'components/consortium/include',ROOT/'components/amity_system/include',ROOT/'tests/reset_fakes',source/'include',source/'tf-psa-crypto/include',source/'tf-psa-crypto/drivers/builtin/include',build/'tf-psa-crypto/include']
-        command=shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-DOBSERVE_REDUNDANT_VALIDATION='+str(args.observe_redundant_validation).lower(),'-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-g','-fsanitize=address,undefined',*['-I'+str(path)for path in include],str(cpp),str(ROOT/'components/consortium/json.cpp'),str(ROOT/'components/amity_system/model.cpp'),*[str(build/'library'/name)for name in ['libmbedtls.a','libmbedx509.a','libtfpsacrypto.a']],'-o',str(binary)]
+        command=shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-g','-fsanitize=address,undefined',*['-I'+str(path)for path in include],str(cpp),str(ROOT/'components/consortium/json.cpp'),str(ROOT/'components/amity_system/model.cpp'),*[str(build/'library'/name)for name in ['libmbedtls.a','libmbedx509.a','libtfpsacrypto.a']],'-o',str(binary)]
         subprocess.run(command,check=True);return subprocess.run([str(binary)],check=False).returncode
 if __name__=='__main__':raise SystemExit(main())

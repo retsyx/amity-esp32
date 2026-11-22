@@ -4,9 +4,7 @@
 Only the controller, advertisement parser, and FreeRTOS notification seams are
 faked. The completion, generation checks, GAP callback, and disconnect function
 are extracted unchanged from the firmware source. No Bluetooth hardware is used.
---source permits running the same assertions against an earlier source snapshot.
 """
-import argparse
 import os
 from pathlib import Path
 import shlex
@@ -312,11 +310,7 @@ def function(source: str, declaration: str) -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source', type=Path, default=Path(__file__).resolve().parents[1] /
-                        'components/consortium/gatt_transport.cpp')
-    args = parser.parse_args()
-    source = args.source.read_text()
+    source = (Path(__file__).resolve().parents[1] / 'components/consortium/gatt_transport.cpp').read_text()
     actual = ''.join(function(source, declaration) for declaration in (
         'void complete(int error)', 'bool current(void *token)',
         'bool admission_service(const ble_hs_adv_fields& fields)', 'int client_gap(ble_gap_event *event,void *token)', 'int on_mtu(',

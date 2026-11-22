@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Compile the actual runtime health snapshot against bounded link fixtures."""
-import argparse
 import os
 from pathlib import Path
 import shlex
@@ -71,9 +70,7 @@ int main(){try{
 
 
 def main():
-    parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source',type=Path,default=ROOT/'components/consortium/runtime.cpp')
-    source=parser.parse_args().source.read_text()
+    source=(ROOT/'components/consortium/runtime.cpp').read_text()
     actual=function(source,'RuntimeStatus runtime_status()')
     with tempfile.TemporaryDirectory(prefix='amity-runtime-status-') as directory:
         cpp=Path(directory)/'test.cpp';binary=Path(directory)/'test';cpp.write_text(PREFIX+actual+SUITE)

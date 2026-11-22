@@ -5,7 +5,6 @@ Only random-fill and configuration storage are seams. Deterministic draws cover
 the leading-zero serial failure, and saved identities are checked for repair or
 byte-for-byte reuse. OpenSSL independently parses every resulting certificate.
 """
-import argparse
 import os
 from pathlib import Path
 import shlex
@@ -118,9 +117,7 @@ int main(int argc,char **argv){
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source', type=Path, default=ROOT / 'components/web/web.cpp')
-    firmware = parser.parse_args().source.read_text()
+    firmware = (ROOT / 'components/web/web.cpp').read_text()
     actual = ''.join(function(firmware, name) for name in
                      ('bool valid_certificate_serial(', 'esp_err_t tls_identity(')
                      if name in firmware)

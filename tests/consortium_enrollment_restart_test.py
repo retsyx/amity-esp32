@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Exercise actual LAN enrollment through its prepared-member restart boundary."""
-import argparse
 import os
 from pathlib import Path
 import shlex
@@ -106,9 +105,7 @@ int main(){try{restart_tests();return 0;}catch(const std::exception& error){std:
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source', type=Path, default=ROOT / 'components/consortium/runtime.cpp')
-    source = parser.parse_args().source.read_text()
+    source = (ROOT / 'components/consortium/runtime.cpp').read_text()
     actual = function(source, 'std::string control_json(') + function(source, 'bool enroll_lan(')
     encoder = function((ROOT / 'components/consortium/tls_link.cpp').read_text(), 'std::string envelope_json(')
     with tempfile.TemporaryDirectory(prefix='amity-enrollment-restart-') as directory:

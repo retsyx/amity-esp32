@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Exercise actual client record fragmentation with an ATT-512 controller seam."""
-import argparse
 import os
 from pathlib import Path
 import shlex
@@ -243,11 +242,7 @@ int main() {
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source', type=Path, default=Path(__file__).resolve().parents[1] /
-                        'components/consortium/gatt_transport.cpp')
-    args = parser.parse_args()
-    source = args.source.read_text()
+    source = (Path(__file__).resolve().parents[1] / 'components/consortium/gatt_transport.cpp').read_text()
     timing = function(source, 'struct GattTiming {').rstrip() + ';\n' + function(source, 'void capture_gatt_link(')
     server = function(source, 'int access(uint16_t connection,')
     actual = function(source, 'bool gatt_client_exchange(bool encrypted,')
