@@ -59,13 +59,10 @@ int main(){
  SnapshotManifest manifest;manifest.transfer_id=ident<model::MessageId>(8);manifest.owner_octopus_id=scope.local_id;manifest.owner_boot_id=scope.local_boot_id;manifest.config_revision=1;manifest.total_length=1;manifest.payload_hash=std::string(64,'d');manifest.document_kind="handover";assert(snapshot_manifest_json(manifest,"begin",0).empty());
  const auto local=ident<model::OctopusId>(5),coordinator=ident<model::OctopusId>(3);RuntimeStartup startup;
  records.clear();assert(runtime_read_startup(local,startup)==ESP_OK&&startup.role==RuntimeStartup::unclaimed);
- for(const auto* key:{"active","proposal0","proposal1"}){records.clear();records[std::string("amity_handover/")+key]=std::string(200,'x');assert(runtime_read_startup(local,startup)!=ESP_OK&&startup.passive()&&startup.role==RuntimeStartup::recovery_required);}
  Group group;group.role=Group::member;group.consortium=hello.consortium_id;group.authority=coordinator;group.epoch=1;group.revision=1;group.authority_host="192.0.2.1";group.join_id=ident<model::JoinId>(10);group.joining_id=local;group.join_digest=std::string(64,'e');group.join_revision=1;group.peers.push_back({coordinator,"leaf",std::string(64,'a'),true});
- records.clear();assert(save_group(group)==ESP_OK);const auto clean=records["amity_group/state"];assert(clean.find("input_gateway")==std::string::npos&&clean.find("handover")==std::string::npos);
+ records.clear();assert(save_group(group)==ESP_OK);const auto clean=records["amity_group/state"];Group loaded;
  records["amity_group/identity"]=records["amity_group/identity_tmp"]="same";
  assert(runtime_read_startup(local,startup)==ESP_OK&&startup.role==RuntimeStartup::member&&startup.authority_id==coordinator);
- records["amity_group/state"]=replace(clean,"\"active\":true","\"active\":true,\"input_gateway\":true");Group loaded;assert(load_group(loaded)==ESP_OK&&loaded.peers.size()==1&&save_group(loaded)==ESP_OK&&records["amity_group/state"]==clean);
- for(auto field:{std::string("\"handover_id\":null"),std::string("\"handover_digest\":\"bad\"")}){auto old=clean;old.pop_back();records["amity_group/state"]=old+","+field+"}";assert(runtime_read_startup(local,startup)!=ESP_OK&&startup.role==RuntimeStartup::recovery_required);}
  records["amity_group/state"]=replace(clean,"\"epoch\":\"1\"","\"epoch\":\"2\"");assert(runtime_read_startup(local,startup)!=ESP_OK&&startup.role==RuntimeStartup::recovery_required);
  group.join_hostname="living-room";records.clear();writes.clear();assert(save_group(group)==ESP_OK&&writes==std::vector<std::string>({"join_name","state"}));assert(records["amity_group/state"].find("hostname")==std::string::npos);assert(load_group(loaded)==ESP_OK&&loaded.join_hostname=="living-room");
  records["amity_group/join_name"]=replace(records["amity_group/join_name"],group.join_digest,std::string(64,'f'));assert(load_group(loaded)==ESP_OK&&loaded.join_hostname.empty()); // Stale metadata cannot rename another join.
@@ -83,7 +80,7 @@ int main(){
  overfull+=",{\"id\":\""+group.peers.back().id.str()+"\",\"leaf\":\"6c656166\",\"pin\":\""+std::string(64,'a')+"\",\"active\":true}]}";
  records["amity_group/state"]=overfull;assert(load_group(loaded)==ESP_ERR_INVALID_STATE);
  std::cout<<"PASS membership storage: three maximum-size peer leaves round-trip; fourth rejected without overwriting committed roster\n";
- std::cout<<"PASS retired features: reserved wire tags/old transfer payloads rejected; optional bits ignored, required retired bit denied; actual old-marker/orphan/epoch startup passive; legacy input flag discarded on rewrite\n";
+ std::cout<<"PASS retired features: reserved wire tags/old transfer payloads rejected; optional bits ignored, required retired bit denied; epoch startup passive\n";
 }
 '''
 

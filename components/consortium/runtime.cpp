@@ -1428,9 +1428,6 @@ esp_err_t recovery_required(model::OctopusId local,esp_err_t result,const char *
 esp_err_t validate_startup(model::OctopusId local,const Group& stored,RuntimeStartup& out,Identity* verified_identity=nullptr,BoundedSetupTimings<5>* timing=nullptr){
     out={};if(verified_identity)*verified_identity={};
     if(!local){out.role=RuntimeStartup::recovery_required;return ESP_ERR_INVALID_STATE;}
-    // Obsolete transfer records never restore authority. Any retained marker or
-    // proposal (including an interrupted/orphaned write) requires physical reset.
-    for(const auto* key:{"active","proposal0","proposal1"}){std::string legacy;if(read_record("amity_handover",key,legacy,1)!=ESP_ERR_NVS_NOT_FOUND){out.role=RuntimeStartup::recovery_required;return ESP_ERR_INVALID_STATE;}}
     if(!controller_membership_compatible(stored)){out.role=RuntimeStartup::recovery_required;return ESP_ERR_INVALID_STATE;}
     if(stored.role==Group::unclaimed)return ESP_OK;
     if(stored.peers.size()>maximum_roster_peers){out.role=RuntimeStartup::recovery_required;return ESP_ERR_INVALID_SIZE;}
@@ -1471,9 +1468,6 @@ esp_err_t runtime_start(model::ConsortiumId consortium,model::OctopusId octopus,
         if(result!=ESP_OK)return recovery_required(octopus,result,"Saved credentials are unreadable; factory reset required");
     }
     singleton=consortium;boot=current_boot;configuration=config;
-    // The former separate Add credential has no role in either admission mode.
-    // Its removal must never erase origin identity or factory Matter credentials.
-    if(erase_record("amity_origin","bootstrap")!=ESP_OK)ESP_LOGW("consortium","Could not discard an unused setup verifier");
     std::string name_record;const auto name_result=read_record("amity_group","hostnames",name_record,8192);if(name_result!=ESP_ERR_NVS_NOT_FOUND&&(name_result!=ESP_OK||!hostnames.restore(name_record))){hostnames={};status.last_error="Saved device names are unavailable. Names will refresh when devices reconnect.";}
     // Operational startup validates PSA and stored identity/authority. The
     // admission self-test runs only during an explicit Add attempt; it cannot

@@ -52,7 +52,6 @@ struct Active{bool cancelled=false;model::OctopusId peer,connection_peer;std::sh
 esp_err_t load_group(Group& value){++group_reads;if(!group_ok)return ESP_FAIL;value=seed;return ESP_OK;}
 namespace platform{esp_err_t load_identity(model::OctopusId owner,Identity& value){++identity_loads;if(!identity_ok)return ESP_FAIL;value={owner,"validated-leaf","private-key-"+std::to_string(identity_loads),std::string(64,'a')};return ESP_OK;}}
 esp_err_t read_record(const char* space,const char* key,std::string& value,size_t cap){const auto name=std::string(space)+"/"+key;if(name==fail_read)return ESP_FAIL;const auto found=records.find(name);if(found==records.end())return ESP_ERR_NVS_NOT_FOUND;if(found->second.size()>cap)return ESP_ERR_INVALID_SIZE;value=found->second;return ESP_OK;}
-esp_err_t erase_record(const char*,const char*){++erases;return ESP_OK;}
 // The public recovery status matches firmware.
 esp_err_t recovery_required(model::OctopusId,esp_err_t result,const char*){++recoveries;status.initialized=true;status.credential_ready=false;status.authority_ready=false;status.coordinator=false;status.member=true;status.phase="recovery_required";return result;}
 int ble_remote_set_controller_enabled(bool enabled){check(!enabled,"headless role enabled remote");++remote_shutdowns;return remote_ok?ESP_OK:ESP_FAIL;}
@@ -145,16 +144,14 @@ void startup_tests(){
  }
  // Failure before operational readiness remains fail closed for every role.
  for(auto role:{Group::unclaimed,Group::coordinator,Group::prepared,Group::member,Group::retired}){
-  for(unsigned failure=0;failure<8;++failure){
+  for(unsigned failure=0;failure<6;++failure){
    reset();seed_role(role);
    if(failure==0)psa_ok=false;
    if(failure==1)group_ok=false;
    if(failure==2)identity_ok=false;
-   if(failure==3)records["amity_handover/active"]="marker";
-   if(failure==4)fail_read="amity_handover/proposal0";
-   if(failure==5){if(role==Group::unclaimed)continue;records["amity_group/identity_tmp"]="different";}
-   if(failure==6){if(role==Group::unclaimed)continue;records.erase("amity_group/identity");}
-   if(failure==7){if(role==Group::unclaimed)continue;seed.epoch=2;}
+   if(failure==3){if(role==Group::unclaimed)continue;records["amity_group/identity_tmp"]="different";}
+   if(failure==4){if(role==Group::unclaimed)continue;records.erase("amity_group/identity");}
+   if(failure==5){if(role==Group::unclaimed)continue;seed.epoch=2;}
    check(start_runtime()!=ESP_OK&&recoveries==1&&status.initialized&&status.phase=="recovery_required"&&!status.credential_ready&&!created_tasks,"invalid PSA/group/journal/identity reached operational readiness");
   }
  }

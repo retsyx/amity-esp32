@@ -19,8 +19,6 @@ std::string random_hex(size_t);
 uint64_t now_ms();
 esp_err_t read_record(const char *space,const char *key,std::string &,size_t cap);
 esp_err_t write_record(const char *space,const char *key,std::string_view);
-esp_err_t erase_record(const char *space,const char *key);
-esp_err_t erase_namespace(const char *space);
 esp_err_t load_identity(model::OctopusId,Identity &);
 bool certificate(std::string_view der,model::OctopusId,std::string &pin);
 // Structural identity/pin binding only; untrusted leaves still use certificate().

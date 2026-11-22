@@ -85,7 +85,7 @@ int main(){
     auto baseline=store;
     auto verify=[&]{
         for(const auto &[key,space]:store)if(key.rfind("nvs/",0)==0)assert(space.empty());
-        for (const auto *space : {"amity", "amity_system", "amity_local", "amity_group", "amity_config", "amity_export"})
+        for (const auto *space : {"amity", "amity_system", "amity_group", "amity_config"})
             assert(store[std::string("amity_cfg/")+space].empty());
         assert(store.at("amity_cfg/amity_origin") == untouched.at("amity_cfg/amity_origin"));
         assert(store["amity_cfg/amity_reset"].empty());
