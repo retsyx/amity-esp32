@@ -23,6 +23,7 @@ PREFIX=r'''
 #include <mutex>
 #include <sys/socket.h>
 #include <thread>
+#include <unistd.h>
 namespace amity::network_diagnostics {Snapshot snapshot(){return {};}}
 namespace amity::consortium {
 using namespace platform;
@@ -37,13 +38,15 @@ template<class T>T ident(unsigned n){char text[33];snprintf(text,sizeof(text),"%
 struct Queued{Kind kind;std::string payload;uint32_t ttl;uint64_t created;uint64_t revision=0;std::shared_ptr<const model::OwnedIntent> owned;std::shared_ptr<const model::OwnedAdapterSnapshot> snapshot{};bool firmware_stream=false;};
 struct Tls{int socket=-1;model::OctopusId authenticated;std::vector<Peer> allowed;bool healthy=true;bool usable()const{return healthy;}};
 using TlsLink=Tls;
-struct Active{Session session;std::shared_ptr<Tls> tls=std::make_shared<Tls>();model::OctopusId peer,connection_peer;model::BootId claimed_boot;std::atomic_bool execution_fenced{false},restart_requested{false};model::LinkId cleaned_link;std::string endpoint_hint;std::mutex mutex,close_mutex;bool cancelled=false,retiring=false,ready=true,management_ready=false,context_ready=true,context_requested=false,closed_notified=false,refreshing=false;RuntimePeerStatus status;std::deque<Queued> queue;};
+struct Active{int wakeup=-1;Session session;std::shared_ptr<Tls> tls=std::make_shared<Tls>();model::OctopusId peer,connection_peer;model::BootId claimed_boot;std::atomic_bool execution_fenced{false},restart_requested{false};model::LinkId cleaned_link;std::string endpoint_hint;std::mutex mutex,close_mutex;bool cancelled=false,retiring=false,ready=true,management_ready=false,context_ready=true,context_requested=false,closed_notified=false,refreshing=false;RuntimePeerStatus status;std::deque<Queued> queue;};
 // ACK observation has a separate native test; this fixture tests IPC policy.
 void begin_release_ack(Active&,const model::OwnedIntent&,uint64_t,const network_diagnostics::Snapshot&){}
 void emit_key_network(const model::OctopusId&,uint8_t,uint64_t,uint8_t,bool,const char*,const network_diagnostics::Snapshot&,const network_diagnostics::Snapshot&){}
 constexpr int pdPASS=1,MALLOC_CAP_SPIRAM=1,MALLOC_CAP_8BIT=2;
 std::vector<std::shared_ptr<Active>*> task_arguments;unsigned task_attempts=0;bool task_creation_fails=false;
 void active_loop(void*){}
+int eventfd(unsigned,int){return -1;}
+void wake(Active&){}
 int xTaskCreateWithCaps(void(*entry)(void*),const char*,unsigned stack,void* arg,unsigned priority,void*,unsigned){
  assert(entry==active_loop&&stack==16384&&priority==3);++task_attempts;
  if(task_creation_fails)return -1;
@@ -455,7 +458,7 @@ def main():
  actual+=function(source,'enum class QueuedState').rstrip()+';\n'+function(source,'QueuedState prepare_queued(')
  queue_start=source.index('\n',source.index('        if(!active->retiring&&!refresh_local_hostname(*active))'))+1
  queue_end=source.index('        fd_set reads;',queue_start)
- actual+='\nbool pump(Active& storage){auto* active=&storage;LinkTrace trace;trace.phase="operational";while(true){'+source[queue_start:queue_end]+'return true;}trace_link_closed(storage,trace,now_ms());return false;}\n'
+ actual+='\nbool pump(Active& storage){auto* active=&storage;LinkTrace trace;trace.phase="operational";while(true){'+source[queue_start:queue_end]+'(void)more;return true;}trace_link_closed(storage,trace,now_ms());return false;}\n'
  with tempfile.TemporaryDirectory(prefix='amity-qualified-transport-') as directory:
   temp=Path(directory);(temp/'esp_err.h').write_text('#pragma once\nusing esp_err_t=int;constexpr int ESP_OK=0,ESP_ERR_INVALID_ARG=1,ESP_ERR_INVALID_STATE=2,ESP_ERR_NO_MEM=3,ESP_ERR_TIMEOUT=4,ESP_FAIL=5,ESP_ERR_NOT_FOUND=6,ESP_ERR_NOT_SUPPORTED=7;\n')
   cpp=temp/'test.cpp';binary=temp/'test';cpp.write_text(PREFIX+'namespace amity::consortium {\n'+actual+'\n}\n'+SUITE)

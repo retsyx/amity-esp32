@@ -65,6 +65,8 @@ def main():
                                             "#include <sys/socket.h>\n#include <chrono>\n#include <thread>")
     prefix = prefix.replace("uint64_t now_ms(){return clock_ms;}",
                             "uint64_t now_ms(){return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();}")
+    # Real sockets and time: the actual readiness wait replaces the scripted one.
+    prefix = prefix.replace("void wait_socket(int,bool,uint64_t deadline){clock_ms=std::min<uint64_t>(deadline,clock_ms+10);} // Scripted readiness: one tick per wait.", "")
     prefix = prefix.replace("void vTaskDelay(unsigned ticks){clock_ms+=std::max(1u,ticks)*10;}",
                             "void vTaskDelay(unsigned ticks){std::this_thread::sleep_for(std::chrono::milliseconds(std::max(1u,ticks)*10));}")
     actual = "}\nnamespace amity::consortium {\n" + function(
@@ -75,7 +77,7 @@ def main():
         "bool parse_certificate(", "bool decode_identity(", "bool certificate(", "bool pinned_leaf(",
         "esp_err_t load_identity(", "esp_err_t load_group(", "esp_err_t save_group("))
     actual += "".join(function(tls, name) for name in (
-        "int send_socket(", "int receive_socket(", "void reject_handshake(",
+        "int send_socket(", "int receive_socket(", "void wait_socket(", "void reject_handshake(",
         "TlsLink::TlsLink(", "TlsLink::~TlsLink()", "int TlsLink::verify(", "bool TlsLink::setup(",
         "bool TlsLink::handshake(", "bool TlsLink::send(", "TlsLink::ReceiveResult TlsLink::receive_failed(",
         "TlsLink::ReceiveResult TlsLink::receive_expired(", "TlsLink::ReceiveResult TlsLink::poll_receive("))

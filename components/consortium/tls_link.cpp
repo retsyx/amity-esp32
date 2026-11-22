@@ -25,6 +25,14 @@ void emit_setup_timing(const char *area,const SetupTimingEntry& entry,model::Oct
 namespace {
 int send_socket(void *ctx,const uint8_t *data,size_t size){int fd=*static_cast<int*>(ctx);int n=::send(fd,data,size,MSG_DONTWAIT);if(n<0&&(errno==EWOULDBLOCK||errno==EAGAIN||errno==EINTR))return MBEDTLS_ERR_SSL_WANT_WRITE;return n<0?MBEDTLS_ERR_NET_SEND_FAILED:n;}
 int receive_socket(void *ctx,uint8_t *data,size_t size){int fd=*static_cast<int*>(ctx);int n=::recv(fd,data,size,MSG_DONTWAIT);if(n<0&&(errno==EWOULDBLOCK||errno==EAGAIN||errno==EINTR))return MBEDTLS_ERR_SSL_WANT_READ;return n<0?MBEDTLS_ERR_NET_RECV_FAILED:n;}
+// Wait until the socket can make progress or the deadline passes, instead of
+// sleeping a whole scheduler tick between nonblocking attempts.
+void wait_socket(int socket,bool writable,uint64_t deadline){
+    const auto now=now_ms();if(socket<0||now>=deadline)return;
+    const auto remaining=std::min<uint64_t>(deadline-now,100);
+    fd_set set;FD_ZERO(&set);FD_SET(socket,&set);timeval timeout{0,static_cast<suseconds_t>(remaining*1000)};
+    ::select(socket+1,writable?nullptr:&set,writable?&set:nullptr,nullptr,&timeout);
+}
 void reject_handshake(mbedtls_ssl_context &ssl,int socket,bool server,int reason){
     if(!server||socket<0)return;
     const auto flags=::fcntl(socket,F_GETFL,0);
@@ -37,7 +45,7 @@ void reject_handshake(mbedtls_ssl_context &ssl,int socket,bool server,int reason
     }
     // The SDK may already have queued a certificate-specific alert. Its public
     // send-alert API flushes an outstanding record before creating another.
-    while(ssl.MBEDTLS_PRIVATE(out_left)&&now_ms()<deadline){const int result=mbedtls_ssl_send_alert_message(&ssl,MBEDTLS_SSL_ALERT_LEVEL_FATAL,MBEDTLS_SSL_ALERT_MSG_HANDSHAKE_FAILURE);if(result!=MBEDTLS_ERR_SSL_WANT_WRITE)break;vTaskDelay(std::max<unsigned>(1,pdMS_TO_TICKS(2)));}
+    while(ssl.MBEDTLS_PRIVATE(out_left)&&now_ms()<deadline){const int result=mbedtls_ssl_send_alert_message(&ssl,MBEDTLS_SSL_ALERT_LEVEL_FATAL,MBEDTLS_SSL_ALERT_MSG_HANDSHAKE_FAILURE);if(result!=MBEDTLS_ERR_SSL_WANT_WRITE)break;wait_socket(socket,true,deadline);}
     // A fatal certificate alert can otherwise be hidden by a TCP reset when
     // the already-sent client key-exchange flight remains unread. Half-close
     // output and discard a bounded amount only; no handshake resumes here.
@@ -48,7 +56,7 @@ void reject_handshake(mbedtls_ssl_context &ssl,int socket,bool server,int reason
         if(count>0){drained+=static_cast<size_t>(count);continue;}
         if(!count)break;
         if(errno!=EWOULDBLOCK&&errno!=EAGAIN&&errno!=EINTR)break;
-        vTaskDelay(std::max<unsigned>(1,pdMS_TO_TICKS(2)));
+        wait_socket(socket,false,deadline);
     }
 }
 }
@@ -116,7 +124,7 @@ bool TlsLink::handshake(){
         auto began=now_ms();const int r=mbedtls_ssl_handshake(&ssl);call_ms+=now_ms()-began;++calls;
         if(!r)return finished(authenticated&&mbedtls_ssl_get_verify_result(&ssl)==0,r);
         if(r!=MBEDTLS_ERR_SSL_WANT_READ&&r!=MBEDTLS_ERR_SSL_WANT_WRITE){const auto rejection=timing.begin("reject_alert");reject_handshake(ssl,socket,server,r);timing.finish(rejection,false,0,0,0,r);return finished(false,r);}
-        began=now_ms();vTaskDelay(std::max<unsigned>(1,pdMS_TO_TICKS(2)));wait_ms+=now_ms()-began;
+        began=now_ms();wait_socket(socket,r==MBEDTLS_ERR_SSL_WANT_WRITE,deadline);wait_ms+=now_ms()-began;
     }
     return finished(false,MBEDTLS_ERR_SSL_TIMEOUT);
 }
@@ -131,7 +139,7 @@ bool TlsLink::send(std::string_view body,bool bulk){
         const int n=mbedtls_ssl_write(&ssl,bytes.data()+offset,count);
         if(n>0)offset+=n;
         else if(n!=MBEDTLS_ERR_SSL_WANT_READ&&n!=MBEDTLS_ERR_SSL_WANT_WRITE){transport_failed=true;return false;}
-        else vTaskDelay(std::max<unsigned>(1,pdMS_TO_TICKS(2)));
+        else wait_socket(socket,n==MBEDTLS_ERR_SSL_WANT_WRITE,deadline);
     }
     // A timed-out write may retain a pending TLS record or an incomplete
     // application frame. Its buffer cannot be replaced by another exchange.
@@ -219,9 +227,8 @@ bool TlsLink::receive(std::string &out,uint32_t duration){
         const auto result=poll_receive(out);
         if(result==ReceiveResult::frame)return true;
         if(result==ReceiveResult::failed||result==ReceiveResult::expired)return false;
-        // The configured 100 Hz tick would round a 2 ms delay to zero. Blocking
-        // handshake/snapshot callers must let other tasks run while waiting.
-        vTaskDelay(std::max<unsigned>(1,pdMS_TO_TICKS(2)));
+        // Decrypted bytes may already be buffered; otherwise wait for input.
+        if(!mbedtls_ssl_check_pending(&ssl))wait_socket(socket,false,deadline);
     }
     // An application wait expiring says nothing about transport health. Keep
     // its exact partial frame so the next exchange continues at the same byte.

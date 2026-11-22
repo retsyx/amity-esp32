@@ -50,6 +50,7 @@ uint64_t clock_ms=0;unsigned full_checks=0;
 uint64_t now_ms(){return clock_ms;}
 unsigned pdMS_TO_TICKS(unsigned n){return n/10;}
 void vTaskDelay(unsigned ticks){clock_ms+=std::max(1u,ticks)*10;}
+void wait_socket(int,bool,uint64_t deadline){clock_ms=std::min<uint64_t>(deadline,clock_ms+10);} // Scripted readiness: one tick per wait.
 void esp_fill_random(void* bytes,size_t size){assert(psa_generate_random(static_cast<uint8_t*>(bytes),size)==PSA_SUCCESS);}
 std::map<std::string,std::string> records;
 esp_err_t read_record(const char* space,const char* key,std::string& out,size_t cap){auto it=records.find(std::string(space)+"/"+key);if(it==records.end())return ESP_ERR_NVS_NOT_FOUND;if(it->second.size()>cap)return ESP_ERR_INVALID_SIZE;out=it->second;return ESP_OK;}

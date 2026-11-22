@@ -91,6 +91,7 @@ c::Error apply(m::MessageId id,const c::Json& body,uint64_t deadline,std::string
                 if(!c::runtime_device_settings_authorized(id)){failure->store(c::Error::not_ready);return ESP_ERR_INVALID_STATE;}
                 if(hostname?device_settings::hostname_settings().revision!=hostname_revision:device_settings::adapter_defaults().revision!=revision){failure->store(c::Error::transaction_conflict);return ESP_ERR_INVALID_STATE;}
                 const auto saved=hostname?device_settings::save_hostname(hostname_revision,*hostname):device_settings::save_adapter_defaults(revision,preferences);
+                if(saved==ESP_OK&&hostname)c::runtime_hostname_changed();
                 if(saved!=ESP_OK)failure->store(saved==ESP_ERR_INVALID_STATE?c::Error::transaction_conflict:c::Error::storage_failure);
                 return saved;
             };

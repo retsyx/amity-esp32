@@ -29,6 +29,8 @@ esp_err_t runtime_set_hardware_profile(uint8_t supported_tentacles,uint8_t confi
 esp_err_t runtime_start(model::ConsortiumId,model::OctopusId,model::BootId,uint64_t config_revision);
 RuntimeStatus runtime_status();
 void runtime_configuration_changed(uint64_t config_revision);
+// The local hostname changed; connected links advertise it.
+void runtime_hostname_changed();
 // Application-only claim after committed Matter commissioning and usable Wi-Fi
 // (or proven retained original). A prepared member decision wins the durable CAS.
 esp_err_t runtime_claim_original_controller();

@@ -33,6 +33,7 @@ PREFIX = r'''
 #include <mutex>
 #include <sys/socket.h>
 #include <tuple>
+#include <unistd.h>
 namespace amity::network_diagnostics {Snapshot snapshot(){return {};}}
 namespace amity::consortium {
 using namespace platform;
@@ -62,7 +63,10 @@ struct Active{
  std::atomic_bool execution_fenced{false},restart_requested{false};model::LinkId cleaned_link;
  SynchronizationRound synchronization;std::optional<SynchronizationRound> pending_synchronization;bool execution_supported=true;model::MessageId update_begin_id;
  LogSnapshot log_snapshot;model::MessageId log_transfer;size_t log_next=0;uint64_t log_expires=0;
+ uint32_t advertised_generation=0;int wakeup=-1;struct{bool pending=false;}release_ack;
 };
+std::atomic<uint32_t> hostname_generation{1};
+unsigned wakes=0;void wake(Active&){++wakes;}
 // ACK observation has a separate native test; this fixture tests IPC policy.
 void begin_release_ack(Active&,const model::OwnedIntent&,uint64_t,const network_diagnostics::Snapshot&){}
 void emit_key_network(const model::OctopusId&,uint8_t,uint64_t,uint8_t,bool,const char*,const network_diagnostics::Snapshot&,const network_diagnostics::Snapshot&){}
@@ -142,8 +146,8 @@ void coordinator_refresh(){
  controls.synchronize=[](auto,uint64_t){assert(false&&"The main binds no configuration");return Error::none;};
  controls.control=[](const auto&,const auto&,auto){assert(false&&"Observation refresh must not deliver a CEC completion");return Error::none;};
  on_send=[&](Active& active,const Envelope&){unchanged(active,original,tls);assert(cached.size()==3);};
- runtime_configuration_changed(8);
- assert(configuration==8&&a->session.scope()==original&&a->ready&&a->status.ready&&shutdowns==0&&cached.size()==3);
+ const auto woken=wakes;runtime_configuration_changed(8);
+ assert(configuration==8&&a->session.scope()==original&&a->ready&&a->status.ready&&shutdowns==0&&cached.size()==3&&wakes==woken+1); // The link task wakes at once.
  assert(refresh_turn(*a));unchanged(*a,original,tls);assert(cached.size()==3&&a->session.scope().config_revision==8&&a->status.config_revision==8);
  assert(!a->context_ready&&a->refreshing);
  // One marker in the old scope; there is no transfer or reply to wait for.
@@ -249,7 +253,8 @@ void expired_presses_are_dropped_without_restart(){
  // A newer activity selection replaces an older one still queued for the owner.
  auto first=std::make_shared<model::OwnedIntent>();first->kind=model::OwnedIntentKind::activity;first->generation=1;first->config_revision=scope.config_revision;first->selected=true;
  first->target={{scope.consortium_id,scope.peer_id,0,model::Side::front},""};auto second=std::make_shared<model::OwnedIntent>(*first);second->generation=2;
- assert(queue_control(a->peer,Kind::scoped_intent,1000,{},scope.config_revision,first)==ESP_OK&&queue_control(a->peer,Kind::scoped_intent,1000,{},scope.config_revision,second)==ESP_OK);
+ const auto woken=wakes;
+ assert(queue_control(a->peer,Kind::scoped_intent,1000,{},scope.config_revision,first)==ESP_OK&&queue_control(a->peer,Kind::scoped_intent,1000,{},scope.config_revision,second)==ESP_OK&&wakes==woken+2); // Admitted work wakes its link.
  assert(a->queue.size()==1&&a->queue.front().owned==second);
  clock_ms+=5000;assert(pump(*a)&&a->queue.empty()&&a->tls->sent.size()==2&&a->tls->sent[1].ttl_ms==1000&&diagnostic_logs.empty()); // Late, never dropped.
 }
@@ -266,7 +271,7 @@ def main():
     # causal-work and send-time TTL reduction; no copy of its decisions.
     start = source.index('\n', source.index('        if(!active->retiring&&!refresh_local_hostname(*active))')) + 1
     end = source.index('        fd_set reads;', start)
-    pump = '\nbool pump(Active& storage){Active* active=&storage;LinkTrace trace;trace.phase="operational";while(true){' + source[start:end] + 'return true;}trace_link_closed(storage,trace,now_ms());return false;}\n'
+    pump = '\nbool pump(Active& storage){Active* active=&storage;LinkTrace trace;trace.phase="operational";while(true){' + source[start:end] + '(void)more;return true;}trace_link_closed(storage,trace,now_ms());return false;}\n'
     actual = ''.join(function(source, name) for name in (
         'Envelope outgoing(', 'bool bind_configuration(', 'bool apply_configuration_advance(', 'bool advance_configuration(', 'bool finish_synchronization(', 'bool exchange_hostname(Active& active,const std::string& expected,LinkTrace* diagnostic=nullptr) {',
         'bool synchronization_current(', 'bool synchronization_recoverable(', 'bool synchronization_barrier(', 'bool fence_synchronization_scope(', 'bool restart_synchronization_scope(', 'bool synchronize_connection(', 'bool refresh_local_hostname(',

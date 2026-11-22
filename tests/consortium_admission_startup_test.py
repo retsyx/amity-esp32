@@ -40,6 +40,8 @@ constexpr int PSA_SUCCESS=0,pdPASS=1,MALLOC_CAP_SPIRAM=1,MALLOC_CAP_8BIT=2;
 constexpr int ESP_ERR_NVS_NOT_FOUND=0x1102;
 int psa_crypto_init(){return psa_ok?PSA_SUCCESS:-1;}
 #define ESP_LOGW(...) do {} while(0)
+struct esp_vfs_eventfd_config_t{size_t max_fds=0;};
+int esp_vfs_eventfd_register(const esp_vfs_eventfd_config_t*){return 0;}
 std::mutex lock,connection_lock;
 std::atomic_bool initialized{false};
 Group group,seed;Identity identity;RuntimeStatus status;HostnameRegistry hostnames;

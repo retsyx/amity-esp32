@@ -35,6 +35,7 @@ struct Active{
 };
 std::mutex lock;Identity identity;Group group;RuntimeStatus status;
 std::vector<std::shared_ptr<Active>> links;
+void wake(Active&){}
 bool current_peer_credential(const Active& active,const Group& current){for(const auto& peer:current.peers)if(peer.id==active.peer&&peer.id==active.tls->authenticated&&peer.active)return true;return false;}
 bool settings_enrolled(model::OctopusId owner){for(const auto& peer:group.peers)if(peer.id==owner&&peer.active)return true;return false;}
 std::vector<Json> sent;bool send_success=true;

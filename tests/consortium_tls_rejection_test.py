@@ -28,6 +28,7 @@ uint64_t clock_ms=0;
 uint64_t now_ms(){return clock_ms;}
 unsigned pdMS_TO_TICKS(unsigned duration){return duration;}
 void vTaskDelay(unsigned duration){clock_ms+=duration;}
+void wait_socket(int,bool,uint64_t deadline){clock_ms=std::min<uint64_t>(deadline,clock_ms+2);} // Scripted readiness.
 int handshake_error=0,handshake_calls=0,verify_flags=0,alerts=0,flushes=0,shutdowns=0,fcntl_flags=0;
 size_t available_bytes=0,received_bytes=0;
 bool blocked_alert=false,fcntl_failure=false;

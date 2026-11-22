@@ -24,7 +24,8 @@ namespace config_store {
 esp_err_t read(const char* key,std::string& value){const auto found=records.find(key);if(found==records.end())return ESP_ERR_NVS_NOT_FOUND;value=found->second;return ESP_OK;}
 esp_err_t write(const char* key,const std::string& value){++writes;written_keys.emplace_back(key);if(write_result==ESP_OK)records[key]=value;return write_result;}
 }
-namespace amity::consortium {bool runtime_device_settings_authorized(m::MessageId){return authorized;}}
+unsigned hostname_notifications=0;
+namespace amity::consortium {bool runtime_device_settings_authorized(m::MessageId){return authorized;}void runtime_hostname_changed(){++hostname_notifications;}}
 namespace system_services {void reboot_later(){++restarts;}}
 const esp_partition_t* esp_partition_find_first(int,int,const char*){return nullptr;}
 esp_err_t esp_partition_read(const esp_partition_t*,size_t,void*,size_t){assert(false);return ESP_FAIL;}
@@ -90,7 +91,7 @@ int main(){
         return "{\"expected_boot_id\":\""+owner.boot.str()+"\",\"expected_hostname_revision\":\""+std::to_string(revision)+"\",\"hostname\":\""+hostname+"\",\"changes\":[]}";
     };
     const auto rename_calls=calls;const auto adapter_record=records.at("front_defaults");
-    assert(submit(rename("Living-Room",1),2000)==c::Error::none&&writes==5&&calls==rename_calls);
+    assert(submit(rename("Living-Room",1),2000)==c::Error::none&&writes==5&&calls==rename_calls&&hostname_notifications==1); // Connected Amities learn the new name.
     auto renamed=json(a::snapshot());
     assert(renamed.get("hostname")->string=="living-room"&&renamed.get("boot_id")->string==owner.boot.str()&&renamed.get("settings_revision")->string=="4"&&renamed.get("hostname_revision")->string=="2");
     assert(device_settings::adapter_defaults().front_physical[3]==0x1000&&records.at("front_defaults")==adapter_record&&written_keys.back()=="hostname"&&!restarts);
@@ -98,7 +99,7 @@ int main(){
     assert(submit(rename("bad.local",2),2000)==c::Error::invalid_message&&writes==5);
     write_result=ESP_FAIL;
     assert(submit(rename("den",2),2000)==c::Error::storage_failure&&writes==6);
-    assert(json(a::snapshot()).get("hostname")->string=="living-room"&&device_settings::hostname_settings().revision==2&&records.at("front_defaults")==adapter_record);write_result=ESP_OK;
+    assert(json(a::snapshot()).get("hostname")->string=="living-room"&&device_settings::hostname_settings().revision==2&&records.at("front_defaults")==adapter_record&&hostname_notifications==1);write_result=ESP_OK;
     auto mixed=request(owner.boot,4);mixed.insert(mixed.size()-1,",\"hostname\":\"den\",\"expected_hostname_revision\":\"2\"");
     assert(submit(mixed,2000)==c::Error::invalid_message&&writes==6&&calls==rename_calls);
     assert(submit(request(owner.boot,4),2000)==c::Error::not_ready&&writes==6);

@@ -28,7 +28,8 @@ struct Active {
     std::mutex mutex;std::deque<Queued> queue;bool cancelled=false,retiring=false,ready=true,management_ready=false,refreshing=false,context_ready=true,context_requested=false;
     std::atomic_bool restart_requested{false},execution_fenced{false};RuntimePeerStatus status;
     model::MessageId removal_request;uint64_t removal_until=0;
-};
+};void wake(Active&){}
+
 std::mutex lock,persistence_lock;
 Group group,durable_group;Identity identity;RuntimeStatus status;RuntimeLifecycleHooks lifecycle;RuntimeControlHooks controls;
 model::BootId boot;uint64_t configuration=1;HostnameRegistry hostnames;std::vector<std::shared_ptr<Active>> links;

@@ -99,7 +99,7 @@ esp_err_t pull_logs(model::OctopusId owner,const std::function<bool(std::string_
                 return item.kind==Kind::log_request&&item.payload.find(token)!=std::string::npos;
             }),active->queue.end());
             if(log_link_available(*active)&&active->session.scope().link_id==link&&active->queue.size()<15)
-                active->queue.push_back({Kind::log_request,log_request_json(transfer,0,true),2000,now_ms(),revision,{}});
+                {active->queue.push_back({Kind::log_request,log_request_json(transfer,0,true),2000,now_ms(),revision,{}});wake(*active);}
             log_pull={};
         }
     } finish{active,transfer,link,revision};
@@ -115,7 +115,7 @@ esp_err_t pull_logs(model::OctopusId owner,const std::function<bool(std::string_
             const auto queued_at=now_ms();
             if(queued_at>=chunk_until)return ESP_ERR_TIMEOUT;
             log_pull.offset=offset;log_pull.waiting=true;log_pull.received=false;
-            active->queue.push_back({Kind::log_request,log_request_json(transfer,offset,false),static_cast<uint32_t>(chunk_until-queued_at),queued_at,revision,{}});
+            active->queue.push_back({Kind::log_request,log_request_json(transfer,offset,false),static_cast<uint32_t>(chunk_until-queued_at),queued_at,revision,{}});wake(*active);
         }
         bool received=false;
         size_t size=0,total=0;

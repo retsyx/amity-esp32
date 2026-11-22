@@ -25,6 +25,7 @@ uint64_t clock_ms=100;uint64_t now_ms(){return clock_ms;}
 template<class T>T ident(unsigned n){char value[33];snprintf(value,sizeof(value),"%032x",n);return *T::parse(value);}
 struct FakeTls{bool server=false;int socket=-1;model::OctopusId authenticated;std::vector<Peer> allowed;std::vector<std::string> frames;size_t next=0;bool received_bulk()const{Envelope envelope;return next&&parse_envelope(frames[next-1],envelope)==Error::none&&is_update_kind(envelope.kind);}bool receive(std::string& out,uint32_t timeout){assert(timeout<=2000);if(next==frames.size()){clock_ms+=timeout;return false;}out=frames[next++];return true;}};
 struct Active{Session session;model::OctopusId peer;std::shared_ptr<FakeTls> tls=std::make_shared<FakeTls>();std::mutex mutex;std::deque<int> queue;bool cancelled=false,retiring=false,ready=true,management_ready=false,refreshing=false,context_ready=false,context_requested=false;std::atomic_bool restart_requested{false},execution_fenced{false};RuntimePeerStatus status;model::MessageId removal_request;uint64_t removal_until=0;};
+void wake(Active&){}
 std::mutex lock,persistence_lock;Group group;Identity identity;RuntimeStatus status;RuntimeLifecycleHooks lifecycle;RuntimeControlHooks controls;model::BootId boot;uint64_t configuration=1;std::vector<std::shared_ptr<Active>> links;
 // Diagnostics are independently exercised by runtime transport tests. This
 // fixture executes the completion and real roster-removal decisions directly.

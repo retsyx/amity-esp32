@@ -21,6 +21,7 @@
 #include "nvs.h"
 #include "esp_netif.h"
 #include "mdns.h"
+#include "esp_vfs_eventfd.h"
 #include "psa/crypto.h"
 #include "mbedtls/platform_util.h"
 #include "lwip/sockets.h"
@@ -143,12 +144,19 @@ struct Active {
     std::optional<SynchronizationRound> pending_synchronization;
     bool execution_supported=true;
     std::string expected_hostname,advertised_hostname;
+    uint32_t advertised_generation=0;
+    // Other tasks write it under the runtime lock to wake this link's select.
+    int wakeup=-1;
 };
+// Bumped when the local hostname changes; links advertise the new name.
+std::atomic<uint32_t> hostname_generation{1};
+// Caller holds the runtime lock, which also guards closing the descriptor.
+void wake(Active& active){const uint64_t one=1;if(active.wakeup>=0&&::write(active.wakeup,&one,sizeof(one))<0){}}
 // Caller holds the runtime and link mutexes. This ends application authority
 // immediately; the owning link task performs cleanup and a fresh logical
 // handshake without replacing the authenticated transport or replaying work.
 void request_session_restart(Active& active){
-    active.restart_requested=true;active.execution_fenced=true;
+    active.restart_requested=true;active.execution_fenced=true;wake(active);
     active.ready=false;active.management_ready=false;active.status.ready=false;active.status.management_ready=false;
     active.context_ready=false;active.context_requested=false;
     active.queue.clear();
@@ -494,9 +502,10 @@ bool exchange_hostname(Active& active,const std::string& expected,LinkTrace* dia
     LinkTrace local_trace;auto& trace=diagnostic?*diagnostic:local_trace;trace.phase="hostname";
     RuntimeNetworkHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=network;}
     if(!hooks.get_hostname)return trace.fail("hostname_hooks",Error::not_ready);
+    const auto generation=hostname_generation.load();
     const auto local=hooks.get_hostname();if(!valid_hostname(local))return trace.fail("hostname_capture",Error::invalid_message);
     if(!send(active,Kind::device_status,"{\"hostname\":\""+local+"\"}",1000))return trace.fail("hostname_send");
-    active.advertised_hostname=local;
+    active.advertised_hostname=local;active.advertised_generation=generation;
     std::string raw;if(!active.tls->receive(raw))return trace.fail("hostname_receive");
     Envelope response;const auto received=now_ms();
     const auto parsed=parse_envelope(raw,response);if(parsed!=Error::none)return trace.fail("hostname_parse",parsed);
@@ -522,11 +531,14 @@ bool exchange_hostname(Active& active,const std::string& expected,LinkTrace* dia
 // connection's authenticated identity and application synchronization scope.
 bool refresh_local_hostname(Active& active){
     if(active.management_ready)return true;
-    RuntimeNetworkHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=network;}
-    if(!hooks.get_hostname)return true;
-    const auto name=hooks.get_hostname();if(!valid_hostname(name)||name==active.advertised_hostname)return true;
-    if(!send(active,Kind::device_status,"{\"hostname\":\""+name+"\"}",1000))return false;
-    active.advertised_hostname=name;return true;
+    // Only a rename or a new scope (which clears the advertised name) needs work.
+    const auto generation=hostname_generation.load();
+    if(generation==active.advertised_generation&&!active.advertised_hostname.empty())return true;
+    std::function<std::string()> current;{std::lock_guard<std::mutex> guard(lock);current=network.get_hostname;}
+    if(!current)return true;
+    const auto name=current();if(!valid_hostname(name))return true;
+    if(name!=active.advertised_hostname&&!send(active,Kind::device_status,"{\"hostname\":\""+name+"\"}",1000))return false;
+    active.advertised_hostname=name;active.advertised_generation=generation;return true;
 }
 // Members report their station signal for the main's diagnostics. Samples
 // vary constantly: report a change at most every ten seconds, and promptly in
@@ -894,13 +906,13 @@ void active_loop_work(void *arg){
         if(server&&!active->retiring&&active->ready&&!receive_until&&!initialize_context(*active)){trace.fail("initial_context",Error::none,LinkTrace::Recovery::recoverable);break;}
         if(!active->retiring&&!report_wifi_signal(*active)){trace.fail("wifi_signal_send");break;}
         if(!active->retiring&&!refresh_local_hostname(*active)){trace.fail("hostname_send");break;}
-        Queued queued;std::string payload;bool have=false,invalid=false;if(!active->retiring){std::lock_guard<std::mutex> guard(active->mutex);
+        Queued queued;std::string payload;bool have=false,invalid=false,more=false;if(!active->retiring){std::lock_guard<std::mutex> guard(active->mutex);
             while(!active->queue.empty()&&active->queue.front().revision<active->session.scope().config_revision)active->queue.pop_front();
             if(!active->queue.empty()){
                 const auto& front=active->queue.front();const bool expired=queued_expired(front,now_ms());
                 const auto prepared=expired?QueuedState::ready:prepare_queued(*active,front,payload);
                 if(prepared==QueuedState::invalid)invalid=true;
-                if(prepared==QueuedState::ready||expired){queued=std::move(active->queue.front());active->queue.pop_front();have=true;}
+                if(prepared==QueuedState::ready||expired){queued=std::move(active->queue.front());active->queue.pop_front();have=true;more=!active->queue.empty();}
             }}
         // Admission can add work while this task waits for the queue lock.
         // Expire and budget the observed item against the current clock.
@@ -929,7 +941,13 @@ void active_loop_work(void *arg){
             }
             if(!sent){trace.queued(queued);trace.fail("queued_send",Error::none,LinkTrace::Recovery::recoverable);break;}
         }
-        fd_set reads;FD_ZERO(&reads);FD_SET(active->tls->socket,&reads);timeval wait{0,20000};int ready=::select(active->tls->socket+1,&reads,nullptr,nullptr,&wait);if(ready<0){trace.socket_error=errno;trace.fail("socket_select",Error::none,LinkTrace::Recovery::terminal);break;}
+        // Queued work and state changes write the wakeup descriptor, so the
+        // idle wait never delays them. Release ACK sampling keeps its cadence.
+        fd_set reads;FD_ZERO(&reads);FD_SET(active->tls->socket,&reads);const int wakeup=active->wakeup;if(wakeup>=0)FD_SET(wakeup,&reads);
+        timeval wait{0,more?0:active->release_ack.pending?20000:100000};
+        int ready=::select(std::max(active->tls->socket,wakeup)+1,&reads,nullptr,nullptr,&wait);
+        if(ready>0&&wakeup>=0&&FD_ISSET(wakeup,&reads)){uint64_t count=0;if(::read(wakeup,&count,sizeof(count))<0){}if(!FD_ISSET(active->tls->socket,&reads))ready=0;}
+        if(ready<0){trace.socket_error=errno;trace.fail("socket_select",Error::none,LinkTrace::Recovery::terminal);break;}
         // An idle connection has no receive deadline. Input fixes the start;
         // a decoded bulk prefix selects sixty seconds from that same edge.
         // Ordinary input, including an undecoded TLS record, retains five.
@@ -1063,7 +1081,7 @@ void active_loop_work(void *arg){
     active->cancelled=true;
     const bool fenced=notify_link_closed(*active);
     active->session.disconnect();::shutdown(active->tls->socket,SHUT_RDWR);
-    {std::lock_guard<std::mutex> guard(lock);if(fenced)links.erase(std::remove(links.begin(),links.end(),active),links.end());status.connected=std::any_of(links.begin(),links.end(),[](const auto& link){return !link->cancelled;});status.synchronized=false;}
+    {std::lock_guard<std::mutex> guard(lock);if(active->wakeup>=0){::close(active->wakeup);active->wakeup=-1;}if(fenced)links.erase(std::remove(links.begin(),links.end(),active),links.end());status.connected=std::any_of(links.begin(),links.end(),[](const auto& link){return !link->cancelled;});status.synchronized=false;}
     // Return through C++ so the final shared_ptr frees TLS/certificate state.
 }
 void active_loop(void *arg){active_loop_work(arg);vTaskDeleteWithCaps(nullptr);}
@@ -1076,10 +1094,11 @@ void launch(std::shared_ptr<TlsLink> tls,std::string endpoint_hint={},model::Oct
     {std::lock_guard<std::mutex> guard(lock);
         if(links.size()>=maximum_connection_slots)return;
         if(expected&&std::any_of(links.begin(),links.end(),[&](const auto& link){return !link->cancelled&&link->tls&&link->tls->usable()&&(link->connection_peer==expected||link->peer==expected);}))return;
+        active->wakeup=eventfd(0,0); // Without one, the link task falls back to its periodic wait.
         links.push_back(active);
     }
     auto arg=new std::shared_ptr<Active>(active);
-    if(xTaskCreateWithCaps(active_loop,"group_link",16384,arg,3,nullptr,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS){delete arg;std::lock_guard<std::mutex> guard(lock);links.erase(std::remove(links.begin(),links.end(),active),links.end());}
+    if(xTaskCreateWithCaps(active_loop,"group_link",16384,arg,3,nullptr,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS){delete arg;std::lock_guard<std::mutex> guard(lock);links.erase(std::remove(links.begin(),links.end(),active),links.end());if(active->wakeup>=0){::close(active->wakeup);active->wakeup=-1;}}
 }
 bool connect_bounded(int fd,const sockaddr *address,socklen_t length){
     const auto flags=fcntl(fd,F_GETFL,0);if(flags<0||fcntl(fd,F_SETFL,flags|O_NONBLOCK)<0)return false;
@@ -1348,6 +1367,9 @@ esp_err_t runtime_set_hardware_profile(uint8_t count,uint8_t mask){
 esp_err_t runtime_start(model::ConsortiumId consortium,model::OctopusId octopus,model::BootId current_boot,uint64_t config){
     BoundedSetupTimings<5> timing("startup",now_ms);timing.peer=octopus;timing.begin("total");
     if(!consortium||!octopus||!current_boot||!config||initialized.exchange(true))return ESP_ERR_INVALID_STATE;
+    // Link tasks wait on their socket and a wakeup descriptor together.
+    esp_vfs_eventfd_config_t eventfds{};eventfds.max_fds=maximum_connection_slots;
+    if(const auto registered=esp_vfs_eventfd_register(&eventfds);registered!=ESP_OK&&registered!=ESP_ERR_INVALID_STATE)ESP_LOGW("consortium","Link wakeups unavailable: %s",esp_err_to_name(registered));
     if(psa_crypto_init()!=PSA_SUCCESS)return recovery_required(octopus,ESP_FAIL,"Crypto initialization failed; factory reset required");
     const auto group_stage=timing.begin("load_group");auto result=load_group(group);timing.finish(group_stage,result==ESP_OK,1);
     if(result!=ESP_OK)return recovery_required(octopus,result,"Saved membership is unreadable; factory reset required");
@@ -1371,9 +1393,13 @@ esp_err_t runtime_start(model::ConsortiumId consortium,model::OctopusId octopus,
 void runtime_configuration_changed(uint64_t revision){
     if(!revision)return;
     std::lock_guard<std::mutex> guard(lock);if(revision<=configuration)return;
-    configuration=revision;
+    configuration=revision;for(auto& active:links)wake(*active);
     // The link task advances its authenticated scope in-band. Activity edits
     // do not disconnect owners or invalidate their HDMI observations.
+}
+void runtime_hostname_changed(){
+    hostname_generation.fetch_add(1);
+    std::lock_guard<std::mutex> guard(lock);for(auto& active:links)wake(*active);
 }
 RuntimeStatus runtime_status(){
     std::lock_guard<std::mutex> guard(lock);auto out=status;out.active_peers=0;out.connected=out.synchronized=false;
@@ -1526,7 +1552,7 @@ esp_err_t runtime_remove_octopus(model::OctopusId id,model::MessageId request,ui
             if(active->peer!=id)continue;
             if(active==target){
                 std::lock_guard<std::mutex> queue_guard(active->mutex);active->queue.clear();active->ready=false;active->management_ready=false;active->status.ready=false;active->status.management_ready=false;
-                active->removal_request=request;active->removal_until=now+2000;active->retiring=true;
+                active->removal_request=request;active->removal_until=now+2000;active->retiring=true;wake(*active);
             }else{active->cancelled=true;::shutdown(active->tls->socket,SHUT_RDWR);}
         }
         if(joining){status.phase="enrollment_revoked";status.last_error="Enrollment cancelled. Physically factory reset the removed Amity before adding it again.";}
@@ -1591,7 +1617,7 @@ std::string runtime_device_settings(model::OctopusId owner){
     if(cache->attempted&&now-cache->attempted<1000)return wrapper("error",cache->error);
     std::lock_guard<std::mutex> queue(link.active->mutex);if(link.active->queue.size()>=16)return wrapper("error","The device is busy. Try again shortly.");
     cache->read_id=random_id<model::MessageId>();cache->read_link=link.active->session.scope().link_id;cache->read_until=now+5000;cache->attempted=now;
-    link.active->queue.push_back({Kind::settings_read,"{\"request_id\":\""+cache->read_id.str()+"\"}",2000,now,link.status.config_revision,{}});return wrapper("reading","");
+    link.active->queue.push_back({Kind::settings_read,"{\"request_id\":\""+cache->read_id.str()+"\"}",2000,now,link.status.config_revision,{}});wake(*link.active);return wrapper("reading","");
 }
 esp_err_t runtime_write_device_settings(model::OctopusId owner,model::MessageId id,const Json& core,uint64_t admitted_until){
     DeviceSettingsWrite write;if(!id||parse_device_settings_write(core,write)!=Error::none)return ESP_ERR_INVALID_ARG;
@@ -1621,7 +1647,7 @@ esp_err_t runtime_write_device_settings(model::OctopusId owner,model::MessageId 
             const auto until=std::min<uint64_t>(admitted_until,now+5000);if(until<=now)return ESP_ERR_TIMEOUT;
             std::lock_guard<std::mutex> queue(link.active->mutex);if(link.active->queue.size()>=16)return ESP_ERR_NO_MEM;
             const auto payload="{\"request_id\":\""+id.str()+"\",\"settings\":"+encoded+"}";
-            link.active->queue.push_back({Kind::settings_write,payload,static_cast<uint32_t>(until-now),now,link.status.config_revision,{}});settings_operations.push_back({owner,id,link.status.boot_id,link.active->session.scope().link_id,encoded,"admitted","",until,write.hostname});
+            link.active->queue.push_back({Kind::settings_write,payload,static_cast<uint32_t>(until-now),now,link.status.config_revision,{}});wake(*link.active);settings_operations.push_back({owner,id,link.status.boot_id,link.active->session.scope().link_id,encoded,"admitted","",until,write.hostname});
         }
     }
     if(local){const auto response=settings_apply({},id,core,admitted_until);Json result;JsonError detail;if(!parse_json(response,result,detail))return ESP_FAIL;
@@ -1645,7 +1671,7 @@ static esp_err_t queue_update(model::OctopusId owner,Kind kind,std::string paylo
     if(result ? (group.role!=Group::member||group.authority!=owner) : (group.role!=Group::coordinator||!status.authority_ready))return ESP_ERR_INVALID_STATE;
     for(auto& active:links)if(active->peer==owner&&!active->cancelled&&!active->retiring&&!active->restart_requested&&!active->execution_fenced&&(active->ready||active->management_ready)){
         std::lock_guard<std::mutex> qguard(active->mutex);if(active->queue.size()>=16)return ESP_ERR_NO_MEM;
-        active->queue.push_back({kind,std::move(payload),ttl,now_ms(),active->status.config_revision,{},{},firmware_stream});return ESP_OK;
+        active->queue.push_back({kind,std::move(payload),ttl,now_ms(),active->status.config_revision,{},{},firmware_stream});wake(*active);return ESP_OK;
     }
     return ESP_ERR_INVALID_STATE;
 }
@@ -1675,7 +1701,7 @@ static esp_err_t queue_control(model::OctopusId owner,Kind kind,uint32_t ttl,std
             return ESP_ERR_NO_MEM;
         }
         const bool current_context=owned&&(owned->kind==model::OwnedIntentKind::context||owned->kind==model::OwnedIntentKind::activity)&&owned->config_revision==active->session.scope().config_revision;
-        active->queue.push_back({kind,{},ttl,created?created:now,revision?revision:active->status.config_revision,std::move(owned),std::move(snapshot)});
+        active->queue.push_back({kind,{},ttl,created?created:now,revision?revision:active->status.config_revision,std::move(owned),std::move(snapshot)});wake(*active);
         if(current_context){active->context_ready=true;active->context_requested=false;active->refreshing=false;}
         return ESP_OK;
     }

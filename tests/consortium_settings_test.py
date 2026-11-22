@@ -24,7 +24,8 @@ template<class T>T ident(unsigned n){char v[33];snprintf(v,sizeof(v),"%032x",n);
 template<class T>T random_id(){static unsigned next=1000;return ident<T>(next++);}
 struct Queued{Kind kind;std::string payload;uint32_t ttl;uint64_t created;uint64_t revision=0;std::shared_ptr<const model::OwnedIntent> owned;};
 struct FakeTls{model::OctopusId authenticated;};
-struct Active{Session session;model::OctopusId peer;std::shared_ptr<FakeTls> tls=std::make_shared<FakeTls>();std::mutex mutex;std::deque<Queued> queue;bool cancelled=false,retiring=false,ready=true,management_ready=false,restart_requested=false,execution_fenced=false;RuntimePeerStatus status;std::string advertised_hostname;bool lifecycle_only=false;std::optional<LinkScope> wifi_scope;uint64_t wifi_reported_at=0;network_diagnostics::WifiSignal wifi_reported;};
+struct Active{Session session;model::OctopusId peer;std::shared_ptr<FakeTls> tls=std::make_shared<FakeTls>();std::mutex mutex;std::deque<Queued> queue;bool cancelled=false,retiring=false,ready=true,management_ready=false,restart_requested=false,execution_fenced=false;RuntimePeerStatus status;std::string advertised_hostname;uint32_t advertised_generation=0;bool lifecycle_only=false;std::optional<LinkScope> wifi_scope;uint64_t wifi_reported_at=0;network_diagnostics::WifiSignal wifi_reported;};
+std::atomic<uint32_t> hostname_generation{1};void wake(Active&){}
 std::mutex lock,persistence_lock;Group group;Identity identity;RuntimeStatus status;HostnameRegistry hostnames;RuntimeNetworkHooks network;struct{bool submitted=false;std::string hostname;RuntimeAdmissionStatus view;}admission;std::string local_hostname="main-name";bool registry_failure=false;model::BootId boot=ident<model::BootId>(6);uint64_t configuration=1;std::vector<std::shared_ptr<Active>> links;
 unsigned saves=0,restarts=0;uint64_t revision=2,hostname_revision=10;bool send_success=true,applied_sent=false,http_sent=false;unsigned effect_fault=0;
 std::shared_ptr<Active> current_link;std::vector<std::string> sent;
@@ -135,7 +136,8 @@ void live_hostname_tests(){
  reset(true);auto active=connection(false);const auto original=active->session.scope();const auto tls=active->tls;
  active->management_ready=true;active->ready=false;assert(refresh_local_hostname(*active)&&sent.empty());active->management_ready=false;active->ready=true;
  active->advertised_hostname=local_hostname;assert(refresh_local_hostname(*active)&&sent.empty());
- local_hostname="renamed-main";assert(refresh_local_hostname(*active)&&sent.size()==1&&parsed(sent.back()).get("hostname")->string==local_hostname);
+ local_hostname="renamed-main";assert(refresh_local_hostname(*active)&&sent.empty()); // Only a rename event triggers a check.
+ ++hostname_generation;assert(refresh_local_hostname(*active)&&sent.size()==1&&parsed(sent.back()).get("hostname")->string==local_hostname);
  assert(refresh_local_hostname(*active)&&sent.size()==1);
  auto update=message(active,Kind::device_status,parsed("{\"hostname\":\"renamed-member\"}"));
  assert(receive_live_device_status(*active,update,clock_ms)&&active->status.hostname=="renamed-member"&&hostnames.lookup(active->peer)=="renamed-member");
