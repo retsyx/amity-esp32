@@ -3,7 +3,6 @@
 #include "platform.hpp"
 #include "admission_crypto.hpp"
 #include "config_store.hpp"
-#include "candidate_network.hpp"
 #include "controller_policy.hpp"
 #include "hostname_registry.hpp"
 #include "runtime_persistence.hpp"
@@ -193,7 +192,6 @@ std::atomic_bool invitation_running{false};
 std::atomic_bool invitation_cancelled{false};
 uint64_t candidate_generation=0,candidate_deadline=0,pending_radio_release=0;
 bool candidate_passive=false;
-std::atomic_bool candidate_network_recovered{false};
 int listener=-1;
 void error(std::string value){std::lock_guard<std::mutex> guard(lock);status.last_error=std::move(value);}
 template<class T>T random_id(){auto value=T::parse(random_hex(16));return value?*value:T{};}
@@ -248,10 +246,7 @@ bool enroll_lan(Active &active,bool server){
         const auto nonce=envelope.payload.get("challenge_nonce")->string;
         if(!send(active,Kind::enrollment_control,control_json(current.join_id,digest,"prove",",\"challenge_nonce\":\""+nonce+"\""))||!receive()||envelope.payload.get("phase")->string!="commit")return false;
         uint64_t revision=0;if(!decimal(envelope.payload.get("membership_revision"),revision)||revision!=current.join_revision)return false;
-        RuntimeNetworkHooks network_hooks;{std::lock_guard<std::mutex> guard(lock);network_hooks=network;}
-        if(!network_hooks.commit_transaction||network_hooks.commit_transaction(current.join_id,digest)!=ESP_OK)return false;
         {std::lock_guard<std::mutex> persistence(persistence_lock);std::unique_lock<std::mutex> guard(lock);if(group.join_id!=current.join_id||group.join_digest!=digest)return false;auto next=group;next.role=Group::member;next.revision=std::max(next.revision,revision);for(auto &p:next.peers)p.active=true;if(without_runtime_lock(guard,[&]{return save_group(next);})!=ESP_OK)return false;group=std::move(next);status.member=true;status.membership_revision=group.revision;}
-        if(!network_hooks.finish_transaction||network_hooks.finish_transaction(current.join_id,digest)!=ESP_OK)return false;
         if(!send(active,Kind::enrollment_control,control_json(current.join_id,digest,"ack",",\"membership_revision\":\""+std::to_string(revision)+"\",\"state\":\"active\"")))return false;
         if(current.role==Group::prepared){
             // The old singleton SystemControl identity remains fenced. Let the
@@ -1238,20 +1233,13 @@ std::vector<std::string> discover_group_hints(const Group &current){
     mdns_query_results_free(results);return hints;
 }
 void defer_radio_release(uint64_t generation){if(!generation)return;std::lock_guard<std::mutex> guard(lock);pending_radio_release=generation;}
-bool recover_candidate_network(){
-    static uint64_t retry_at=0;if(candidate_network_recovered)return true;if(now_ms()<retry_at)return false;
-    RuntimeNetworkHooks hooks;Group current;{std::lock_guard<std::mutex> guard(lock);hooks=network;current=group;}
-    if(!hooks.recover_transaction)return false;
-    const auto result=hooks.recover_transaction(current.join_id,current.join_digest,current.role==Group::member);
-    if(result==ESP_OK){candidate_network_recovered=true;return true;}retry_at=now_ms()+5000;error("Candidate network recovery is incomplete; membership remains passive");return false;
-}
 bool local_ipv4_ready(){
     auto* station=esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");esp_netif_ip_info_t address{};
     return station&&esp_netif_is_netif_up(station)&&esp_netif_get_ip_info(station,&address)==ESP_OK&&address.ip.addr;
 }
 void network_loop(void*){
     uint32_t backoff=1000;uint64_t next_discovery=0,ipv4_wait_at=0;size_t next_hint=0;std::vector<std::string> discovered;bool ipv4_waiting=false;
-    while(true){if(!recover_candidate_network()){vTaskDelay(pdMS_TO_TICKS(100));continue;}Group current;Identity local;bool may_connect;{std::lock_guard<std::mutex> guard(lock);current=group;local=identity;may_connect=current.role!=Group::prepared||(candidate_passive&&gatt_candidate_transport_idle());}
+    while(true){Group current;Identity local;bool may_connect;{std::lock_guard<std::mutex> guard(lock);current=group;local=identity;may_connect=current.role!=Group::prepared||(candidate_passive&&gatt_candidate_transport_idle());}
         advertise_group_hint(current);
         reap_closed_links();
         if(current.role==Group::coordinator){if(listener<0){int fd=::socket(AF_INET,SOCK_STREAM,0);int yes=1;setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof(yes));sockaddr_in addr{};addr.sin_family=AF_INET;addr.sin_port=htons(7443);addr.sin_addr.s_addr=INADDR_ANY;if(fd<0||::bind(fd,reinterpret_cast<sockaddr*>(&addr),sizeof(addr))||::listen(fd,2)){if(fd>=0)::close(fd);vTaskDelay(pdMS_TO_TICKS(1000));continue;}listener=fd;timeval timeout{0,200000};setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));}
@@ -1308,11 +1296,15 @@ esp_err_t bootstrap_request(std::string_view request,std::string &response){
         model::JoinId join;std::string digest,ssid,password;
         if(!closed(p,{"phase","join_id","digest","ssid","password"})||!id(p.get("join_id"),join)||!json_string(p.get("digest"),digest,64,64)||group.role!=Group::prepared||join!=group.join_id||digest!=group.join_digest||p.get("ssid")->type!=Json::Type::string||p.get("password")->type!=Json::Type::string||!unhex(p.get("ssid")->string,ssid,32)||ssid.empty()||!unhex(p.get("password")->string,password,64))return ESP_ERR_INVALID_ARG;
         if(!host_ip().empty()){response="{\"phase\":\"networked\",\"ready\":true}";return ESP_OK;}
-        auto hooks=network;if(!hooks.stage_transaction||!hooks.commit_transaction||!hooks.finish_transaction)return ESP_ERR_NOT_SUPPORTED;
+        auto hooks=network;if(!hooks.stage_connect||!hooks.commit)return ESP_ERR_NOT_SUPPORTED;
         status.phase="connecting_wifi";guard.unlock();persistence.unlock();
-        auto result=hooks.stage_transaction(join,digest,ssid,password);
+        // Commit as soon as the station has an address. The durable prepared
+        // decision already binds this candidate to the main; there is no
+        // earlier network to return to if the join does not finish.
+        auto result=hooks.stage_connect(ssid,password);
         std::fill(password.begin(),password.end(),0);password.clear();
         if(result==ESP_OK&&host_ip().empty())result=ESP_ERR_INVALID_STATE;
+        if(result==ESP_OK)result=hooks.commit();
         if(result!=ESP_OK&&hooks.rollback)hooks.rollback();
         guard.lock();status.phase=result==ESP_OK?"finishing_enrollment":"network_failed";
         if(result!=ESP_OK)return result;

@@ -1,5 +1,4 @@
 #include "intent_configuration_fixture.hpp"
-#include "candidate_network.hpp"
 #include <iostream>
 #include <set>
 
@@ -158,19 +157,6 @@ void ownership_and_slots(){
     auto reused=deleted;reused.external_slots[0].activity_id=other.activity_id;assert(!reconcile_external_slots(deleted,reused,error));
     auto hardware=c;assert(reconcile_hardware_profile(hardware,*c.controller_octopus_id,4,changed,error)&&changed&&hardware.octopuses[0].supported_tentacles==4);assert(serialize_configuration(hardware).find("domains")==std::string::npos);
 }
-void candidate_network_recovery(){
-    CandidateNetwork value;value.join_id=id<model::JoinId>(170);value.proposal_digest=std::string(64,'c');value.old_ssid="Old offline network";value.old_password="retained-secret";value.old_driver_configuration=std::string("binary\0configuration",20);value.ssid="Candidate LAN";value.password="candidate-secret";std::string error;CandidateNetwork recovered;
-    Memory memory;CandidateNetworkJournal journal(memory);assert(journal.stage(value,error)==ConfigResult::ok);assert(journal.recover(recovered,error)==ConfigResult::ok&&!recovered.decided&&recovered.old_driver_configuration==value.old_driver_configuration);const auto before=memory.values;
-    assert(journal.finish(value.join_id,value.proposal_digest,error)==ConfigResult::conflict);assert(journal.decide(id<model::JoinId>(171),value.proposal_digest,true,error)==ConfigResult::conflict);
-    assert(journal.abandon(id<model::JoinId>(171),value.proposal_digest,error)==ConfigResult::conflict);assert(journal.abandon(value.join_id,std::string(64,'d'),error)==ConfigResult::conflict);
-    // The adapter restores the exact old driver bytes before abandon. A cut
-    // before cleanup retains the complete rollback material for passive retry.
-    for(unsigned cut=1;cut<=8;++cut){Memory interrupted;interrupted.values=before;interrupted.cut_at=cut;CandidateNetworkJournal cancellation(interrupted);try{cancellation.abandon(value.join_id,value.proposal_digest,error);}catch(const PowerCut&){}interrupted.cut_at=0;CandidateNetworkJournal boot(interrupted);const auto status=boot.recover(recovered,error);assert(status==ConfigResult::missing||(status==ConfigResult::ok&&!recovered.decided&&recovered.old_driver_configuration==value.old_driver_configuration&&recovered.old_password==value.old_password));}
-    for(unsigned cut=1;cut<=12;++cut){Memory interrupted;interrupted.values=before;interrupted.cut_at=cut;CandidateNetworkJournal transaction(interrupted);try{transaction.decide(value.join_id,value.proposal_digest,true,error);}catch(const PowerCut&){}interrupted.cut_at=0;CandidateNetworkJournal reboot(interrupted);assert(reboot.recover(recovered,error)==ConfigResult::ok&&recovered.old_password==value.old_password&&recovered.password==value.password);}
-    assert(journal.decide(value.join_id,value.proposal_digest,true,error)==ConfigResult::ok);assert(journal.decide(value.join_id,value.proposal_digest,false,error)==ConfigResult::conflict);assert(journal.abandon(value.join_id,value.proposal_digest,error)==ConfigResult::conflict);const auto decided=memory.values;
-    for(unsigned cut=1;cut<=8;++cut){Memory interrupted;interrupted.values=decided;interrupted.cut_at=cut;CandidateNetworkJournal transaction(interrupted);try{transaction.finish(value.join_id,value.proposal_digest,error);}catch(const PowerCut&){}interrupted.cut_at=0;CandidateNetworkJournal reboot(interrupted);const auto status=reboot.recover(recovered,error);assert(status==ConfigResult::missing||(status==ConfigResult::ok&&recovered.decided));}
-    assert(journal.finish(value.join_id,value.proposal_digest,error)==ConfigResult::ok&&memory.values.at("net_candidate")=="NETWORK_DONE\n");Memory damaged;damaged.values=before;damaged.values["net_candidate"][80]^=1;CandidateNetworkJournal corrupt(damaged);assert(corrupt.recover(recovered,error)==ConfigResult::recovery_required);
-}
 void explicit_owner_removal(){
     auto previous=direct_configuration();std::string error;const auto removed=id<model::OctopusId>(70),other=id<model::OctopusId>(71);
     previous.octopuses.push_back({removed,"Removed Amity","Removed Amity",true,1});previous.octopuses.push_back({other,"Other Amity","Other Amity",false,1});
@@ -201,4 +187,4 @@ void explicit_owner_removal(){
     assert(active->canonical.find(removed.str())==std::string::npos&&active->configuration.activities.size()==1);
     for(size_t index=1;index<active->configuration.external_slots.size();++index)assert(active->configuration.external_slots[index].tombstone&&active->configuration.external_slots[index].alias.empty());
 }
-int main(){canonical_bytes_and_projections();saved_text_and_staged_record_integrity();codecs();current_format_only();initialization();journal();ownership_and_slots();candidate_network_recovery();explicit_owner_removal();std::cout<<"PASS intent-only configuration: canonical bytes/hash projections, saved-text invariants, staged-record tampering, scoped selectors, current-format rejection, AVR/switch selections without discovery, explicit all-role owner deletion, preserved slots/authority, 80 storage interruptions\n";}
+int main(){canonical_bytes_and_projections();saved_text_and_staged_record_integrity();codecs();current_format_only();initialization();journal();ownership_and_slots();explicit_owner_removal();std::cout<<"PASS intent-only configuration: canonical bytes/hash projections, saved-text invariants, staged-record tampering, scoped selectors, current-format rejection, AVR/switch selections without discovery, explicit all-role owner deletion, preserved slots/authority, 80 storage interruptions\n";}

@@ -72,7 +72,6 @@ uint64_t now_ms(){return clock_ms;}
 unsigned pdMS_TO_TICKS(unsigned value){return value;}
 std::vector<unsigned> delays;
 void vTaskDelay(unsigned value){delays.push_back(value);clock_ms+=value;if(on_loop_delay)on_loop_delay();if(clock_ms>30000)throw std::runtime_error("connection loop exceeded existing bounded schedule");}
-bool recover_candidate_network(){return true;}
 bool gatt_candidate_transport_idle(){return clock_ms>=transport_idle_at;}
 bool gatt_quiescent(){return true;}
 void advertise_group_hint(const Group&){}

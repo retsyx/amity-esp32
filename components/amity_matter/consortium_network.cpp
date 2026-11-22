@@ -1,6 +1,5 @@
 // Copyright 2026. SPDX-License-Identifier: GPL-3.0-or-later
 #include "amity/consortium/runtime.hpp"
-#include "candidate_network.hpp"
 #include "config_store.hpp"
 #include "device_settings.hpp"
 #include "esp_wifi.h"
@@ -39,14 +38,14 @@ esp_err_t driver_call(const std::function<esp_err_t()>& fn){
     if(queued==CHIP_NO_ERROR)xSemaphoreTake(work.done,portMAX_DELAY);
     vSemaphoreDelete(work.done);return queued==CHIP_NO_ERROR?work.result:ESP_FAIL;
 }
-bool configured(std::string& ssid,std::string& password,wifi_config_t* snapshot=nullptr){
+bool configured(std::string& ssid,std::string& password){
     esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);wifi_config_t configuration{};const auto result=esp_wifi_get_config(WIFI_IF_STA,&configuration);
-    if(result==ESP_OK){ssid.assign(reinterpret_cast<char*>(configuration.sta.ssid),strnlen(reinterpret_cast<char*>(configuration.sta.ssid),32));password.assign(reinterpret_cast<char*>(configuration.sta.password),strnlen(reinterpret_cast<char*>(configuration.sta.password),64));if(snapshot)*snapshot=configuration;}
+    if(result==ESP_OK){ssid.assign(reinterpret_cast<char*>(configuration.sta.ssid),strnlen(reinterpret_cast<char*>(configuration.sta.ssid),32));password.assign(reinterpret_cast<char*>(configuration.sta.password),strnlen(reinterpret_cast<char*>(configuration.sta.password),64));}
     mbedtls_platform_zeroize(&configuration,sizeof(configuration));return result==ESP_OK;
 }
 bool export_credentials(std::string& ssid,std::string& password){return usable_ip()&&configured(ssid,password);}
 // The pinned driver supports one network, always index0. Removal changes only
-// staging; its own backup remains until authenticated transaction commitment.
+// staging; its own backup remains until commit().
 bool remove_other(nc::ESPWiFiDriver& driver,const std::string& desired){
     auto* iterator=driver.GetNetworks();if(!iterator)return false;nc::Network network{};bool valid=iterator->Count()<=1;const bool found=iterator->Next(network);iterator->Release();
     if(!valid)return false;
@@ -84,49 +83,9 @@ esp_err_t commit(){
     xSemaphoreGive(transaction);return result;
 }
 void rollback(){if(xSemaphoreTake(transaction,0)!=pdTRUE)return;driver_call([]{return nc::ESPWiFiDriver::GetInstance().RevertConfiguration()==CHIP_NO_ERROR?ESP_OK:ESP_FAIL;});staged=false;xSemaphoreGive(transaction);}
-esp_err_t restore_previous(const config_store::CandidateNetwork& saved){
-    if(saved.old_index!=0||saved.old_driver_configuration.size()!=sizeof(wifi_config_t)||pending.load())return ESP_ERR_INVALID_STATE;
-    if(xSemaphoreTake(transaction,0)!=pdTRUE)return ESP_ERR_INVALID_STATE;
-    const auto result=driver_call([&]{auto& driver=nc::ESPWiFiDriver::GetInstance();if(driver.RevertConfiguration()!=CHIP_NO_ERROR||!remove_other(driver,saved.old_ssid))return ESP_FAIL;
-        if(!saved.old_ssid.empty()){char debug[128];chip::MutableCharSpan text(debug);uint8_t index=0;if(driver.AddOrUpdateNetwork(chip::ByteSpan(reinterpret_cast<const uint8_t*>(saved.old_ssid.data()),saved.old_ssid.size()),chip::ByteSpan(reinterpret_cast<const uint8_t*>(saved.old_password.data()),saved.old_password.size()),text,index)!=nc::Status::kSuccess||index!=saved.old_index)return ESP_FAIL;}
-        wifi_config_t previous{};memcpy(&previous,saved.old_driver_configuration.data(),sizeof(previous));esp_wifi_disconnect();const auto restored=esp_wifi_set_config(WIFI_IF_STA,&previous);mbedtls_platform_zeroize(&previous,sizeof(previous));if(restored!=ESP_OK)return restored;
-        if(driver.CommitConfiguration()!=CHIP_NO_ERROR)return ESP_FAIL;
-        if(!saved.old_ssid.empty())esp_wifi_connect();
-        return ESP_OK;});
-    staged=false;xSemaphoreGive(transaction);return result;
-}
-esp_err_t stage_transaction(model::JoinId join,const std::string& digest,const std::string& ssid,const std::string& password){
-    config_store::CandidateNetwork saved;std::string error;auto loaded=config_store::load_candidate_network(saved,error);
-    if(loaded==ESP_ERR_NVS_NOT_FOUND){wifi_config_t previous{};if(!configured(saved.old_ssid,saved.old_password,&previous))return ESP_FAIL;saved.old_driver_configuration.assign(reinterpret_cast<const char*>(&previous),sizeof(previous));mbedtls_platform_zeroize(&previous,sizeof(previous));saved.join_id=join;saved.proposal_digest=digest;saved.ssid=ssid;saved.password=password;if(config_store::stage_candidate_network(saved,error)!=ESP_OK)return ESP_FAIL;}
-    else if(loaded!=ESP_OK||saved.join_id!=join||saved.proposal_digest!=digest||saved.ssid!=ssid||saved.password!=password||saved.decided)return ESP_ERR_INVALID_STATE;
-    return stage_connect(ssid,password);
-}
-esp_err_t commit_transaction(model::JoinId join,const std::string& digest){
-    config_store::CandidateNetwork saved;std::string error;const auto loaded=config_store::load_candidate_network(saved,error);if(loaded==ESP_ERR_NVS_NOT_FOUND)return ESP_OK;if(loaded!=ESP_OK||saved.join_id!=join||saved.proposal_digest!=digest)return ESP_ERR_INVALID_STATE;
-    std::string ssid,password;if(!configured(ssid,password))return ESP_FAIL;const bool candidate=ssid==saved.ssid&&password==saved.password;mbedtls_platform_zeroize(password.data(),password.size());
-    if(!usable_ip()||(!candidate&&ssid!=saved.old_ssid))return ESP_ERR_INVALID_STATE;
-    if(config_store::decide_candidate_network(join,digest,candidate,error)!=ESP_OK)return ESP_FAIL;
-    // Only an exact authenticated LAN commit reaches this function. The durable
-    // decision precedes deletion of the driver's prior-network rollback backup.
-    if(candidate){if(!staged)return driver_call([]{return nc::ESPWiFiDriver::GetInstance().CommitConfiguration()==CHIP_NO_ERROR?ESP_OK:ESP_FAIL;});return commit();}
-    return restore_previous(saved);
-}
-esp_err_t finish_transaction(model::JoinId join,const std::string& digest){std::string error;return config_store::finish_candidate_network(join,digest,error);}
-esp_err_t disconnect_for_recovery(){
-    const auto result=esp_wifi_disconnect();if(result!=ESP_OK&&result!=ESP_ERR_WIFI_NOT_CONNECT)return result;
-    for(unsigned n=0;n<100;++n){if(!usable_ip())return ESP_OK;vTaskDelay(pdMS_TO_TICKS(20));}return ESP_ERR_TIMEOUT;
-}
-esp_err_t recover_transaction(model::JoinId join,const std::string& digest,bool member){
-    config_store::CandidateNetwork saved;std::string error;const auto loaded=config_store::load_candidate_network(saved,error);if(loaded==ESP_ERR_NVS_NOT_FOUND)return ESP_OK;if(loaded!=ESP_OK)return loaded;
-    if(saved.join_id!=join||saved.proposal_digest!=digest){if(saved.decided)return ESP_ERR_INVALID_STATE;const auto restored=restore_previous(saved);return restored==ESP_OK?config_store::abandon_candidate_network(saved.join_id,saved.proposal_digest,error):restored;}
-    if(member&&saved.decided){const auto restored=saved.use_candidate?ESP_OK:restore_previous(saved);if(restored!=ESP_OK)return restored;if(saved.use_candidate){std::string ssid,password;if(!configured(ssid,password))return ESP_FAIL;const bool candidate=ssid==saved.ssid&&password==saved.password;mbedtls_platform_zeroize(password.data(),password.size());if(!candidate){if(usable_ip()&&disconnect_for_recovery()!=ESP_OK)return ESP_ERR_TIMEOUT;const auto result=stage_connect(saved.ssid,saved.password);if(result!=ESP_OK)return result;}const auto committed=driver_call([]{return nc::ESPWiFiDriver::GetInstance().CommitConfiguration()==CHIP_NO_ERROR?ESP_OK:ESP_FAIL;});if(committed!=ESP_OK)return committed;}return finish_transaction(join,digest);}
-    if(!saved.decided){const auto restored=restore_previous(saved);if(restored!=ESP_OK)return restored;if(usable_ip())return ESP_OK;return stage_connect(saved.ssid,saved.password);}
-    if(!saved.use_candidate)return restore_previous(saved);
-    std::string ssid,password;if(!configured(ssid,password))return ESP_FAIL;const bool candidate=ssid==saved.ssid&&password==saved.password;mbedtls_platform_zeroize(password.data(),password.size());if(candidate&&usable_ip())return ESP_OK;if(usable_ip()&&disconnect_for_recovery()!=ESP_OK)return ESP_ERR_TIMEOUT;return stage_connect(saved.ssid,saved.password);
-}
 }
 esp_err_t install_consortium_network_hooks(){transaction=xSemaphoreCreateMutex();completed=xSemaphoreCreateBinary();if(!transaction||!completed)return ESP_ERR_NO_MEM;
-    amity::consortium::RuntimeNetworkHooks hooks{export_credentials,stage_connect,commit,rollback};hooks.stage_transaction=stage_transaction;hooks.commit_transaction=commit_transaction;hooks.finish_transaction=finish_transaction;hooks.recover_transaction=recover_transaction;
+    amity::consortium::RuntimeNetworkHooks hooks{export_credentials,stage_connect,commit,rollback};
     hooks.get_hostname=[]{return std::string(device_settings::hostname());};
     hooks.set_hostname=[](const std::string& name){
         return device_settings::apply_enrollment_hostname(name);

@@ -21,7 +21,7 @@ using esp_err_t=int;constexpr int ESP_OK=0,ESP_ERR_INVALID_ARG=1,ESP_ERR_INVALID
 std::mutex lock,persistence_lock;Group group,durable;Identity identity;HostnameRegistry hostnames;
 uint64_t candidate_deadline=1000;bool candidate_passive=false;unsigned saves=0;bool save_failure=false,registry_failure=false;std::string current_name="factory-name",proposal_bytes;std::vector<std::string> effects;
 uint64_t now_ms(){return 100;}
-struct Network {std::function<esp_err_t(const std::string&)> set_hostname;std::function<std::string()> get_hostname;std::function<esp_err_t(model::JoinId,const std::string&,const std::string&,const std::string&)> stage_transaction;std::function<esp_err_t(model::JoinId,const std::string&)> commit_transaction,finish_transaction;std::function<void()> rollback;}network;
+struct Network {std::function<esp_err_t(const std::string&)> set_hostname;std::function<std::string()> get_hostname;std::function<esp_err_t(const std::string&,const std::string&)> stage_connect;std::function<esp_err_t()> commit;std::function<void()> rollback;}network;
 using RuntimeNetworkHooks=Network;
 struct {std::function<esp_err_t()> retire;}lifecycle;
 struct {bool member=false,authority_ready=false;std::string phase;}status;

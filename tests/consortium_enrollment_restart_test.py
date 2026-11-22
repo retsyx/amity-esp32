@@ -39,9 +39,9 @@ struct FakeTls {
 };
 struct Active {Session session;FakeTls transport;FakeTls* tls=&transport;model::OctopusId peer;};
 std::mutex lock,enrollment_lock,persistence_lock;
-Group group;RuntimeStatus status;RuntimeNetworkHooks network;
+Group group;RuntimeStatus status;
 std::vector<std::string> events;
-bool ack_fails=false,commit_fails=false,save_fails=false,finish_fails=false,handoff_fails=false,internal_stack=false;
+bool ack_fails=false,save_fails=false,handoff_fails=false,internal_stack=false;
 unsigned handoffs=0,restarts=0;
 esp_err_t save_group(const Group& next){check(next.role==Group::member,"unexpected group write");events.push_back("group_commit");return save_fails?ESP_FAIL:ESP_OK;}
 bool send(Active&,Kind kind,std::string_view payload){
@@ -66,7 +66,7 @@ bool with_internal_flash_stack(std::function<void()> action){
 SUITE = r'''
 void configure(Active& active,Group::Role role=Group::prepared,uint64_t commit_revision=3){
     clock_ms=100;group={};status={};events.clear();handoffs=restarts=0;internal_stack=false;
-    ack_fails=commit_fails=save_fails=finish_fails=handoff_fails=false;
+    ack_fails=save_fails=handoff_fails=false;
     group.role=role;group.consortium=ident<model::ConsortiumId>(2);group.authority=ident<model::OctopusId>(3);
     group.epoch=1;group.revision=3;group.authority_host="192.0.2.1";group.join_id=ident<model::JoinId>(22);group.joining_id=ident<model::OctopusId>(4);
     group.join_digest=std::string(64,'a');group.join_hostname="amity-candidate";group.join_revision=3;group.peers.push_back({group.authority,"leaf","pin",role==Group::member});
@@ -78,20 +78,18 @@ void configure(Active& active,Group::Role role=Group::prepared,uint64_t commit_r
         Envelope e;e.kind=Kind::enrollment_control;e.consortium_id=scope.consortium_id;e.origin_octopus_id=scope.peer_id;e.destination_octopus_id=scope.local_id;e.origin_boot_id=scope.peer_boot_id;e.destination_boot_id=scope.local_boot_id;e.coordinator_epoch=1;e.config_revision=7;e.ttl_ms=2000;return envelope_json(e,payload);
     };
     active.transport.frames={incoming(control_json(group.join_id,group.join_digest,"challenge",",\"challenge_nonce\":\""+ident<model::MessageId>(11).str()+"\"")),incoming(control_json(group.join_id,group.join_digest,"commit",",\"membership_revision\":\""+std::to_string(commit_revision)+"\",\"ready\":false"))};
-    network={};network.commit_transaction=[](model::JoinId join,const std::string& digest){check(join==group.join_id&&digest==group.join_digest,"network commitment used a different join");events.push_back("network_commit");return commit_fails?ESP_FAIL:ESP_OK;};
-    network.finish_transaction=[](model::JoinId join,const std::string& digest){check(join==group.join_id&&digest==group.join_digest,"network finish used a different join");events.push_back("network_finish");return finish_fails?ESP_FAIL:ESP_OK;};
 }
 bool run(Active& active,bool& rebooted){try{return enroll_lan(active,false);}catch(const Restart&){rebooted=true;return false;}}
 void restart_tests(){
     {Active active;configure(active);bool rebooted=false;
      check(!run(active,rebooted)&&rebooted&&restarts==1&&handoffs==1,"prepared member did not restart through the internal handoff");
      check(group.role==Group::member&&status.member&&group.peers.front().active,"restart preceded durable member commitment");
-     check(events==std::vector<std::string>({"prove","network_commit","group_commit","network_finish","ack","close_enrollment","delay_500","internal_handoff","restart"}),"commit/ACK/restart ordering changed");
+     check(events==std::vector<std::string>({"prove","group_commit","ack","close_enrollment","delay_500","internal_handoff","restart"}),"commit/ACK/restart ordering changed");
      check(clock_ms==600&&!internal_stack,"post-ACK delay or broker lifetime changed");}
     {Active active;configure(active);ack_fails=true;bool rebooted=false;
      check(!run(active,rebooted)&&!rebooted&&!handoffs&&!restarts,"failed ACK authorized a restart");
      check(group.role==Group::member&&events.back()=="ack"&&clock_ms==100,"ACK failure lost durable membership or introduced a restart delay");}
-    for(unsigned failure=0;failure<4;++failure){Active active;configure(active,Group::prepared,failure==0?4:3);commit_fails=failure==1;save_fails=failure==2;finish_fails=failure==3;bool rebooted=false;
+    for(unsigned failure=0;failure<2;++failure){Active active;configure(active,Group::prepared,failure==0?4:3);save_fails=failure==1;bool rebooted=false;
      check(!run(active,rebooted)&&!rebooted&&!handoffs&&!restarts&&std::find(events.begin(),events.end(),"ack")==events.end(),"invalid or failed commitment authorized an ACK/restart");}
     {Active active;configure(active);handoff_fails=true;bool rebooted=false;
      check(!run(active,rebooted)&&!rebooted&&handoffs==1&&!restarts&&!internal_stack,"failed internal handoff used an unsafe restart fallback");
@@ -101,7 +99,7 @@ void restart_tests(){
      check(events.back()=="close_enrollment"&&clock_ms==100,"existing-member completion added a restart delay");}
     {Active active;configure(active);group.join_id={};bool rebooted=false;
      check(!run(active,rebooted)&&!rebooted&&events.empty()&&!handoffs,"unprepared membership authorized a restart");}
-    std::cout<<"PASS actual LAN enrollment restart: durable network/member commit and successful ACK precede unchanged500ms delay/internal-stack handoff; failed ACK/commit/handoff and existing members never restart\n";
+    std::cout<<"PASS actual LAN enrollment restart: durable member commit and successful ACK precede unchanged500ms delay/internal-stack handoff; failed ACK/commit/handoff and existing members never restart\n";
 }
 int main(){try{restart_tests();return 0;}catch(const std::exception& error){std::cerr<<"FAIL "<<error.what()<<'\n';return 1;}}
 '''

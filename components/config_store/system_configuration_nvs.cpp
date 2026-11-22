@@ -1,5 +1,4 @@
 #include "system_configuration.hpp"
-#include "candidate_network.hpp"
 #include "nvs_budget.hpp"
 #include "config_store.hpp"
 #include "nvs.h"
@@ -93,7 +92,6 @@ private:
 };
 NvsConfiguration backend;
 ConfigurationStore store(backend);
-CandidateNetworkJournal candidate_network_store(backend);
 std::mutex gate;
 bool recovered = false;
 ConfigResult recover_once(std::string& error) {
@@ -137,10 +135,5 @@ esp_err_t cancel_staged_configuration() { std::lock_guard<std::mutex> lock(gate)
 esp_err_t activate_system_configuration(ConfigurationSnapshot& out, std::string& error) {
     std::lock_guard<std::mutex> lock(gate); return result(store.commit(out, error));
 }
-esp_err_t load_candidate_network(CandidateNetwork& out,std::string& error){std::lock_guard<std::mutex> lock(gate);return result(candidate_network_store.recover(out,error));}
-esp_err_t stage_candidate_network(const CandidateNetwork& value,std::string& error){std::lock_guard<std::mutex> lock(gate);return result(candidate_network_store.stage(value,error));}
-esp_err_t decide_candidate_network(model::JoinId join,const std::string& digest,bool use_candidate,std::string& error){std::lock_guard<std::mutex> lock(gate);return result(candidate_network_store.decide(join,digest,use_candidate,error));}
-esp_err_t finish_candidate_network(model::JoinId join,const std::string& digest,std::string& error){std::lock_guard<std::mutex> lock(gate);return result(candidate_network_store.finish(join,digest,error));}
-esp_err_t abandon_candidate_network(model::JoinId join,const std::string& digest,std::string& error){std::lock_guard<std::mutex> lock(gate);return result(candidate_network_store.abandon(join,digest,error));}
 
 } // namespace config_store
