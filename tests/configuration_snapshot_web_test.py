@@ -22,7 +22,7 @@ Memory memory;
 std::unique_ptr<ConfigurationStore> journal;
 ConfigurationSnapshot saved,staged,loaded;
 unsigned loads=0,stages=0,commits=0,serializations=0,input_publications=0;
-esp_err_t read_error=ESP_OK,stage_error=ESP_OK,commit_error=ESP_OK,startup_error=ESP_OK;
+esp_err_t read_error=ESP_OK,stage_error=ESP_OK,commit_error=ESP_OK;
 bool healthy=true,pending_boot=false;
 std::vector<std::string> events,input_names;
 }
@@ -74,9 +74,6 @@ public:
  }
 };
 namespace consortium {
-struct RuntimeStartup {system::OctopusId authority_id=id<system::OctopusId>(2);uint64_t epoch=1;bool is_passive=false;bool passive()const{return is_passive;}};
-RuntimeStartup startup;
-esp_err_t runtime_read_startup(system::OctopusId,RuntimeStartup& out){out=startup;return fixture::startup_error;}
 struct RuntimeStatus {bool coordinator=true,authority_ready=true;};
 RuntimeStatus runtime_status(){return {};}
 }
@@ -111,8 +108,8 @@ void reset(bool existing=true){
  fixture::journal=std::make_unique<ConfigurationStore>(fixture::memory);
  if(existing){std::string error;assert(fixture::journal->stage(direct_configuration(),{},error)==ConfigResult::ok);assert(fixture::journal->commit(fixture::saved,error)==ConfigResult::ok);}
  fixture::loads=fixture::stages=fixture::commits=fixture::serializations=fixture::input_publications=0;
- fixture::read_error=fixture::stage_error=fixture::commit_error=fixture::startup_error=ESP_OK;
- fixture::healthy=true;fixture::pending_boot=false;fixture::events.clear();fixture::input_names.clear();amity::consortium::startup={};
+ fixture::read_error=fixture::stage_error=fixture::commit_error=ESP_OK;
+ fixture::healthy=true;fixture::pending_boot=false;fixture::events.clear();fixture::input_names.clear();
 }
 void retained_configuration_is_shared(){
  for(bool pending:{false,true}){
@@ -162,8 +159,6 @@ void failures_preserve_the_previous_snapshot(){
  }
  reset();amity::SystemControl service;fixture::read_error=ESP_FAIL;
  assert(load_configuration(service,false)==ESP_FAIL&&!service.published&&!fixture::stages&&!fixture::commits);
- reset();amity::consortium::startup.is_passive=true;
- assert(load_configuration(service,false)==ESP_ERR_INVALID_STATE&&!fixture::loads);
  reset();assert(load_configuration(service,true)==ESP_OK&&configuration_passive&&!fixture::loads&&!service.published);
 }
 void reads_pin_one_revision_and_reuse_canonical_bytes(){

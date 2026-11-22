@@ -337,10 +337,9 @@ esp_err_t load_configuration(amity::SystemControl& service,bool defer_configurat
     control=&service;std::string message;
     configuration_passive=defer_configuration;
     if(configuration_passive)return ESP_OK;
-    amity::consortium::RuntimeStartup original;
-    if(amity::consortium::runtime_read_startup(service.octopus_id(),original)!=ESP_OK || original.passive() || original.epoch>1)return ESP_ERR_INVALID_STATE;
-    const auto controller=original.authority_id?original.authority_id:service.octopus_id();
-    if(controller!=service.octopus_id())return ESP_ERR_INVALID_STATE;
+    // Callers load active configuration only as the validated original main:
+    // after startup's membership read or a successful original claim.
+    const auto controller=service.octopus_id();
     config_store::ConfigurationSnapshot configuration;
     auto result=config_store::load_system_configuration(configuration,message);
     config_store::Configuration candidate;
@@ -363,7 +362,6 @@ esp_err_t load_configuration(amity::SystemControl& service,bool defer_configurat
     if(staged_configuration&&running&&esp_ota_get_state_partition(running,&boot_state)==ESP_OK&&boot_state==ESP_OTA_IMG_PENDING_VERIFY){
         // Initial or hardware configuration writes wait for this image's
         // protected local health before replacing the current active record.
-        amity::consortium::RuntimeStartup startup;if(amity::consortium::runtime_read_startup(service.octopus_id(),startup)!=ESP_OK)return ESP_ERR_INVALID_STATE;deferred_epoch=startup.epoch?startup.epoch:1;
         result=service.transition_coordinator_authority(false,deferred_epoch);if(result!=ESP_OK)return result;
         result=service.configure_passive_metadata(configuration);if(result!=ESP_OK)return result;
         deferred_configuration=configuration;configuration_passive=true;return ESP_OK;

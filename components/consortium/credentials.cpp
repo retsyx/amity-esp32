@@ -49,6 +49,15 @@ bool parse_certificate(std::string_view der,model::OctopusId id,mbedtls_x509_crt
 bool decode_identity(std::string_view record,model::OctopusId id,Identity &out){Json json;JsonError err;if(!parse_json(record,json,err)||!closed(json,{"version","octopus_id","leaf","key"}))return false;uint64_t version=0;model::OctopusId stored;if(!json_uint(json.get("version"),version,1,1)||!consortium::id(json.get("octopus_id"),stored)||stored!=id)return false;std::string leaf,key;if(!json.get("leaf")||json.get("leaf")->type!=Json::Type::string||!json.get("key")||json.get("key")->type!=Json::Type::string||!unhex(json.get("leaf")->string,leaf,1024)||!unhex(json.get("key")->string,key,512))return false;std::string pin;if(!certificate(leaf,id,pin))return false;mbedtls_pk_context parsed;mbedtls_pk_init(&parsed);mbedtls_x509_crt crt;mbedtls_x509_crt_init(&crt);bool valid=mbedtls_pk_parse_key(&parsed,reinterpret_cast<const uint8_t*>(key.data()),key.size(),nullptr,0)==0&&mbedtls_x509_crt_parse_der(&crt,reinterpret_cast<const uint8_t*>(leaf.data()),leaf.size())==0&&mbedtls_pk_check_pair(&crt.pk,&parsed)==0;mbedtls_x509_crt_free(&crt);mbedtls_pk_free(&parsed);if(!valid)return false;out={id,std::move(leaf),std::move(key),std::move(pin)};return true;}
 }
 bool certificate(std::string_view der,model::OctopusId id,std::string &pin){mbedtls_x509_crt crt;mbedtls_x509_crt_init(&crt);bool valid=parse_certificate(der,id,crt,pin);mbedtls_x509_crt_free(&crt);return valid;}
+namespace {
+// Stored roster leaves were fully verified before this firmware saved them.
+// Their pinned SPKI is the trust anchor, so a load checks only the binding.
+bool pinned_leaf(std::string_view der,model::OctopusId id,std::string_view pin){
+    mbedtls_x509_crt crt;mbedtls_x509_crt_init(&crt);std::string derived;
+    const bool valid=der.size()<=1024&&!mbedtls_x509_crt_parse_der(&crt,reinterpret_cast<const uint8_t*>(der.data()),der.size())&&certificate_binding(crt,id,derived)&&derived==pin;
+    mbedtls_x509_crt_free(&crt);return valid;
+}
+}
 esp_err_t load_identity(model::OctopusId id,Identity &out,bool create){
     std::string candidate;const auto found=read_record("amity_group","identity",candidate,2048);
     if(found==ESP_OK)return decode_identity(candidate,id,out)?ESP_OK:ESP_ERR_INVALID_STATE;
@@ -87,7 +96,7 @@ esp_err_t load_group(Group &out){
     if(!json_string(j.get("join_id"),jid,0,32)||!json_string(j.get("joining_id"),joining,0,32)||!json_string(j.get("join_digest"),g.join_digest,0,64)||!decimal(j.get("join_revision"),g.join_revision))return ESP_ERR_INVALID_STATE;
     if(!jid.empty()){auto parsed=model::JoinId::parse(jid);auto member=model::OctopusId::parse(joining);if(!parsed||!member||g.join_digest.size()!=64||!std::all_of(g.join_digest.begin(),g.join_digest.end(),[](char c){return (c>='0'&&c<='9')||(c>='a'&&c<='f');})||!g.join_revision)return ESP_ERR_INVALID_STATE;g.join_id=*parsed;g.joining_id=*member;}else if(!joining.empty()||!g.join_digest.empty()||!g.join_hostname.empty()||g.join_revision)return ESP_ERR_INVALID_STATE;
     auto peers=j.get("peers");if(peers->type!=Json::Type::array||peers->array.size()>maximum_roster_peers)return ESP_ERR_INVALID_STATE;
-    for(const auto &p:peers->array){Peer peer;if(!closed(p,{"id","leaf","pin","active"})||!id(p.get("id"),peer.id)||!json_bool(p.get("active"),peer.active)||p.get("leaf")->type!=Json::Type::string||!unhex(p.get("leaf")->string,peer.der,1024)||!json_string(p.get("pin"),peer.pin,64,64))return ESP_ERR_INVALID_STATE;std::string derived;if(!certificate(peer.der,peer.id,derived)||derived!=peer.pin)return ESP_ERR_INVALID_STATE;for(const auto &old:g.peers)if(old.id==peer.id||old.pin==peer.pin)return ESP_ERR_INVALID_STATE;g.peers.push_back(std::move(peer));}
+    for(const auto &p:peers->array){Peer peer;if(!closed(p,{"id","leaf","pin","active"})||!id(p.get("id"),peer.id)||!json_bool(p.get("active"),peer.active)||p.get("leaf")->type!=Json::Type::string||!unhex(p.get("leaf")->string,peer.der,1024)||!json_string(p.get("pin"),peer.pin,64,64))return ESP_ERR_INVALID_STATE;if(!pinned_leaf(peer.der,peer.id,peer.pin))return ESP_ERR_INVALID_STATE;for(const auto &old:g.peers)if(old.id==peer.id||old.pin==peer.pin)return ESP_ERR_INVALID_STATE;g.peers.push_back(std::move(peer));}
     if(g.role==Group::coordinator){
         if(!g.authority_host.empty())return ESP_ERR_INVALID_STATE;
         if(g.join_id){auto joining=std::find_if(g.peers.begin(),g.peers.end(),[&](const auto &p){return p.id==g.joining_id;});if(joining==g.peers.end()||g.join_revision<g.revision||(g.join_revision-g.revision)>1)return ESP_ERR_INVALID_STATE;}

@@ -168,9 +168,10 @@ void binding_and_callback(const Identity& authority,const Identity& member,const
 }
 int main(){using namespace amity::consortium;using namespace amity::consortium::platform;try{
  check(psa_crypto_init()==PSA_SUCCESS,"PSA init failed");const auto authority=make_identity(1),member=make_identity(2),outsider=make_identity(3);
- const auto clean=group_record(authority,member);Group restored;full_checks=0;check(load_group(restored)==ESP_OK&&full_checks==1,"stored peer bypassed full validation");
+ const auto clean=group_record(authority,member);Group restored;full_checks=0;check(load_group(restored)==ESP_OK&&full_checks==0,"stored peer repeated full signature validation");
  auto damaged=member.der;damaged.back()^=1;std::string pin;check(!certificate(damaged,member.id,pin),"invalid untrusted self-signature accepted");
- for(const auto& invalid:{replace(clean,hex(member.der),hex(damaged)),replace(clean,member.spki,std::string(64,'f')),replace(clean,member.id.str(),ident<model::OctopusId>(99).str()),replace(clean,hex(member.der),"00")}){records["amity_group/state"]=invalid;check(load_group(restored)!=ESP_OK,"damaged stored certificate/id/pin admitted");}
+ // A stored leaf is bound by its pinned SPKI; TLS later requires the exact DER.
+ for(const auto& invalid:{replace(clean,member.spki,std::string(64,'f')),replace(clean,member.id.str(),ident<model::OctopusId>(99).str()),replace(clean,hex(member.der),"00")}){records["amity_group/state"]=invalid;check(load_group(restored)!=ESP_OK,"damaged stored certificate/id/pin admitted");}
  check(!certificate(member.der,authority.id,pin),"wrong untrusted SAN identity admitted");
  const auto identity_record="{\"version\":1,\"octopus_id\":\""+member.id.str()+"\",\"leaf\":\""+hex(member.der)+"\",\"key\":\""+hex(member.key_der)+"\"}";
  Identity decoded;check(decode_identity(identity_record,member.id,decoded),"valid identity record rejected");
@@ -214,7 +215,7 @@ def native_library():
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--tls-source',type=Path,default=ROOT/'components/consortium/tls_link.cpp');parser.add_argument('--observe-redundant-validation',action='store_true',help='Record the old validation count for before/after evidence while keeping all security assertions');args=parser.parse_args()
     source,build=native_library();credentials=(ROOT/'components/consortium/credentials.cpp').read_text();tls=args.tls_source.read_text()
-    actual='}\nnamespace amity::consortium {\n'+function((ROOT/'components/consortium/wire.cpp').read_text(),'bool decimal(')+'}\nnamespace amity::consortium::platform {\n'+''.join(function(credentials,name) for name in ['std::string hex(', 'bool unhex(', 'std::string sha256(', 'bool certificate_binding(', 'bool parse_certificate(', 'bool decode_identity(', 'bool certificate(', 'esp_err_t load_identity(', 'esp_err_t load_group(', 'esp_err_t save_group('])
+    actual='}\nnamespace amity::consortium {\n'+function((ROOT/'components/consortium/wire.cpp').read_text(),'bool decimal(')+'}\nnamespace amity::consortium::platform {\n'+''.join(function(credentials,name) for name in ['std::string hex(', 'bool unhex(', 'std::string sha256(', 'bool certificate_binding(', 'bool parse_certificate(', 'bool decode_identity(', 'bool certificate(', 'bool pinned_leaf(', 'esp_err_t load_identity(', 'esp_err_t load_group(', 'esp_err_t save_group('])
     actual=actual.replace('bool certificate(std::string_view der,model::OctopusId id,std::string &pin){','bool certificate(std::string_view der,model::OctopusId id,std::string &pin){++full_checks;')
     actual+=''.join(function(tls,name) for name in ['int send_socket(', 'int receive_socket(', 'void reject_handshake(', 'TlsLink::TlsLink(', 'TlsLink::~TlsLink()', 'int TlsLink::verify(', 'bool TlsLink::setup(', 'bool TlsLink::handshake('])
     suite=SUITE

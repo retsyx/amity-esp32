@@ -72,7 +72,7 @@ def main():
     actual += "}\nnamespace amity::consortium::platform {\n"
     actual += "".join(function(credentials, name) for name in (
         "std::string hex(", "bool unhex(", "std::string sha256(", "bool certificate_binding(",
-        "bool parse_certificate(", "bool decode_identity(", "bool certificate(",
+        "bool parse_certificate(", "bool decode_identity(", "bool certificate(", "bool pinned_leaf(",
         "esp_err_t load_identity(", "esp_err_t load_group(", "esp_err_t save_group("))
     actual += "".join(function(tls, name) for name in (
         "int send_socket(", "int receive_socket(", "void reject_handshake(",

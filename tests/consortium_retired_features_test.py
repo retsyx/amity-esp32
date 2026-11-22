@@ -32,6 +32,7 @@ int read_record(const char* space,const char* key,std::string& out,size_t cap){a
 int write_record(const char* space,const char* key,std::string_view value){writes.emplace_back(key);if(fail_write==key)return ESP_ERR_INVALID_STATE;records[std::string(space)+"/"+key]=value;return ESP_OK;}
 // Certificate/secret generation is outside this storage/parser regression.
 bool certificate(std::string_view leaf,model::OctopusId id,std::string& pin){pin=std::string(64,leaf.size()==1024?leaf.front():'a');return id&&!leaf.empty();}
+bool pinned_leaf(std::string_view leaf,model::OctopusId id,std::string_view pin){std::string derived;return certificate(leaf,id,derived)&&derived==pin;}
 int load_identity(model::OctopusId id,Identity& out,bool=false){out.id=id;return ESP_OK;}
 '''
 MIDDLE = r'''
