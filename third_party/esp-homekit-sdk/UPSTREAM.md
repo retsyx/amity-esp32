@@ -1,8 +1,10 @@
 Upstream: https://github.com/espressif/esp-homekit-sdk
 Commit: 676fabac4a4a05184be020611cb069faa0016411
 
-Only HAP core, platform, standard profiles, HKDF and SRP components are vendored.
-Source license headers, mu_srp/LICENSE and bundled RFC notices are retained.
+Only HAP core, platform, standard profiles and SRP components are vendored. The
+hkdf-sha component implements the HKDF-SHA-512 and SHA-512 interface that pairing
+and SRP use with PSA Crypto; the RFC 6234 code and its test driver are not vendored.
+Source license headers and mu_srp/LICENSE are retained.
 
 Local adaptations:
 - ESP-IDF 6.1 / Mbed TLS 4 private MPI compatibility and libsodium RNG interface.

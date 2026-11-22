@@ -1,6 +1,8 @@
 #include <string.h>
-#include "hkdf-sha.h"
+/* mu_bignum.h requests private Mbed TLS bignum declarations, so it precedes
+ * the PSA headers that hkdf-sha.h includes. */
 #include "mu_bignum.h"
+#include "hkdf-sha.h"
 #include "mu_srp.h"
 
 #ifdef SRP_DEBUG

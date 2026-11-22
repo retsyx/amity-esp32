@@ -7,7 +7,6 @@ Runtime dependencies are provided by ESP-IDF / ESP-Matter and their declared man
 | ESP-IDF, NimBLE integration, HTTP(S), NVS, OTA | installed ESP-IDF | Apache-2.0; bundled third-party notices apply |
 | Espressif HomeKit SDK core, platform and profiles | vendored at `676fabac4a4a05184be020611cb069faa0016411` | Espressif MIT |
 | mu_srp | vendored with HomeKit SDK | Apache-2.0; LICENSE included |
-| HKDF-SHA / RFC 6234 implementation | vendored with HomeKit SDK | BSD-style notices in source |
 | libsodium | managed `espressif/libsodium` | ISC |
 | Espressif JSON parser/generator | managed dependencies | Apache-2.0 |
 | NimBLE | Apache Mynewt bundled in ESP-IDF | Apache-2.0 |
