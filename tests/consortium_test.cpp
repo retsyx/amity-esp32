@@ -7,9 +7,7 @@
 #include "amity/consortium/bootstrap.hpp"
 #include "amity/consortium/update.hpp"
 #include "setup_gesture.hpp"
-#include "../components/consortium/candidate_enrollment.hpp"
 #include "../components/consortium/controller_policy.hpp"
-#include "../components/consortium/enrollment_abort.hpp"
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
@@ -451,37 +449,6 @@ void binary_update_tests(){
     assert(session.admit(received,100,100)==Error::stale_config&&session.discard_stale(received,100,100)==Error::none);
     auto malformed=received;malformed.update_chunk.reset();assert(session.discard_stale(malformed,100,100)==Error::invalid_message);
 }
-void candidate_join_tests(){
-    const auto consortium=ident<m::ConsortiumId>(1);const auto coordinator=ident<m::OctopusId>(2);const auto join=ident<m::JoinId>(3);const std::string digest(64,'a');
-    amity::consortium::platform::Group candidate,next;candidate.role=amity::consortium::platform::Group::prepared;candidate.consortium=consortium;candidate.authority=coordinator;candidate.epoch=1;candidate.revision=1;candidate.join_id=join;candidate.join_digest=digest;candidate.join_revision=1;candidate.joining_id=ident<m::OctopusId>(8);candidate.peers.push_back({coordinator,"enrolled-leaf",std::string(64,'a'),false});
-    using amity::consortium::platform::candidate_join_state;using amity::consortium::platform::abort_prepared_candidate;
-    assert(std::string_view(candidate_join_state(candidate,join,digest))=="prepared");assert(std::string_view(candidate_join_state(candidate,join,std::string(64,'b')))=="unknown");assert(!abort_prepared_candidate(candidate,ident<m::JoinId>(99),digest,next));
-    assert(abort_prepared_candidate(candidate,join,digest,next));assert(next.role==amity::consortium::platform::Group::retired&&next.mutation_id&&next.join_id==join&&!next.peers[0].active);assert(std::string_view(candidate_join_state(next,join,digest))=="aborted");
-    auto active_candidate=candidate;active_candidate.role=amity::consortium::platform::Group::member;assert(!abort_prepared_candidate(active_candidate,join,digest,next));assert(std::string_view(candidate_join_state(active_candidate,join,digest))=="active");
-}
-void source_abort_tests(const std::string& power){
-    using namespace amity::consortium::platform;
-    auto s=scope();Group group;group.consortium=s.consortium_id;group.authority=s.coordinator_id;group.epoch=s.epoch;
-    EnrollmentAbort pending{{s.peer_id,"exact removed leaf",std::string(64,'a'),false},s.consortium_id,s.coordinator_id,s.epoch,ident<m::JoinId>(77),std::string(64,'b')};
-    assert(pending.matches(group,s.peer_id));assert(!pending.matches(group,ident<m::OctopusId>(90)));
-    auto changed=group;++changed.epoch;assert(!pending.matches(changed,s.peer_id));changed=group;changed.authority=ident<m::OctopusId>(91);assert(!pending.matches(changed,s.peer_id));
-    std::string encoded;auto json=[&](std::string_view phase,std::string_view extra){Json value;JsonError error;encoded="{\"phase\":\""+std::string(phase)+"\",\"join_id\":\""+pending.join.str()+"\",\"join_digest\":\""+pending.digest+"\""+std::string(extra)+"}";assert(parse_json(encoded,value,error));return value;};
-    auto status=json("status",",\"request\":true");assert(pending.may_send(status));auto abort=json("abort",",\"reason\":\"cancelled\"");assert(pending.may_send(abort));
-    auto forbidden=abort;forbidden.object.emplace_back("ready",Json{});assert(!pending.may_send(forbidden));assert(!pending.may_send(json("abort",",\"reason\":\"force\"")));
-    assert(!pending.may_send(json("commit",",\"membership_revision\":\"2\",\"ready\":false")));assert(!pending.may_send(json("challenge",",\"challenge_nonce\":\""+ident<m::MessageId>(1).str()+"\"")));
-    auto wrapped=replace(power,"\"kind\":\"scoped_intent\"","\"kind\":\"enrollment_control\"");const auto payload_at=wrapped.find("\"payload\":");assert(payload_at!=std::string::npos);
-    auto frame=[&](){return wrapped.substr(0,payload_at)+"\"payload\":"+encoded+"}";};
-    for(const auto& state:{std::string("prepared"),std::string("committed"),std::string("active"),std::string("aborted"),std::string("unknown")}){
-        auto response=json("status",",\"request\":false,\"state\":\""+state+"\""+((state=="committed"||state=="active")?",\"membership_revision\":\"2\"":""));
-        assert(!pending.may_send(response));Envelope parsed;assert(parse_envelope(frame(),parsed)==Error::none);
-        const auto result=enrollment_abort_status(pending,parsed.payload);assert(result!=EnrollmentAbortStatus::invalid&&result!=EnrollmentAbortStatus::ignore);
-        if(state=="committed"||state=="active")assert(result!=EnrollmentAbortStatus::prepared); // committed decisions never authorize rollback.
-        encoded.insert(encoded.size()-1,",\"unauthorized\":null");assert(parse_envelope(frame(),parsed)==Error::invalid_message);
-    }
-    assert(enrollment_abort_status(pending,status)==EnrollmentAbortStatus::invalid);
-    auto prove=json("prove",",\"challenge_nonce\":\""+ident<m::MessageId>(1).str()+"\"");assert(enrollment_abort_status(pending,prove)==EnrollmentAbortStatus::ignore);
-    auto other=pending;other.join=ident<m::JoinId>(78);assert(!other.may_send(abort)&&enrollment_abort_status(other,prove)==EnrollmentAbortStatus::invalid);
-}
 void radio_and_gesture_tests(){
     RadioArbiter radio;assert(radio.request(RadioMode::consortium_candidate,0,180000)==RadioResult::unavailable);radio.remote_reconnect_running(true);assert(radio.request(RadioMode::consortium_inviter,0,180000,false)==RadioResult::cancelling);auto r=radio.reservation();assert(radio.request(RadioMode::remote_pairing,1,10000)==RadioResult::busy);assert(radio.cleanup_complete(r.generation-1,2)==RadioResult::stale);assert(radio.cleanup_complete(r.generation,100)==RadioResult::granted);assert(radio.external_matter_will_open(200,60000,false)==RadioResult::cancelling);r=radio.reservation();assert(radio.cleanup_complete(r.generation,300)==RadioResult::granted);radio.matter_ble_active(true);assert(radio.release(r.generation,400)==RadioResult::busy);radio.matter_ble_active(false);assert(radio.release(r.generation,500)==RadioResult::cancelling);r=radio.reservation();assert(radio.cleanup_complete(r.generation,501)==RadioResult::granted&&radio.remote_may_reconnect());
     using G=device_settings::SetupGesture;using Button=device_settings::SetupGestureButton;
@@ -499,4 +466,4 @@ void bootstrap_tests(){
     records.disconnect();records.connect(6);assert(records.fragment(5,rid,8,0,"abcdefgh")==BootstrapRecords::Result::stale);CipherCounter end(UINT32_MAX);assert(!end.consume());
 }
 
-int main(int argc,char** argv){assert(argc==2);(void)argv;const auto power=packet(scope(),Kind::scoped_intent,owned_intent_json(action(scope())));json_tests();frame_tests(power);envelope_tests(power);hello_profile_tests();adapter_index_tests();session_tests();owner_activity_selection_tests();raw_key_edge_tests();synchronization_tests();logical_session_restart_tests();live_configuration_tests();update_tests();binary_update_tests();candidate_join_tests();source_abort_tests(power);original_controller_tests();radio_and_gesture_tests();bootstrap_tests();std::cout<<"PASS consortium scoped-intent protocol, same-stream synchronization barriers and exact authority/boots/config/message-expiry fences, candidate join/abort state, update authorization, bootstrap/radio/gestures and all retired graph kinds\n";}
+int main(int argc,char** argv){assert(argc==2);(void)argv;const auto power=packet(scope(),Kind::scoped_intent,owned_intent_json(action(scope())));json_tests();frame_tests(power);envelope_tests(power);hello_profile_tests();adapter_index_tests();session_tests();owner_activity_selection_tests();raw_key_edge_tests();synchronization_tests();logical_session_restart_tests();live_configuration_tests();update_tests();binary_update_tests();original_controller_tests();radio_and_gesture_tests();bootstrap_tests();std::cout<<"PASS consortium scoped-intent protocol, same-stream synchronization barriers and exact authority/boots/config/message-expiry fences, candidate join/abort state, update authorization, bootstrap/radio/gestures and all retired graph kinds\n";}

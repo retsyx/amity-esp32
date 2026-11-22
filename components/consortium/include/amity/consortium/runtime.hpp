@@ -77,7 +77,6 @@ struct RuntimeNetworkHooks {
     std::function<esp_err_t(model::JoinId,const std::string&)> commit_transaction;
     std::function<esp_err_t(model::JoinId,const std::string&)> finish_transaction;
     std::function<esp_err_t(model::JoinId,const std::string&,bool)> recover_transaction;
-    std::function<esp_err_t(model::JoinId,const std::string&)> abort_transaction;
     std::function<esp_err_t(const std::string&)> set_hostname;
     std::function<std::string()> get_hostname;
 };

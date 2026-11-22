@@ -112,16 +112,6 @@ esp_err_t commit_transaction(model::JoinId join,const std::string& digest){
     return restore_previous(saved);
 }
 esp_err_t finish_transaction(model::JoinId join,const std::string& digest){std::string error;return config_store::finish_candidate_network(join,digest,error);}
-esp_err_t abort_transaction(model::JoinId join,const std::string& digest){
-    config_store::CandidateNetwork saved;std::string error;const auto loaded=config_store::load_candidate_network(saved,error);
-    if(loaded==ESP_ERR_NVS_NOT_FOUND)return ESP_OK;
-    if(loaded!=ESP_OK||saved.join_id!=join||saved.proposal_digest!=digest||saved.decided)return ESP_ERR_INVALID_STATE;
-    // The membership adapter durably retires this exact prepared transaction
-    // first. Keep the rollback snapshot until the complete old driver state is
-    // restored, so a power cut repeats this without reactivating any authority.
-    const auto restored=restore_previous(saved);if(restored!=ESP_OK)return restored;
-    return config_store::abandon_candidate_network(join,digest,error);
-}
 esp_err_t disconnect_for_recovery(){
     const auto result=esp_wifi_disconnect();if(result!=ESP_OK&&result!=ESP_ERR_WIFI_NOT_CONNECT)return result;
     for(unsigned n=0;n<100;++n){if(!usable_ip())return ESP_OK;vTaskDelay(pdMS_TO_TICKS(20));}return ESP_ERR_TIMEOUT;
@@ -136,7 +126,7 @@ esp_err_t recover_transaction(model::JoinId join,const std::string& digest,bool 
 }
 }
 esp_err_t install_consortium_network_hooks(){transaction=xSemaphoreCreateMutex();completed=xSemaphoreCreateBinary();if(!transaction||!completed)return ESP_ERR_NO_MEM;
-    amity::consortium::RuntimeNetworkHooks hooks{export_credentials,stage_connect,commit,rollback};hooks.stage_transaction=stage_transaction;hooks.commit_transaction=commit_transaction;hooks.finish_transaction=finish_transaction;hooks.recover_transaction=recover_transaction;hooks.abort_transaction=abort_transaction;
+    amity::consortium::RuntimeNetworkHooks hooks{export_credentials,stage_connect,commit,rollback};hooks.stage_transaction=stage_transaction;hooks.commit_transaction=commit_transaction;hooks.finish_transaction=finish_transaction;hooks.recover_transaction=recover_transaction;
     hooks.get_hostname=[]{return std::string(device_settings::hostname());};
     hooks.set_hostname=[](const std::string& name){
         return device_settings::apply_enrollment_hostname(name);

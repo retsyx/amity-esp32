@@ -22,12 +22,7 @@ bool enrollment(const Json &v) {
     const auto *phase=v.get("phase");
     if(text_is(phase,{"challenge","prove"}))return closed(v,{"phase","join_id","join_digest","challenge_nonce"})&&generic_id(v.get("challenge_nonce"));
     if(text_is(phase,{"commit"}))return closed(v,{"phase","join_id","join_digest","membership_revision","ready"})&&decimal_field(v,"membership_revision")&&bool_field(v,"ready")&&!v.get("ready")->boolean;
-    if(text_is(phase,{"ack"}))return closed(v,{"phase","join_id","join_digest","membership_revision","state"})&&decimal_field(v,"membership_revision")&&text_is(v.get("state"),{"active"});
-    if(text_is(phase,{"abort"}))return closed(v,{"phase","join_id","join_digest","reason"})&&text_is(v.get("reason"),{"cancelled","incompatible","network_failed","internal_error"});
-    if(!text_is(phase,{"status"})||!closed(v,{"phase","join_id","join_digest","request"},{"state","membership_revision"})||!bool_field(v,"request"))return false;
-    if(v.get("request")->boolean)return !v.get("state")&&!v.get("membership_revision");
-    if(!text_is(v.get("state"),{"prepared","committed","active","aborted","unknown"}))return false;
-    return text_is(v.get("state"),{"committed","active"})?decimal_field(v,"membership_revision"):!v.get("membership_revision");
+    return text_is(phase,{"ack"})&&closed(v,{"phase","join_id","join_digest","membership_revision","state"})&&decimal_field(v,"membership_revision")&&text_is(v.get("state"),{"active"});
 }
 bool membership(const Json &v) {
     return closed(v,{"mutation_id","proposal_digest","phase","membership_revision","expected_boot_id"},{"result"})&&generic_id(v.get("expected_boot_id"))&&generic_id(v.get("mutation_id"))&&hex(v.get("proposal_digest"),64)&&decimal_field(v,"membership_revision")&&text_is(v.get("phase"),{"factory_reset"})&&(!v.get("result")||text_is(v.get("result"),{"reset_scheduled","rejected","unknown"}));

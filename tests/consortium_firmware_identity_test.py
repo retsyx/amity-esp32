@@ -20,9 +20,6 @@ unsigned enrollment_commits=0,synchronization_entries=0;
 struct AppDescription {uint8_t app_elf_sha256[32];};
 const AppDescription* esp_app_get_description(){static const auto app=[](){AppDescription out{};std::fill(std::begin(out.app_elf_sha256),std::end(out.app_elf_sha256),0xab);return out;}();return &app;}
 std::string hex(std::string_view bytes){std::string out;for(unsigned char byte:bytes){out.push_back("0123456789abcdef"[byte>>4]);out.push_back("0123456789abcdef"[byte&15]);}return out;}
-bool abort_peer_credential(const Active&,const Group&){return false;}
-bool enrollment_abort_pending(const Active&){return false;}
-bool finish_enrollment_abort(Active&){assert(false);return false;}
 bool enroll_lan(Active&,bool){++enrollment_commits;return true;}
 bool notify_link_closed(Active&){assert(false);return false;}
 bool lifecycle_kind(Kind kind){return kind==Kind::membership_event||kind==Kind::membership_result;}
@@ -106,9 +103,8 @@ int main(){using namespace amity::consortium;
 
 def main():
     source = (ROOT / 'components/consortium/runtime.cpp').read_text()
-    prefix = PREFIX.replace('#include "controller_policy.hpp"', '#include "controller_policy.hpp"\n#include "enrollment_abort.hpp"')
-    prefix = prefix.replace('struct FakeTls{', 'struct FakeTls{\n std::vector<std::string> raw_sent;std::vector<bool> raw_bulk;bool send(const std::string& value,bool bulk=false){raw_sent.push_back(value);raw_bulk.push_back(bulk);return true;}bool extended_profile()const{return true;}bool hardware_profile()const{return true;}')
-    prefix = prefix.replace('model::OctopusId peer;', 'model::OctopusId peer;model::BootId claimed_boot;std::optional<EnrollmentAbort> enrollment_abort;')
+    prefix = PREFIX.replace('struct FakeTls{', 'struct FakeTls{\n std::vector<std::string> raw_sent;std::vector<bool> raw_bulk;bool send(const std::string& value,bool bulk=false){raw_sent.push_back(value);raw_bulk.push_back(bulk);return true;}bool extended_profile()const{return true;}bool hardware_profile()const{return true;}')
+    prefix = prefix.replace('model::OctopusId peer;', 'model::OctopusId peer;model::BootId claimed_boot;')
     prefix = prefix.replace('struct Active{', function(source, 'struct LinkTrace {').rstrip() + ';\nstruct Active{')
     prefix = prefix.replace('bool send(Active&,Kind,std::string_view,uint32_t ttl=1000);', '')
     actual = function((ROOT / 'components/consortium/tls_link.cpp').read_text(), 'std::string envelope_json(')

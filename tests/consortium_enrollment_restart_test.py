@@ -43,11 +43,6 @@ Group group;RuntimeStatus status;RuntimeNetworkHooks network;
 std::vector<std::string> events;
 bool ack_fails=false,commit_fails=false,save_fails=false,finish_fails=false,handoff_fails=false,internal_stack=false;
 unsigned handoffs=0,restarts=0;
-bool enrollment_abort_pending(const Active&){return false;}
-bool finish_enrollment_abort(Active&){return false;}
-bool abort_peer_credential(const Active&,const Group&){return false;}
-bool candidate_join_status(Active&,model::JoinId,const std::string&){return false;}
-bool abort_candidate_enrollment(Active&,model::JoinId,const std::string&){return false;}
 esp_err_t save_group(const Group& next){check(next.role==Group::member,"unexpected group write");events.push_back("group_commit");return save_fails?ESP_FAIL:ESP_OK;}
 bool send(Active&,Kind kind,std::string_view payload){
     Json value;JsonError error;check(kind==Kind::enrollment_control&&parse_json(payload,value,error),"invalid enrollment send");

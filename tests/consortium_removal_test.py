@@ -11,7 +11,6 @@ PREFIX=r'''
 #include "amity/consortium/settings.hpp"
 #include "amity/consortium/update.hpp"
 #include "controller_policy.hpp"
-#include "enrollment_abort.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cassert>
@@ -25,7 +24,7 @@ using namespace platform;
 uint64_t clock_ms=100;uint64_t now_ms(){return clock_ms;}
 template<class T>T ident(unsigned n){char value[33];snprintf(value,sizeof(value),"%032x",n);return *T::parse(value);}
 struct FakeTls{bool server=false;int socket=-1;model::OctopusId authenticated;std::vector<Peer> allowed;std::vector<std::string> frames;size_t next=0;bool received_bulk()const{Envelope envelope;return next&&parse_envelope(frames[next-1],envelope)==Error::none&&is_update_kind(envelope.kind);}bool receive(std::string& out,uint32_t timeout){assert(timeout<=2000);if(next==frames.size()){clock_ms+=timeout;return false;}out=frames[next++];return true;}};
-struct Active{Session session;model::OctopusId peer;std::shared_ptr<FakeTls> tls=std::make_shared<FakeTls>();std::mutex mutex;std::deque<int> queue;bool cancelled=false,retiring=false,ready=true,management_ready=false,refreshing=false,context_ready=false,context_requested=false;std::atomic_bool restart_requested{false},execution_fenced{false};RuntimePeerStatus status;std::optional<EnrollmentAbort> enrollment_abort;model::MessageId removal_request;uint64_t removal_until=0;std::string retirement_payload;};
+struct Active{Session session;model::OctopusId peer;std::shared_ptr<FakeTls> tls=std::make_shared<FakeTls>();std::mutex mutex;std::deque<int> queue;bool cancelled=false,retiring=false,ready=true,management_ready=false,refreshing=false,context_ready=false,context_requested=false;std::atomic_bool restart_requested{false},execution_fenced{false};RuntimePeerStatus status;model::MessageId removal_request;uint64_t removal_until=0;std::string retirement_payload;};
 std::mutex lock,persistence_lock;Group group;Identity identity;RuntimeStatus status;RuntimeLifecycleHooks lifecycle;RuntimeControlHooks controls;model::BootId boot;uint64_t configuration=1;std::vector<std::shared_ptr<Active>> links;
 // Diagnostics are independently exercised by runtime transport tests. This
 // fixture executes the completion and real roster-removal decisions directly.
@@ -140,9 +139,9 @@ void source_tests(){
  reset(true);active=connection(false);active->cancelled=true;assert(runtime_remove_octopus(peer,request,1,{})==ESP_OK&&!active->retiring&&parsed(runtime_removal_operation(peer,request)).get("reset")->string=="offline");
  reset(false);assert(runtime_remove_octopus(peer,request,1,{})==ESP_ERR_INVALID_STATE&&!group_saves);
  reset(true);assert(runtime_remove_octopus(identity.id,request,1,{})==ESP_ERR_INVALID_STATE&&!group_saves);
- reset(true);group.join_id=ident<model::JoinId>(9);group.joining_id=peer;group.join_digest=std::string(64,'a');active=connection(false);assert(runtime_remove_octopus(peer,request,1,{})==ESP_OK&&active->enrollment_abort&&!active->retiring&&parsed(runtime_removal_operation(peer,request)).get("reset")->string=="unconfirmed");
+ reset(true);group.join_id=ident<model::JoinId>(9);group.joining_id=peer;group.join_digest=std::string(64,'a');active=connection(false);assert(runtime_remove_octopus(peer,request,1,{})==ESP_OK&&active->cancelled&&!active->retiring&&!group.join_id&&group.peers.empty()&&parsed(runtime_removal_operation(peer,request)).get("reset")->string=="offline");
  reset(true);for(unsigned n=0;n<24;++n){group.peers={{peer,"leaf","pin",true}};assert(runtime_remove_octopus(peer,ident<model::MessageId>(100+n),group.revision,{})==ESP_OK);assert(removal_operations.size()<=8);}assert(parsed(runtime_removal_operation(peer,other)).get("reset")->string=="unconfirmed");
- std::cout<<"PASS actual main removal: atomic revision+reviewedBoot CAS, durable localdrop, unsupportedpeer preflight, offline noqueue, duplicate noop, candidate abort distinct, bounded8terminal/evictedunknown\n";
+ std::cout<<"PASS actual main removal: atomic revision+reviewedBoot CAS, durable localdrop, unsupportedpeer preflight, offline noqueue, duplicate noop, candidate link closed, bounded8terminal/evictedunknown\n";
 }
 void empty_context_refresh_allows_reviewed_removal(){
  reset(true);auto active=connection(false);active->refreshing=true;
