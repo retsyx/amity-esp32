@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import AvrComponent, DUT, PlaybackComponent, PowerState, TvComponent
 from amity_harness.membership import AddedAmity, MembershipConflict
-from amity_harness.replacement import ReplacementReview
+from amity_harness.replacement import ReplacementReview, replacement_proposal
 from test_removal_cascade import CascadeFixture
 from unit_tests.virtual_time import use_virtual_time
 
@@ -37,7 +37,7 @@ class PhysicalScan:
 
 class ReplacementFixture(CascadeFixture):
     def __init__(self):
-        self.preview_effect = self.preview_mutation = self.apply_mutation = None
+        self.apply_mutation = None
         self.lost_apply_reply = False
         self.replacement = None
         super().__init__()
@@ -69,6 +69,7 @@ class ReplacementFixture(CascadeFixture):
                                                                if row["component_id"] == identity))
                                        for identity in resource._new_equipment}
         self.pairs = tuple(zip(self.old, self.new))
+        self.system["observations"] = [self.observation(component) for component in self.new]
         self.bed.components = self.bed.session.components = (*self.old, *self.new)
         for component in self.bed.components:
             component._session = self.bed.session
@@ -78,6 +79,12 @@ class ReplacementFixture(CascadeFixture):
         self.action_scan = PhysicalScan(self.new)
         self.main.scan_hdmi = lambda: self.action_scan
         self.advance()
+
+    def observation(self, component, *, resolved=True, tentacle=None):
+        name = {"consortium_id": self.group, "octopus_id": component.dut.identity.device_id,
+                "tentacle_id": component.tentacle if tentacle is None else tentacle,
+                "side": component.direction, "osd_name": component.name}
+        return {"title": component.name, "resolved": resolved, "stale": not resolved, "qualified_name": name}
 
     @staticmethod
     def components(dut, adapter, power):
@@ -117,19 +124,10 @@ class ReplacementFixture(CascadeFixture):
                 "boot_id": self.replacement.member_boot, "settings_revision": "1",
                 "adapters": [{"tentacle_id": number, "configured": True,
                               "default_front_physical_address": "1.0.0.0"} for number in range(4)]}}
-        if data is None or path not in ("/api/replacements/preview", "/api/replacements/apply"):
+        if data is None or path != "/api/replacements/apply":
             return super().request(path, data, **kwargs)
         self.calls.append((path, deepcopy(data)))
-        projected = self.expected(data)
-        affected = self.member._affected_activities(self.config, {self.member.device_id})
-        if path.endswith("preview"):
-            if self.preview_mutation:
-                self.preview_mutation(projected)
-            result = {"configuration": projected, "affected_activity_ids": affected}
-            if self.preview_effect:
-                self.preview_effect(self)
-            return result
-        self.config = projected
+        self.config = self.expected(data)
         self.system["membership"]["peers"] = [row for row in self.system["membership"]["peers"]
                                                   if row["octopus_id"] != self.member.device_id]
         self.system["membership"]["membership_revision"] = str(int(self.system["membership"]["membership_revision"]) + 1)
@@ -173,10 +171,20 @@ class ReplacementTests(unittest.TestCase):
         fixture = ReplacementFixture()
         before = deepcopy(fixture.config)
         allocated = [set(activity._allocated_equipment) for activity in fixture.resources]
+        planned, affected, enabled = replacement_proposal(fixture.config, fixture.system, fixture.member.device_id,
+                                                          fixture.replacement.device_id)
         review = fixture.review()
-        review.preview()
         self.assertEqual(fixture.config, before)
+        self.assertEqual(fixture.posts("apply"), [])
         review.apply().assert_retained()
+        # The body is exactly the UI's own plan, behind its request identity.
+        self.assertTrue(enabled)
+        self.assertEqual(set(affected), {activity.activity_id for activity in fixture.resources})
+        self.assertEqual(fixture.posts("apply"), [{"request_id": review.request_id, **planned}])
+        self.assertEqual(list(fixture.posts("apply")[0])[0], "request_id")
+        self.assertEqual({(row["previous"]["tentacle_id"], row["previous"]["side"],
+                           row["replacement"]["tentacle_id"], row["replacement"]["side"])
+                          for row in planned["ports"]}, {(0, "front", 1, "front"), (0, "back", 1, "back")})
         for key in ("activities", "activity_order", "zones", "external_slots"):
             self.assertEqual(fixture.config[key], before[key])
         self.assertTrue(fixture.member._closed)
@@ -195,28 +203,72 @@ class ReplacementTests(unittest.TestCase):
         self.assertEqual(len(fixture.posts("apply")), 1)
         self.assertFalse(any(data is not None and path in ("/api/config", "/api/activity-editor")
                              for path, data in fixture.calls))
+        self.assertFalse(any(path == "/api/replacements/preview" for path, _ in fixture.calls))
+        with self.assertRaises(RuntimeError):
+            review.apply()
+        self.assertEqual(len(fixture.posts("apply")), 1)
 
-    def test_changed_preview_or_applied_saved_intent_cannot_rebind_activity_evidence(self):
-        for phase in ("preview", "apply"):
-            for name, mutation in corruptions().items():
-                with self.subTest(phase=phase, fault=name):
-                    fixture = ReplacementFixture()
-                    original = [dict(activity.components) for activity in fixture.resources]
-                    setattr(fixture, phase + "_mutation", mutation)
-                    review = fixture.review()
-                    with self.assertRaises(AssertionError):
-                        review.preview()
-                        if phase == "apply":
-                            review.apply()
-                    self.assertEqual([activity.components for activity in fixture.resources], original)
-                    if phase == "preview":
-                        self.assertEqual(fixture.posts("apply"), [])
+    def test_changed_applied_saved_intent_cannot_rebind_activity_evidence(self):
+        for name, mutation in corruptions().items():
+            with self.subTest(fault=name):
+                fixture = ReplacementFixture()
+                original = [dict(activity.components) for activity in fixture.resources]
+                fixture.apply_mutation = mutation
+                review = fixture.review()
+                with self.assertRaises(AssertionError):
+                    review.apply()
+                self.assertEqual([activity.components for activity in fixture.resources], original)
+
+    def test_ui_plan_must_match_the_physical_moves_before_any_write(self):
+        def unseen(f):
+            f.system["observations"] = f.system["observations"][1:]
+
+        def other_adapter(f):
+            f.system["observations"][1] = f.observation(f.new[1], tentacle=2)
+
+        def unresolved(f):
+            f.system["observations"][0] = f.observation(f.new[0], resolved=False)
+
+        def foreign_owner(f):
+            f.system["observations"] = [f.observation(component) for component in f.old]
+
+        def not_ready(f):
+            f.system["membership"]["peers"][-1].update(ready=False)
+
+        for fault, effect, error in (("unseen display", unseen, AssertionError),
+                                     ("moved receiver", other_adapter, AssertionError),
+                                     ("unresolved display", unresolved, AssertionError),
+                                     ("old owner only", foreign_owner, AssertionError),
+                                     ("replacement not ready", not_ready, MembershipConflict)):
+            with self.subTest(fault=fault):
+                fixture = ReplacementFixture()
+                effect(fixture)
+                with self.assertRaises(error):
+                    fixture.review()
+                self.assertEqual(fixture.posts("apply"), [])
+
+    def test_unseen_equipment_follows_the_equipment_that_shared_its_connector(self):
+        fixture = ReplacementFixture()
+        fixture.system["observations"][2] = fixture.observation(fixture.new[2], resolved=False)
+        review = fixture.review()
+        source = next(row for row in review.payload["equipment"] if row["previous"]["osd_name"] == "Remote source")
+        self.assertEqual((source["replacement"]["tentacle_id"], source["replacement"]["side"]), (1, "back"))
+        review.apply().assert_retained()
+        self.assertEqual(len(fixture.posts("apply")), 1)
+
+    def test_plan_changed_after_review_is_not_submitted(self):
+        fixture = ReplacementFixture()
+        review = fixture.review()
+        fixture.system["observations"][0] = fixture.observation(fixture.new[0], tentacle=2)
+        with self.assertRaises((AssertionError, MembershipConflict)):
+            review.apply()
+        self.assertEqual(fixture.posts("apply"), [])
+        self.assertFalse(fixture.member._closed)
 
     def test_applied_replacement_that_fails_verification_is_recorded_for_cleanup(self):
         fixture = ReplacementFixture()
         fixture.apply_mutation = corruptions()["home slot"]
         review = fixture.review()
-        review.preview()
         with self.assertRaisesRegex(AssertionError, "exact saved activity configuration"):
             review.apply()
         self.assertTrue(fixture.member._closed)
@@ -228,13 +280,14 @@ class ReplacementTests(unittest.TestCase):
                 self.assertEqual(record, next(row for row in review.expected["components"]
                                              if row["component_id"] == identity))
 
-    def test_preview_must_not_mutate_configuration_or_membership(self):
+    def test_changed_configuration_or_membership_after_review_is_not_submitted(self):
         for effect in (lambda f: f.config["external_slots"][-1].update(hidden=False),
                        lambda f: f.system["membership"].update(membership_revision="999")):
             fixture = ReplacementFixture()
-            fixture.preview_effect = effect
-            with self.assertRaises(AssertionError):
-                fixture.review().preview()
+            review = fixture.review()
+            effect(fixture)
+            with self.assertRaises(MembershipConflict):
+                review.apply()
             self.assertEqual(fixture.posts("apply"), [])
 
     def test_incomplete_duplicate_or_unowned_mapping_is_rejected_without_a_write(self):
@@ -257,13 +310,12 @@ class ReplacementTests(unittest.TestCase):
                     fixture.old[0]._power = PowerState.STANDBY
                 with self.assertRaises((AssertionError, MembershipConflict)):
                     fixture.review(pairs)
-                self.assertEqual(fixture.posts("preview"), [])
                 self.assertEqual(fixture.posts("apply"), [])
 
     def test_lost_apply_reply_reconciles_one_request_and_later_config_drift_fails(self):
         fixture = ReplacementFixture()
         fixture.lost_apply_reply = True
-        review = fixture.review().preview().apply()
+        review = fixture.review().apply()
         self.assertEqual(len(fixture.posts("apply")), 1)
         self.assertIn(("/api/operations/" + review.request_id, None), fixture.calls)
         fixture.config["activities"][-1]["switch_input"] = 8
@@ -273,7 +325,7 @@ class ReplacementTests(unittest.TestCase):
     def test_missing_fresh_discovery_cannot_adopt_new_activity_recipients(self):
         fixture = ReplacementFixture()
         original = [dict(activity.components) for activity in fixture.resources]
-        review = fixture.review().preview()
+        review = fixture.review()
         fixture.action_scan.expected = ()
         with self.assertRaisesRegex(AssertionError, "Missing fresh physical discovery"):
             review.apply()
@@ -285,7 +337,7 @@ class ReplacementTests(unittest.TestCase):
         original = [dict(activity.components) for activity in fixture.resources]
         equipment = [deepcopy(activity._new_equipment) for activity in fixture.resources]
         scans = [activity.scan for activity in fixture.resources]
-        review = fixture.review().preview()
+        review = fixture.review()
         # The first activity uses only the source, so it passes discovery;
         # the later display activity must fail before any fixture is rebound.
         fixture.action_scan.expected = fixture.new[1:]

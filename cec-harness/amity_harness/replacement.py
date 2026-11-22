@@ -1,6 +1,7 @@
 """Review and apply the shipping replacement workflow to test-owned equipment."""
 
 from copy import deepcopy
+import json
 import time
 from uuid import uuid4
 
@@ -16,12 +17,98 @@ def _name(component, group):
             "tentacle_id": component.tentacle, "side": component.direction, "osd_name": component.name}
 
 
+def _same_port(first, second):
+    return first.get("tentacle_id") == second.get("tentacle_id") and first.get("side") == second.get("side")
+
+
+def _port(name):
+    return {key: name.get(key) for key in ("consortium_id", "octopus_id", "tentacle_id", "side")}
+
+
+def replacement_proposal(configuration, system, previous_id, replacement_id):
+    """Plan a replacement as the UI's Replace review does, without overrides.
+
+    The saved equipment of the failed Amity is matched by OSD name against
+    the replacement's resolved observations, preferring the same connector.
+    Unseen equipment follows equipment that shared its old connector, or
+    keeps that connector. Each old connector maps to the single connector
+    its equipment now uses. Returns the request body the UI submits (without
+    its request ID), the affected activity IDs and whether Replace is enabled.
+    """
+    peers = system.get("membership", {}).get("peers") or []
+    peer = next((row for row in peers if row.get("octopus_id") == replacement_id), {})
+    mask = 1 if peer.get("configured_tentacles_mask") is None else peer["configured_tentacles_mask"]
+    connectors = [{"tentacle_id": tentacle, "side": side}
+                  for tentacle in range(peer.get("supported_tentacles") or 1) if mask & (1 << tentacle)
+                  for side in ("front", "back")]
+    seen = [row["qualified_name"] for row in system.get("observations") or []
+            if row.get("resolved") and (row.get("qualified_name") or {}).get("octopus_id") == replacement_id]
+    rows = []
+    for component in configuration.get("components") or []:
+        for previous in component.get("qualified_names") or []:
+            if previous.get("octopus_id") != previous_id:
+                continue
+            matches = [name for name in seen if name.get("osd_name") == previous.get("osd_name")]
+            found = next((name for name in matches if _same_port(name, previous)), matches[0] if matches else None)
+            rows.append({"component_id": component.get("component_id"), "previous": previous, "found": found})
+    for row in rows:
+        if row["found"] is not None:
+            row["port"] = row["found"]
+            continue
+        mate = next((other for other in rows if other["found"] is not None
+                     and _same_port(other["previous"], row["previous"])), None)
+        row["port"] = mate["found"] if mate is not None else row["previous"]
+        if not any(_same_port(connector, row["port"]) for connector in connectors):
+            row["port"] = next((connector for connector in connectors
+                                if connector["side"] == row["previous"].get("side")),
+                               connectors[0] if connectors else None)
+        if row["port"] is None:
+            raise MembershipConflict("The replacement Amity has no configured connector")
+    groups = {}
+    for row in rows:
+        groups.setdefault(tuple(_port(row["previous"]).values()), []).append(row)
+    ports, targets = [], set()
+    for group in groups.values():
+        target = group[0]["port"]
+        key = (target.get("tentacle_id"), target.get("side"))
+        if any(not _same_port(row["port"], target) for row in group) or key in targets:
+            continue
+        targets.add(key)
+        previous = _port(group[0]["previous"])
+        ports.append({"previous": previous,
+                      "replacement": {**previous, "octopus_id": replacement_id,
+                                      "tentacle_id": target["tentacle_id"], "side": target["side"]}})
+    equipment = {row["component_id"] for row in rows}
+    affected = [row.get("activity_id") for row in configuration.get("activities") or []
+                if any(row.get(role) in equipment for role in ("display", "source", "audio", "switch_device"))]
+    old = next((row for row in peers if row.get("octopus_id") == previous_id), {})
+    proposal = {"expected_config_revision": configuration.get("config_revision"),
+                "expected_presentation_revision": configuration.get("presentation_revision"),
+                "expected_membership_revision": system.get("membership", {}).get("membership_revision"),
+                "expected_target_boot_id": old.get("boot_id") or None,
+                "previous_octopus_id": previous_id, "replacement_octopus_id": replacement_id,
+                "old_hardware_isolated": True, "ports": ports,
+                "equipment": [{"component_id": row["component_id"], "previous": row["previous"],
+                               "replacement": row["found"] if row["found"] is not None else
+                               {**row["previous"], "octopus_id": replacement_id,
+                                "tentacle_id": row["port"]["tentacle_id"], "side": row["port"]["side"]},
+                               "same_equipment_confirmed": True} for row in rows]}
+    enabled = bool(peer.get("enrolled")) and bool(peer.get("ready")) and bool(rows) and bool(ports)
+    return deepcopy(proposal), affected, enabled
+
+
+def _canonical(rows):
+    return sorted(json.dumps(row, sort_keys=True) for row in rows)
+
+
 class ReplacementReview:
     """Keep saved activity intent fixed while its physical recipients move.
 
     Only unchanged equipment allocated by these fixture activities may move.
-    After exact saved-data verification, update the fixtures' expected physical
-    recipients and cleanup records, without writing activities or equipment.
+    The submitted mapping is the UI's own plan, which must equal the fixture's
+    physical moves. After exact saved-data verification, update the fixtures'
+    expected physical recipients and cleanup records, without writing
+    activities or equipment.
     """
 
     def __init__(self, previous, replacement, activities, equipment_pairs):
@@ -30,7 +117,7 @@ class ReplacementReview:
         self.activities, self.pairs = tuple(activities), tuple(equipment_pairs)
         self.deadline = time.monotonic() + previous.timeout
         self.request_id = uuid4().hex
-        self._previewed = self._applied = False
+        self._attempted = self._applied = False
         proofs = getattr(self.bed, "_member_proofs", {})
         if (previous is replacement or replacement.main is not self.main
                 or not self.bed._entered or self.bed._closed
@@ -55,7 +142,8 @@ class ReplacementReview:
             new.assert_power(PowerState.STANDBY)
         self.before = self._snapshot()
         self.expected = deepcopy(self.before["config"])
-        self.payload = self._proposal()
+        self._fixture_payload = self._fixture_proposal()
+        self.payload = self._reviewed(self.before)
         self.proof = {"kind": "amity_replacement", "request_id": self.request_id,
                       "device_id": previous.device_id, "survivor": replacement.device_id,
                       "main_boot": previous.boot, "member_boot": previous.member_boot,
@@ -108,7 +196,7 @@ class ReplacementReview:
         return deepcopy({"config": config, "system": system, "editor": editor,
                          "settings": settings, "main_settings": main_settings})
 
-    def _proposal(self):
+    def _fixture_proposal(self):
         config, system, editor = (self.before[key] for key in ("config", "system", "editor"))
         old_peer = self.previous._active(system).get(self.previous.device_id, {})
         if old_peer.get("boot_id") != self.previous.member_boot or old_peer.get("ready") is not True:
@@ -157,35 +245,38 @@ class ReplacementReview:
                 "replacement_octopus_id": self.replacement.device_id,
                 "old_hardware_isolated": True, "ports": list(ports.values()), "equipment": equipment}
 
-    def preview(self):
-        if self._previewed or self._applied:
-            raise RuntimeError("This replacement was already reviewed")
-        result = self._request("/api/replacements/preview", {**deepcopy(self.payload), "request_id": uuid4().hex})
-        if (set(result.get("affected_activity_ids", [])) != set(self.affected)
-                or _without_revisions(result.get("configuration", {})) != _without_revisions(self.expected)):
-            raise AssertionError("Replacement preview changed saved activity or equipment intent")
-        after = self._snapshot()
-        if (after["config"] != self.before["config"]
-                or _member_signature(after["system"]) != _member_signature(self.before["system"])
-                or any(_settings_signature(after[key]) != _settings_signature(self.before[key])
-                       for key in ("settings", "main_settings"))):
-            raise AssertionError("Replacement preview mutated configuration, membership or settings")
-        self._previewed = True
-        self.proof.update(configuration_unchanged=True, membership_unchanged=True, settings_unchanged=True)
-        return self
+    def _reviewed(self, snapshot):
+        """Return the UI's plan, which must equal the fixture's physical moves."""
+        proposal, affected, enabled = replacement_proposal(snapshot["config"], snapshot["system"],
+                                                           self.previous.device_id, self.replacement.device_id)
+        if not enabled:
+            raise MembershipConflict("The Replace review would not enable this replacement")
+        expected = self._fixture_payload
+        if (set(proposal) != set(expected)
+                or any(proposal[key] != expected[key] for key in proposal if key not in ("ports", "equipment"))
+                or _canonical(proposal["ports"]) != _canonical(expected["ports"])
+                or _canonical(proposal["equipment"]) != _canonical(expected["equipment"])
+                or len(affected) != len(set(affected)) or set(affected) != set(self.affected)):
+            raise AssertionError("The Replace review planned other equipment, connections or activities")
+        return proposal
 
     def apply(self):
-        if not self._previewed or self._applied:
-            raise RuntimeError("Preview this replacement exactly once before applying")
+        if self._attempted:
+            raise RuntimeError("A replacement can be applied only once")
         self.deadline = time.monotonic() + self.previous.timeout
         current = self._snapshot()
         if (current["config"] != self.before["config"]
                 or _member_signature(current["system"]) != _member_signature(self.before["system"])):
             raise MembershipConflict("Replacement needs an unchanged reviewed configuration and membership")
+        # Like the dialog, submit only when a fresh plan equals the reviewed one.
+        if self._reviewed(current) != self.payload:
+            raise MembershipConflict("The replacement equipment changed after its review")
+        self._attempted = True
         record = self.previous._record("replacement", request_id=self.request_id)
         try:
             try:
-                operation = self._request("/api/replacements/apply", {**deepcopy(self.payload), "request_id": self.request_id})
+                operation = self._request("/api/replacements/apply", {"request_id": self.request_id,
+                                                                      **deepcopy(self.payload)})
             except (OSError, TimeoutError, AmityHTTPError) as error:
                 if isinstance(error, AmityHTTPError) and 400 <= error.status < 500 and error.status != 408:
                     raise

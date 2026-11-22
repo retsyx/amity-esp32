@@ -1040,9 +1040,11 @@ so ordinary fixture cleanup cannot conceal a missing firmware cascade. Select
 
 ## Replacing an Amity
 
-`--test amity_replacement` exercises the shipping replacement preview and apply
-operations after adding a replacement member. It confirms cable and equipment
-mappings to a different adapter, retaining the existing activity records,
+`--test amity_replacement` adds a replacement member and replaces the old one
+the way the Replace dialog does: the mapping is planned from the saved equipment
+and the replacement's observed equipment, must equal the fixture's moves to a
+different adapter, and is submitted only through the apply operation. It retains
+the existing activity records,
 equipment identities, activity order and home-selector assignments. The saved
 activities must operate before and after replacement, with fresh physical CEC
 power, routing, key and standby evidence from the selected equipment. No

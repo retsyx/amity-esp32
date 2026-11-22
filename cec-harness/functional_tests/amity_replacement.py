@@ -98,7 +98,6 @@ def test_amity_replacement():
                 scan.assert_on(component, component.endpoint)
             review = ReplacementReview(removed, added, (keeper, playback, numeric),
                                        tuple(zip(old, new, strict=True)))
-            review.preview()
             review.apply()
 
             _exercise(main, keeper, local, new)
