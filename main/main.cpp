@@ -319,7 +319,8 @@ void input_task(void *) {
         }
         // Check the reservation as well as the published generation. The hub
         // checks generation again on dequeue for a transition racing this call.
-        if(command.stamp.generation!=hub.remote_activity_generation()||command.stamp.target!=hub.remote_activity_target())return false;
+        const auto current=hub.remote_activity();
+        if(command.stamp.generation!=current.generation||command.stamp.target!=current.target)return false;
         switch(command.type) {
         case ble::RemoteCommandType::Press:
             pending_swipes.cancel();
@@ -346,10 +347,10 @@ void input_task(void *) {
     auto sync_activity=[&] {
         const bool setup=controller.activity_setup(hub.activity_setup_in_progress(),esp_timer_get_time());
         const bool selected=controller.activity_selected(hub.activity_selection(),esp_timer_get_time());
-        const auto generation=hub.remote_activity_generation();const int target=hub.remote_activity_target();
-        const bool changed=controller.synchronize(generation,target);
+        const auto current=hub.remote_activity();
+        const bool changed=controller.synchronize(current.generation,current.target);
         // Reports stamped with this activity from now on are current.
-        input_activity.store(pack_activity(generation,target));
+        input_activity.store(pack_activity(current.generation,current.target));
         if(changed||selected||setup) {
             swipes.cancel();siri.activity_changed();
         }

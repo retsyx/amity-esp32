@@ -42,7 +42,7 @@ public:
     esp_err_t stop_remote_zone(){return stop_remote_zone(remote_activity_generation());}
     esp_err_t stop_remote_zone(uint32_t generation);
     uint32_t remote_activity_generation()const{return accepts_local_input()?activity_generation():0;}
-    int remote_activity_target()const{return accepts_local_input()?activity_target():-1;}
+    HubService::ActivityState remote_activity()const{return accepts_local_input()?local_.activity_state():HubService::ActivityState{};}
     bool discover(){return local_.discover();}
     bool discover_owned(system::OctopusId owner,uint8_t adapter){return local_.discover_owned(owner,adapter);}
     bool refresh_owned_context(system::OctopusId owner,uint64_t revision,std::function<void(system::OwnedContextResult)> completed){return local_.refresh_owned_context(owner,revision,std::move(completed));}

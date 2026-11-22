@@ -1871,6 +1871,12 @@ esp_err_t HubService::request_activity(int index, bool notify_selection,uint32_t
     if(error==ESP_OK&&accepted_selection)*accepted_selection=receipt;
     xSemaphoreGive(p.lock); return error;
 }
+HubService::ActivityState HubService::activity_state() const {
+    auto &p = *impl_; if (!p.lock) return {};
+    xSemaphoreTake(p.lock, portMAX_DELAY);
+    const ActivityState state{p.cached.activity_generation, p.activity_setup_in_progress()?p.reserved_target.load():p.cached.current_activity};
+    xSemaphoreGive(p.lock); return state;
+}
 int HubService::activity_target() const {
     auto &p = *impl_; if (!p.lock) return -1;
     xSemaphoreTake(p.lock, portMAX_DELAY);

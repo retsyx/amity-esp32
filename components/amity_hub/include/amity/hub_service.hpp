@@ -23,6 +23,9 @@ public:
     bool press_key(uint8_t,bool repeat=false);bool press_key_for_activity(uint8_t,uint32_t,bool repeat=false);
     uint32_t input_epoch()const;
     uint32_t activity_generation()const;bool release_key(uint8_t);bool standby();bool discover();
+    // The published activity generation and the activity it targets, read together.
+    struct ActivityState {uint32_t generation=0;int target=-1;};
+    ActivityState activity_state()const;
     Snapshot snapshot()const;void on_change(std::function<void(const Snapshot&)>);
     PlaybackState playback_state()const;
     void on_configuration_applied(std::function<void()>);
