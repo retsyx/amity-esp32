@@ -26,7 +26,6 @@ constexpr int shortcut(RemoteButton button) {
     const int value = static_cast<int>(button) - static_cast<int>(RemoteButton::Activity0);
     return value >= 0 && value <= 3 ? value : -1;
 }
-bool same_activity(InputStamp a, InputStamp b) { return a.generation == b.generation && a.target == b.target; }
 }
 
 bool RemoteInputController::emit(RemoteCommandType type, int value, uint8_t count) {
@@ -148,14 +147,14 @@ void RemoteInputController::action(RemoteCommandType type, int value) {
     }
 }
 
-void RemoteInputController::release(size_t index, bool stale) {
+void RemoteInputController::release(size_t index) {
+    // Reports arrive in order, so a release belongs to the hold before it. A
+    // hold from an earlier activity was suppressed when the change was seen.
     auto &key = held_[index];
-    // An old queued release cannot cancel a newer press of this physical key.
-    if (stale && !same_activity(key.stamp, report_stamp_)) return;
     const auto started = key.stamp.timestamp;
     const auto button = key.button;
     const auto profile = bindings(key.profile, atomic_long_activity_offset_);
-    const bool suppressed = key.suppressed || stale || transition_pending_ || activity_setup_;
+    const bool suppressed = key.suppressed || transition_pending_ || activity_setup_;
     key.down = false;
     if (suppressed) return;
     if (macro_executed_) return;
@@ -206,7 +205,7 @@ void RemoteInputController::buttons(RemoteProfile profile, const ButtonEvent *ev
         }
         if (!event.down) {
             if (key) {
-                release(static_cast<size_t>(key - held_.data()), stale);
+                release(static_cast<size_t>(key - held_.data()));
                 if (!key->down) {
                     bool down = false;
                     for (const auto &held : held_) down = down || held.down;

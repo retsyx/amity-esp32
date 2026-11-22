@@ -88,7 +88,7 @@ private:
     bool emit(RemoteCommandType type, int value = 0, uint8_t count = 0);
     void suppress_held();
     void reconcile();
-    void release(size_t index, bool stale);
+    void release(size_t index);
     void action(RemoteCommandType type, int value = 0);
 };
 } // namespace ble

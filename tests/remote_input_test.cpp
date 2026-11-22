@@ -126,11 +126,6 @@ static void queued_reports(ble::RemoteProfile profile) {
     f.key(Key::Up, true, 400);
     f.expect({{T::Press, 1}});
     f.events.clear();
-    const ble::ButtonEvent stale_release{
-        profile == ble::RemoteProfile::Atomic ? 0x00070052u : 9u, ble::RemoteButton::Up, false};
-    // Even a delayed normalized release cannot stop a newer held key.
-    f.policy.buttons(profile, &stale_release, 1, {500, 1, 0});
-    f.expect({});
     f.key(Key::Volume, true, 600);
     f.key(Key::Volume, false, 700);
     f.expect({{T::Press, 0x41}, {T::Release, 0x41}});
@@ -140,6 +135,21 @@ static void queued_reports(ble::RemoteProfile profile) {
     f.key_at(Key::Power, true, {900, 2, 1});
     f.key(Key::Power, false, 1000000);
     f.expect({});
+}
+
+static void release_after_two_transitions(ble::RemoteProfile profile) {
+    Fixture f(profile);
+    f.key(Key::Up, true, 100);
+    f.sync(1, 1); // The reserved target is observed.
+    const auto release = f.stamp(200);
+    f.sync(2, 1); // The published generation is observed before the queued release.
+    f.events.clear();
+    f.key_at(Key::Up, false, release);
+    f.expect({});
+    // The old hold ended: it neither blocks touch navigation nor the next press.
+    f.policy.swipe(ble::RemoteButton::Right, 1, f.stamp(300));
+    f.key(Key::Up, true, 400);
+    f.expect({{T::Swipe, 4}, {T::Press, 1}});
 }
 
 static void cancellation(ble::RemoteProfile profile) {
@@ -595,6 +605,7 @@ int main() {
         held_state_changes(profile);
         activity_quarantine(profile);
         queued_reports(profile);
+        release_after_two_transitions(profile);
         cancellation(profile);
         admissions_and_repairs(profile);
         independent_holds(profile);
