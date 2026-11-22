@@ -10,7 +10,6 @@ from consortium_gatt_callback_test import function
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = r'''
 #include "amity/consortium/session.hpp"
-#include "amity/consortium/transfer.hpp"
 #include "controller_policy.hpp"
 #include "setup_timing.hpp"
 #include "amity/consortium/hostname.hpp"
@@ -56,7 +55,6 @@ int main(){
  HelloFrame parsed;auto body=hello_json(hello);assert(parse_hello(body,parsed)==Error::none);
  auto extra=body;extra.pop_back();extra+=",\"handover_id\":\""+ident<model::MessageId>(8).str()+"\",\"proposal_digest\":\""+std::string(64,'c')+"\"}";assert(parse_hello(extra,parsed)==Error::invalid_message);
  LinkScope scope{ident<model::LinkId>(9),hello.consortium_id,ident<model::OctopusId>(5),hello.octopus_id,hello.octopus_id,ident<model::BootId>(6),hello.boot_id,1};Session session;assert(session.authenticate(scope,scope.peer_id,PeerRole::coordinator,true)==Error::none&&session.hello(hello)==Error::none);
- SnapshotManifest manifest;manifest.transfer_id=ident<model::MessageId>(8);manifest.owner_octopus_id=scope.local_id;manifest.owner_boot_id=scope.local_boot_id;manifest.config_revision=1;manifest.total_length=1;manifest.payload_hash=std::string(64,'d');manifest.document_kind="handover";assert(snapshot_manifest_json(manifest,"begin",0).empty());
  const auto local=ident<model::OctopusId>(5),coordinator=ident<model::OctopusId>(3);RuntimeStartup startup;
  records.clear();assert(runtime_read_startup(local,startup)==ESP_OK&&startup.role==RuntimeStartup::unclaimed);
  Group group;group.role=Group::member;group.consortium=hello.consortium_id;group.authority=coordinator;group.revision=1;group.authority_host="192.0.2.1";group.join_id=ident<model::JoinId>(10);group.joining_id=local;group.join_digest=std::string(64,'e');group.join_revision=1;group.peers.push_back({coordinator,"leaf",std::string(64,'a'),true});

@@ -29,7 +29,8 @@ bool fence_synchronization_scope(Active&,LinkTrace&){assert(false);return false;
 bool synchronization_barrier(Active&,bool,SynchronizationRound&,LinkTrace&){assert(false);return false;}
 bool restart_synchronization_scope(Active&,const SynchronizationRound&,LinkTrace&){assert(false);return false;}
 bool exchange_hostname(Active&,const std::string&,LinkTrace*){assert(false);return false;}
-bool synchronize(Active&,bool,bool,uint64_t,const Envelope*,LinkTrace*){assert(false);return false;}
+bool bind_configuration(Active&,uint64_t,LinkTrace&){assert(false);return false;}
+bool finish_synchronization(Active&,bool,uint64_t,LinkTrace&){assert(false);return false;}
 }
 '''
 
@@ -71,9 +72,9 @@ void mismatched(bool server,bool provisional){
  assert(active->session.state()==ConnectionState::restricted&&active->session.scope()==scope);
  assert(active->tls.get()==tls&&active->tls->usable()&&!active->cancelled&&shutdowns==0);
  assert(active->tls->raw_sent.size()==hello_frames&&synchronization_entries==0);
- assert(!send(*active,Kind::device_status,"{}")&&!send(*active,Kind::settings_read,"{}")&&!send(*active,Kind::snapshot_request,"{}")&&!send(*active,Kind::synchronization,"{}"));
+ assert(!send(*active,Kind::device_status,"{}")&&!send(*active,Kind::settings_read,"{}")&&!send(*active,Kind::synchronization,"{}"));
  assert(active->tls->raw_sent.size()==hello_frames);
- for(auto kind:{Kind::device_status,Kind::settings_read,Kind::settings_write,Kind::settings_result,Kind::snapshot_request,Kind::snapshot_chunk,Kind::synchronization,Kind::scoped_intent,Kind::scoped_result})assert(active->session.admit(inbound(*active,kind),100,100)!=Error::none);
+ for(auto kind:{Kind::device_status,Kind::settings_read,Kind::settings_write,Kind::settings_result,Kind::synchronization,Kind::scoped_intent,Kind::scoped_result})assert(active->session.admit(inbound(*active,kind),100,100)!=Error::none);
  for(auto kind:{Kind::update_begin,Kind::update_chunk,Kind::update_install,Kind::update_abort,Kind::update_status,Kind::update_result}){
   auto message=inbound(*active,kind);if(kind==Kind::update_chunk)message.update_chunk=UpdateChunk{ident<model::MessageId>(98),0,std::string(2048,'x')};const bool allowed=server?kind==Kind::update_result:kind!=Kind::update_result;
   assert(active->session.admit(message,100,100)==(allowed?Error::none:Error::unauthorized_role));
@@ -111,7 +112,7 @@ def main():
         (temp / 'esp_err.h').write_text('#pragma once\nusing esp_err_t=int;constexpr int ESP_OK=0,ESP_ERR_INVALID_ARG=1,ESP_ERR_INVALID_STATE=2,ESP_ERR_NO_MEM=3,ESP_ERR_TIMEOUT=4,ESP_FAIL=5,ESP_ERR_NOT_FOUND=6,ESP_ERR_NOT_SUPPORTED=7;\n')
         cpp, binary = temp / 'test.cpp', temp / 'test'
         cpp.write_text(timing_support() + prefix + EXTRA + 'namespace amity::consortium {\n' + actual + '\n}\n' + SUITE)
-        sources = [ROOT / 'components/consortium' / name for name in ('json.cpp', 'wire.cpp', 'owned_intent.cpp', 'session.cpp', 'settings.cpp', 'update.cpp', 'transfer.cpp')]
+        sources = [ROOT / 'components/consortium' / name for name in ('json.cpp', 'wire.cpp', 'owned_intent.cpp', 'session.cpp', 'settings.cpp', 'update.cpp')]
         sources.append(ROOT / 'components/amity_system/model.cpp')
         subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) + ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-pthread', '-g', '-fsanitize=address,undefined', '-I' + str(temp)] + ['-I' + str(ROOT / path) for path in ('components/consortium', 'components/consortium/include', 'components/amity_system/include','components/network_diagnostics/include')] + list(map(str, [cpp] + sources)) + ['-o', str(binary)], check=True)
         subprocess.run([str(binary)], check=True)

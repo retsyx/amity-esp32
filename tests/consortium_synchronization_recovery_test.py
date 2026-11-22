@@ -35,8 +35,7 @@ std::shared_ptr<Active> initial(bool server){
  assert(active->session.authenticate(scope,scope.peer_id,server?PeerRole::actuator:PeerRole::coordinator,true)==Error::none);
  assert(active->session.hello(hello)==Error::none);
  active->ready=active->status.ready=false;active->context_ready=false;
- controls.snapshot=[](auto){return owner_state;};
- controls.synchronize=[](auto,const Json&){return Error::none;};
+ controls.synchronize=[](auto,uint64_t){return Error::none;};
  return active;
 }
 Envelope sync_frame(const LinkScope& scope,model::MessageId round,std::string_view phase,uint64_t target,uint64_t envelope_revision=0){
@@ -46,122 +45,72 @@ void same_connection(const Active& active,const LinkScope& original,const FakeTl
  auto expected=original;expected.config_revision=revision;if(active.synchronization.id)expected.link_id=*model::LinkId::parse(active.synchronization.id.str());
  assert(active.tls.get()==tls&&active.tls->usable()&&active.session.scope()==expected&&shutdowns==0&&!active.cancelled);
 }
+// Plays the member for the main: hostname, then the barrier reply.
 struct ServerScript {
- LinkScope original;unsigned rounds=0;std::vector<model::MessageId> ids;std::optional<SnapshotManifest> config;
- bool stale_only_second=false,reject_first_transfer=false;
+ LinkScope original;unsigned rounds=0;std::vector<model::MessageId> ids;
+ bool stale_only_second=false,reject_first=false;
  explicit ServerScript(LinkScope scope):original(scope){}
  void operator()(Active& active,const Envelope& envelope){
   if(envelope.kind==Kind::device_status){feed(active,inbound(original,envelope.config_revision,Kind::device_status,"{\"hostname\":\"amity-member\"}"));return;}
-  if(envelope.kind==Kind::synchronization){
-   model::MessageId round;std::string phase;uint64_t target;
-   assert(parse_synchronization(envelope.payload,round,phase,target)==Error::none&&phase=="begin");
-   assert(std::find(ids.begin(),ids.end(),round)==ids.end());ids.push_back(round);++rounds;
-   assert(!active.ready&&!active.status.ready);
-   if(rounds>1)feed(active,sync_frame(original,ids.front(),"ack",target));
-   if(stale_only_second&&rounds==2)return;
-   // A peer may already have advanced after an earlier incomplete exchange.
-   // Only the typed round barrier may cross that revision boundary.
-   feed(active,sync_frame(original,round,"ack",target,target));return;
-  }
-  SnapshotManifest incoming;std::string phase;uint32_t next;
-  if(envelope.kind==Kind::snapshot_request){
-   assert(parse_snapshot_manifest(envelope.payload,incoming,phase,next)==Error::none);
-   if(incoming.document_kind=="configuration"){
-    assert(phase=="begin");config=incoming;
-    if(reject_first_transfer&&rounds==1){feed(active,sync_frame(original,ids.back(),"reject",incoming.config_revision,incoming.config_revision));return;}
-    feed(active,inbound(original,envelope.config_revision,Kind::snapshot_request,snapshot_manifest_json(incoming,"ack",0)));
-   }
-   return;
-  }
-  assert(envelope.kind==Kind::snapshot_chunk&&config);
-  feed(active,inbound(original,envelope.config_revision,Kind::snapshot_request,snapshot_manifest_json(*config,"complete",1)));
-  const auto state=manifest(original.peer_id,original.peer_boot_id,config->config_revision,"owner_state",owner_state);
-  feed(active,inbound(original,config->config_revision,Kind::snapshot_request,snapshot_manifest_json(state,"begin",0)));
-  feed(active,inbound(original,config->config_revision,Kind::snapshot_chunk,snapshot_chunk_json(state,0,owner_state)));
+  assert(envelope.kind==Kind::synchronization);
+  model::MessageId round;std::string phase;uint64_t target;
+  assert(parse_synchronization(envelope.payload,round,phase,target)==Error::none&&phase=="begin");
+  assert(std::find(ids.begin(),ids.end(),round)==ids.end());ids.push_back(round);++rounds;
+  assert(!active.ready&&!active.status.ready);
+  if(rounds>1)feed(active,sync_frame(original,ids.front(),"ack",target)); // An old round's reply cannot complete a new barrier.
+  if(stale_only_second&&rounds==2)return;
+  // A peer may already have advanced after an earlier incomplete exchange.
+  // Only the typed round barrier may cross that revision boundary.
+  feed(active,sync_frame(original,round,reject_first&&rounds==1?"reject":"ack",target,target));
  }
 };
-void coordinator_recovers_capture_failure_and_ignores_old_round(){
+void coordinator_recovers_rejection_and_ignores_old_round(){
  auto active=initial(true);const auto original=active->session.scope();const auto* tls=active->tls.get();
  auto seen=inbound(original,7,Kind::device_status,"{\"hostname\":\"amity-member\"}");
  assert(active->session.admit(seen,clock_ms,clock_ms)==Error::none);
- unsigned captures=0,applies=0;
- controls.configuration_snapshot=[&](auto owner,uint64_t revision){assert(owner==original.peer_id&&revision==7);++captures;return captures==1?std::string{}:controller_slice(original,revision);};
- controls.synchronize=[&](auto owner,const Json& document){assert(owner==original.peer_id&&document.string==owner_state);++applies;return Error::none;};
- ServerScript script{original};script.stale_only_second=true;
+ controls.synchronize=[](auto,uint64_t){assert(false&&"The main binds no configuration");return Error::none;};
+ ServerScript script{original};script.reject_first=true;script.stale_only_second=true;
  on_send=[&](auto& a,const auto& e){script(a,e);};
- assert(synchronize_connection(*active,true)&&active->ready&&active->status.ready&&script.rounds==3&&captures==2&&applies==1);
+ assert(synchronize_connection(*active,true)&&active->ready&&active->status.ready&&script.rounds==3);
  same_connection(*active,original,tls,7);
- assert(!diagnostic_logs.empty()&&clock_ms>=12100); // Failed barrier and existing one-second recovery delays.
+ assert(!diagnostic_logs.empty()&&clock_ms>=12100); // Rejection, failed barrier and the one-second recovery delays.
 }
-void coordinator_recovers_owner_apply_and_peer_rejection(){
- for(bool rejected:{false,true}){
-  auto active=initial(true);const auto original=active->session.scope();const auto* tls=active->tls.get();
-  unsigned applies=0;controls.configuration_snapshot=[&](auto,uint64_t revision){return controller_slice(original,revision);};
-  controls.synchronize=[&](auto,const Json&){++applies;return !rejected&&applies==1?Error::not_ready:Error::none;};
-  ServerScript script{original};script.reject_first_transfer=rejected;on_send=[&](auto& a,const auto& e){script(a,e);};
-  assert(synchronize_connection(*active,true)&&script.rounds==2&&applies==(rejected?1u:2u));
-  same_connection(*active,original,tls,7);assert(active->ready&&active->session.state()==ConnectionState::ready);
- }
-}
+// Plays the main for a member: barrier, then hostname.
 struct MemberScript {
- LinkScope original;uint64_t target=7;unsigned rounds=1,acks=0,config_applies=0;bool interrupt_first=false,interrupt_hostname_first=false;
- model::MessageId round=ident<model::MessageId>(200);std::optional<SnapshotManifest> owner;
+ LinkScope original;uint64_t target=7;unsigned rounds=1,acks=0;bool interrupt_hostname_first=false;
+ model::MessageId round=ident<model::MessageId>(200);
  explicit MemberScript(LinkScope scope):original(scope){}
  void begin(Active& active){feed(active,sync_frame(original,round,"begin",target));}
  void next(Active& active){round=random_id<model::MessageId>();++rounds;begin(active);}
- void configuration(Active& active){
-  const auto data=controller_slice(original,target);const auto config=manifest(original.local_id,original.local_boot_id,target,"configuration",data);
-  feed(active,inbound(original,target,Kind::snapshot_request,snapshot_manifest_json(config,"begin",0)));
-  if(interrupt_first&&rounds==1)next(active); // New begin interrupts the old transfer before any chunk is applied.
-  else feed(active,inbound(original,target,Kind::snapshot_chunk,snapshot_chunk_json(config,0,data)));
- }
  void operator()(Active& active,const Envelope& envelope){
-  if(envelope.kind==Kind::device_status){if(interrupt_hostname_first&&rounds==1){next(active);return;}feed(active,inbound(original,envelope.config_revision,Kind::device_status,"{\"hostname\":\"amity-main\"}"));configuration(active);return;}
-  if(envelope.kind==Kind::synchronization){
-   model::MessageId id;std::string phase;uint64_t revision;
-   assert(parse_synchronization(envelope.payload,id,phase,revision)==Error::none&&id==round&&revision==target);
-   if(phase=="reject"){next(active);return;}
-   assert(phase=="ack");++acks;assert(!active.ready&&!active.status.ready);
-   return;
-  }
-  SnapshotManifest incoming;std::string phase;uint32_t next;
-  if(envelope.kind==Kind::snapshot_request){
-   assert(parse_snapshot_manifest(envelope.payload,incoming,phase,next)==Error::none);
-   if(incoming.document_kind=="owner_state"){
-    assert(phase=="begin");owner=incoming;
-    feed(active,inbound(original,target,Kind::snapshot_request,snapshot_manifest_json(incoming,"ack",0)));
-   }
-   return;
-  }
-  assert(envelope.kind==Kind::snapshot_chunk&&owner);
-  feed(active,inbound(original,target,Kind::snapshot_request,snapshot_manifest_json(*owner,"complete",1)));
+  if(envelope.kind==Kind::device_status){if(interrupt_hostname_first&&rounds==1){next(active);return;}feed(active,inbound(original,envelope.config_revision,Kind::device_status,"{\"hostname\":\"amity-main\"}"));return;}
+  assert(envelope.kind==Kind::synchronization);
+  model::MessageId id;std::string phase;uint64_t revision;
+  assert(parse_synchronization(envelope.payload,id,phase,revision)==Error::none&&id==round&&revision==target);
+  if(phase=="reject"){next(active);return;}
+  assert(phase=="ack");++acks;assert(!active.ready&&!active.status.ready);
  }
 };
-void member_recovers_configuration_apply_and_owner_capture(){
- for(bool capture_failed:{false,true}){
-  auto active=initial(false);const auto original=active->session.scope();const auto* tls=active->tls.get();
-  MemberScript script{original};script.begin(*active);unsigned applies=0,captures=0;
-  controls.synchronize=[&](auto owner,const Json& document){assert(owner==original.peer_id&&document.string==controller_slice(original,7));++applies;return !capture_failed&&applies==1?Error::not_ready:Error::none;};
-  controls.snapshot=[&](auto){++captures;return capture_failed&&captures==1?std::string{}:owner_state;};
-  on_send=[&](auto& a,const auto& e){script(a,e);};
-  assert(synchronize_connection(*active,false)&&script.rounds==2&&script.acks==2&&applies==2&&captures==(capture_failed?2u:1u));
-  same_connection(*active,original,tls,7);assert(active->ready&&!active->pending_synchronization);
- }
+void member_binds_before_acknowledging(){
+ auto active=initial(false);const auto original=active->session.scope();const auto* tls=active->tls.get();
+ MemberScript script{original};script.begin(*active);unsigned applies=0;
+ controls.synchronize=[&](auto owner,uint64_t revision){assert(owner==original.peer_id&&revision==7);++applies;return applies==1?Error::not_ready:Error::none;};
+ on_send=[&](auto& a,const auto& e){script(a,e);};
+ // The failed bind is answered with a rejection, never an acknowledgement.
+ assert(synchronize_connection(*active,false)&&script.rounds==2&&script.acks==1&&applies==2);
+ same_connection(*active,original,tls,7);assert(active->ready&&!active->pending_synchronization);
 }
-void new_begin_unwinds_pending_transfer_without_reauthenticating(){
- for(bool hostname_phase:{false,true}){
-  auto active=initial(false);const auto original=active->session.scope();const auto* tls=active->tls.get();
-  MemberScript script{original};script.interrupt_first=!hostname_phase;script.interrupt_hostname_first=hostname_phase;script.begin(*active);unsigned applies=0;
-  controls.synchronize=[&](auto,const Json&){++applies;return Error::none;};on_send=[&](auto& a,const auto& e){script(a,e);};
-  assert(synchronize_connection(*active,false)&&script.rounds==2&&script.acks==2&&applies==1&&!active->pending_synchronization);
-  same_connection(*active,original,tls,7);
-  for(const auto& e:active->tls->sent)if(e.kind==Kind::synchronization){model::MessageId round;std::string phase;uint64_t revision;assert(parse_synchronization(e.payload,round,phase,revision)==Error::none&&phase=="ack");}
- }
+void new_begin_unwinds_pending_round_without_reauthenticating(){
+ auto active=initial(false);const auto original=active->session.scope();const auto* tls=active->tls.get();
+ MemberScript script{original};script.interrupt_hostname_first=true;script.begin(*active);unsigned applies=0;
+ controls.synchronize=[&](auto,uint64_t){++applies;return Error::none;};on_send=[&](auto& a,const auto& e){script(a,e);};
+ assert(synchronize_connection(*active,false)&&script.rounds==2&&script.acks==2&&applies==2&&!active->pending_synchronization);
+ same_connection(*active,original,tls,7);
+ for(const auto& e:active->tls->sent)if(e.kind==Kind::synchronization){model::MessageId round;std::string phase;uint64_t revision;assert(parse_synchronization(e.payload,round,phase,revision)==Error::none&&phase=="ack");}
 }
 void hostname_persistence_failure_retains_same_stream(){
  for(bool server:{false,true}){
   auto active=initial(server);const auto original=active->session.scope();const auto* tls=active->tls.get();hostname_failures=1;
-  controls.configuration_snapshot=[&](auto,uint64_t revision){return controller_slice(original,revision);};
   ServerScript main{original};MemberScript member{original};
   if(server)on_send=[&](auto& a,const auto& e){main(a,e);};else{member.begin(*active);on_send=[&](auto& a,const auto& e){member(a,e);};}
   assert(synchronize_connection(*active,server)&&remembered==2&&(server?main.rounds==2:member.rounds==2));
@@ -171,7 +120,7 @@ void hostname_persistence_failure_retains_same_stream(){
 void recovery_revision_preserves_identity_and_fences_ordinary_revision(){
  for(bool server:{false,true}){
   auto active=start(server);credentials_current=true;const auto original=active->session.scope();const auto* tls=active->tls.get();configuration=8;
-  controls.snapshot=[](auto){return owner_state;};controls.configuration_snapshot=[&](auto,uint64_t revision){assert(revision==8);return controller_slice(original,revision);};controls.synchronize=[](auto,const Json&){return Error::none;};
+  controls.synchronize=[](auto,uint64_t revision){assert(revision==8);return Error::none;};
   ServerScript main{original};MemberScript member{original};member.target=8;
   if(server)on_send=[&](auto& a,const auto& e){main(a,e);};
   else{member.begin(*active);on_send=[&](auto& a,const auto& e){member(a,e);};}
@@ -198,12 +147,10 @@ void interleaved_observations_complete_recovery(){
   LinkTrace trace;assert(synchronization_barrier(*active,true,round,trace));
   same_connection(*active,original,tls,7);assert(restart_fences.empty());
  }
- for(bool barrier:{false,true}){
+ {
   auto active=start(true);credentials_current=true;const auto original=active->session.scope();const auto* tls=active->tls.get();bool injected=false;
-  controls.snapshot=[](auto){return owner_state;};controls.synchronize=[](auto,const Json&){return Error::none;};
-  controls.configuration_snapshot=[&](auto,uint64_t revision){return controller_slice(original,revision);};
   ServerScript script{original};on_send=[&](Active& a,const Envelope& envelope){
-   if(!injected&&((barrier&&envelope.kind==Kind::synchronization)||(!barrier&&envelope.kind==Kind::snapshot_request))){
+   if(!injected&&envelope.kind==Kind::synchronization){
     injected=true;assert(active->execution_fenced);feed(a,inbound(original,7,Kind::scoped_result,observation(original)));
    }
    script(a,envelope);
@@ -251,8 +198,6 @@ void logical_restart_clears_old_ipc_and_update_without_replaying_work(){
 }
 void late_old_link_callbacks_cannot_cancel_fenced_tls(){
  auto active=start(true);credentials_current=true;const auto original=active->session.scope();const auto* tls=active->tls.get();unsigned fences=0,barrier_callbacks=0;
- controls.snapshot=[](auto){return owner_state;};controls.synchronize=[](auto,const Json&){return Error::none;};
- controls.configuration_snapshot=[&](auto,uint64_t revision){return controller_slice(original,revision);};
  controls.restart_session=[&](auto owner,auto boot,auto old_link){
   ++fences;assert(owner==original.peer_id&&boot==original.peer_boot_id&&old_link==original.link_id&&active->execution_fenced&&!active->ready);
   runtime_fence_owned_link(owner,old_link);assert(!active->cancelled&&shutdowns==0);return true;
@@ -268,7 +213,7 @@ void late_old_link_callbacks_cannot_cancel_fenced_tls(){
 void expired_operational_frame_uses_existing_connection(){
  for(bool server:{false,true}){
   auto active=start(server);credentials_current=true;const auto original=active->session.scope();const auto* tls=active->tls.get();
-  controls.snapshot=[](auto){return owner_state;};controls.synchronize=[](auto,const Json&){return Error::none;};controls.configuration_snapshot=[&](auto,uint64_t revision){return controller_slice(original,revision);};
+  controls.synchronize=[](auto,uint64_t){return Error::none;};
   ServerScript main{original};MemberScript member{original};active->synchronization={member.round,7};unsigned rejects=0;
   on_send=[&](Active& a,const Envelope& envelope){
    if(envelope.kind==Kind::synchronization&&envelope.payload.get("phase")->string=="reject"){++rejects;assert(!server&&envelope.payload.get("round_id")->string==member.round.str());}
@@ -298,8 +243,6 @@ void application_restart_waits_for_exact_cleanup_before_fresh_scope(){
   assert(active->queue.size()==1&&!abandoned.expired()&&observations.size()==3&&shutdowns==0);
   return fences>=3;
  };
- controls.snapshot=[](auto){return owner_state;};controls.synchronize=[](auto,const Json&){return Error::none;};
- controls.configuration_snapshot=[&](auto,uint64_t revision){return controller_slice(original,revision);};
  ServerScript script{original};on_send=[&](auto& a,const auto& envelope){assert(fences==3&&a.queue.empty()&&abandoned.expired());script(a,envelope);};
  LinkTrace trace;trace.fail("control_dispatch",Error::not_ready);assert(application_failure_recoverable(*active,trace));
  assert(recover_operational_frame(*active,true,trace)&&fences==3&&script.rounds==1&&clock_ms>=2100);
@@ -350,10 +293,9 @@ PairedResult paired_endpoint(bool server,int fd){
   active->tls->incoming.push_back(std::move(body));
  };
  unsigned applies=0,rounds=0;
- controls.configuration_snapshot=[&](auto,uint64_t revision){return controller_slice(original,revision);};
- controls.synchronize=[&](auto peer,const Json& document){
-  assert(peer==original.peer_id&&document.string==(server?owner_state:controller_slice(original,7)));
-  ++applies;return applies==1?Error::not_ready:Error::none; // Both real peers fail their first distinct application step.
+ controls.synchronize=[&](auto peer,uint64_t revision){
+  assert(!server&&peer==original.peer_id&&revision==7);
+  ++applies;return applies==1?Error::not_ready:Error::none; // The real member fails its first bind.
  };
  on_send=[&](Active& current,const Envelope& envelope){
   assert(&current==active.get()&&current.tls.get()==tls&&current.tls->socket==fd&&!current.ready&&!current.status.ready);
@@ -384,18 +326,19 @@ void paired_endpoints_recover_crossed_application_failures(){
  PairedResult member;const auto read=::read(reports[0],&member,sizeof(member));::close(reports[0]);int status=0;assert(::waitpid(child,&status,0)==child);
  assert(read==sizeof(member)&&WIFEXITED(status)&&WEXITSTATUS(status)==0);
  assert(main.link&&main.link==member.link);
- for(const auto& endpoint:{main,member})assert(endpoint.ready&&endpoint.scope_intact&&endpoint.context_withheld&&endpoint.applies>=2&&endpoint.rounds>=3);
+ for(const auto& endpoint:{main,member})assert(endpoint.ready&&endpoint.scope_intact&&endpoint.context_withheld);
+ assert(main.applies==0&&main.rounds>=2&&member.applies>=2&&member.rounds>=1);
 }
 }
 int main(){using namespace amity::consortium;
- coordinator_recovers_capture_failure_and_ignores_old_round();coordinator_recovers_owner_apply_and_peer_rejection();
- member_recovers_configuration_apply_and_owner_capture();new_begin_unwinds_pending_transfer_without_reauthenticating();
+ coordinator_recovers_rejection_and_ignores_old_round();
+ member_binds_before_acknowledging();new_begin_unwinds_pending_round_without_reauthenticating();
  recovery_revision_preserves_identity_and_fences_ordinary_revision();broken_transport_stops_recovery();
  interleaved_observations_complete_recovery();logical_restart_clears_old_ipc_and_update_without_replaying_work();
  hostname_persistence_failure_retains_same_stream();late_old_link_callbacks_cannot_cancel_fenced_tls();expired_operational_frame_uses_existing_connection();
  application_restart_waits_for_exact_cleanup_before_fresh_scope();logical_recovery_keeps_security_and_transport_fences();
  paired_endpoints_recover_crossed_application_failures();
- std::cout<<"PASS actual synchronization recovery: scripted and paired fork/socket endpoints recover capture/apply/rejection/timeout/new-begin on same TLS/boots with fresh logical links, boot fences intact and fresh context withheld; old-round ACK cannot satisfy new barrier; revised barrier preserves ordinary exact-revision fences; fatal transport/wrong boot/revoked authority stop recovery\n";
+ std::cout<<"PASS actual synchronization recovery: scripted and paired fork/socket endpoints recover bind failure/rejection/timeout/new-begin on same TLS/boots with fresh logical links and fresh context withheld; members bind before acknowledging; old-round ACK cannot satisfy new barrier; revised barrier preserves ordinary exact-revision fences; fatal transport/revoked authority stop recovery\n";
 }
 '''
 
@@ -412,7 +355,7 @@ def main():
     prefix = prefix.replace('Error remember_hostname(model::OctopusId,const std::string&,std::unique_lock<std::mutex>&){return Error::none;}\n', '')
     prefix = prefix.replace('unsigned pdMS_TO_TICKS(unsigned ms){return ms/10;}\nvoid vTaskDelay(unsigned ticks){clock_ms+=ticks*10;}\n', '')
     actual = ''.join(function(source, name) for name in (
-        'Envelope outgoing(', 'bool same_manifest(', 'bool synchronize(', 'bool exchange_hostname(Active& active,const std::string& expected,LinkTrace* diagnostic=nullptr) {',
+        'Envelope outgoing(', 'bool bind_configuration(', 'bool apply_configuration_advance(', 'bool advance_configuration(', 'bool finish_synchronization(', 'bool exchange_hostname(Active& active,const std::string& expected,LinkTrace* diagnostic=nullptr) {',
         'bool synchronization_current(', 'bool synchronization_recoverable(',
         'bool synchronization_barrier(', 'bool fence_synchronization_scope(', 'bool restart_synchronization_scope(', 'bool synchronize_connection(', 'bool recover_operational_frame(', 'bool application_failure_recoverable(', 'void runtime_fence_owned_link('))
     actual = function(source, 'void request_session_restart(') + source[source.index('struct LinkTraceSnapshot {'):source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry(')] + actual
@@ -422,7 +365,7 @@ def main():
         cpp, binary = temp / 'test.cpp', temp / 'test'
         cpp.write_text(timing_support() + prefix + EXTRA + 'namespace amity::consortium {\n' + actual + '\n}\n' + SUPPORT + SUITE)
         sources = [ROOT / 'components/consortium' / name for name in
-                   ('json.cpp', 'wire.cpp', 'owned_intent.cpp', 'session.cpp', 'settings.cpp', 'update.cpp', 'transfer.cpp')]
+                   ('json.cpp', 'wire.cpp', 'owned_intent.cpp', 'session.cpp', 'settings.cpp', 'update.cpp')]
         sources.append(ROOT / 'components/amity_system/model.cpp')
         subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) +
                        ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-pthread', '-g', '-fsanitize=address,undefined',

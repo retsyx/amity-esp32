@@ -171,7 +171,7 @@ def main():
         cpp, binary = temp/'test.cpp', temp/'test'
         cpp.write_text(PREFIX+'namespace amity::consortium {\n'+actual+'\n}\n'+SUITE)
         sources = [ROOT/'components/consortium'/name for name in
-                   ('json.cpp','wire.cpp','session.cpp','owned_intent.cpp','settings.cpp','update.cpp','transfer.cpp')]
+                   ('json.cpp','wire.cpp','session.cpp','owned_intent.cpp','settings.cpp','update.cpp')]
         sources.append(ROOT/'components/amity_system/model.cpp')
         subprocess.run(shlex.split(os.environ.get('CXX','c++'))+
                        ['-std=c++17','-Wall','-Wextra','-Werror','-g','-fsanitize=address,undefined','-I'+str(temp)]+

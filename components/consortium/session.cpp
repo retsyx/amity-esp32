@@ -55,7 +55,7 @@ Error Session::common(const Envelope &e,uint64_t received,uint64_t now,bool stal
 bool Session::permitted(Kind kind,bool discarding)const {
     if(kind==Kind::synchronization)return active_&&role_!=PeerRole::provisional_candidate&&
         (state_==ConnectionState::ready||state_==ConnectionState::synchronizing);
-    if(!discarding&&state_==ConnectionState::synchronizing)return role_!=PeerRole::provisional_candidate&&(kind==Kind::device_status||kind==Kind::snapshot_request||kind==Kind::snapshot_chunk);
+    if(!discarding&&state_==ConnectionState::synchronizing)return role_!=PeerRole::provisional_candidate&&kind==Kind::device_status;
     if(!discarding&&state_==ConnectionState::restricted){
         if(management_){if(!active_||role_==PeerRole::provisional_candidate)return false;if(is_log_kind(kind))return role_==PeerRole::coordinator?kind==Kind::log_request:kind==Kind::log_result;if(is_update_kind(kind))return role_==PeerRole::coordinator?kind!=Kind::update_result:kind==Kind::update_result;return role_==PeerRole::coordinator?kind==Kind::membership_event:kind==Kind::membership_result;}
         return role_==PeerRole::provisional_candidate?kind==Kind::enrollment_control:(kind==Kind::membership_event||kind==Kind::membership_result);
@@ -63,7 +63,6 @@ bool Session::permitted(Kind kind,bool discarding)const {
     if(!active_)return false;
     if(kind==Kind::device_status)return true;
     if(is_log_kind(kind))return role_==PeerRole::coordinator?kind==Kind::log_request:role_==PeerRole::actuator&&kind==Kind::log_result;
-    if(kind==Kind::snapshot_request||kind==Kind::snapshot_chunk)return role_!=PeerRole::provisional_candidate;
     if(is_settings_kind(kind))return role_==PeerRole::coordinator?kind!=Kind::settings_result:role_==PeerRole::actuator&&kind==Kind::settings_result;
     if(is_update_kind(kind))return role_==PeerRole::coordinator?kind!=Kind::update_result:role_==PeerRole::actuator&&kind==Kind::update_result;
     if(role_==PeerRole::coordinator)return kind==Kind::scoped_intent||kind==Kind::membership_event;
@@ -77,10 +76,12 @@ Error Session::admit(const Envelope& e,uint64_t received,uint64_t now){
 Error Session::typed(const Envelope& e)const{
     if(e.kind==Kind::synchronization){
         if(!valid_envelope_payload(e.kind,e.payload))return Error::invalid_message;
-        const bool begin=e.payload.get("phase")->string=="begin";
-        if(begin!=(role_==PeerRole::coordinator))return Error::unauthorized_role;
+        // The coordinator starts rounds and advances the configuration; the member answers.
+        const auto& phase=e.payload.get("phase")->string;
+        const bool begin=phase=="begin",advance=phase=="advance";
+        if((begin||advance)!=(role_==PeerRole::coordinator))return Error::unauthorized_role;
         uint64_t target=0;decimal(e.payload.get("config_revision"),target);
-        if(begin&&target<scope_.config_revision)return Error::stale_config;
+        if((begin&&target<scope_.config_revision)||(advance&&target<=scope_.config_revision))return Error::stale_config;
     }
     if((e.kind==Kind::membership_event||e.kind==Kind::membership_result)&&e.ttl_ms>2000)return Error::unsupported_kind;
     // Payloads were validated when parsed; only scope-dependent rules remain.

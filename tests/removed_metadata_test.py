@@ -83,7 +83,7 @@ def main():
         cpp.write_text(PREFIX + actual + '\n}\n' + SUITE)
         sources = [ROOT / 'components/consortium' / name for name in
                    ('json.cpp', 'wire.cpp', 'session.cpp', 'owned_intent.cpp',
-                    'settings.cpp', 'update.cpp', 'transfer.cpp')]
+                    'settings.cpp', 'update.cpp')]
         sources.append(ROOT / 'components/amity_system/model.cpp')
         subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) +
                        ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined',

@@ -65,7 +65,7 @@ def main():
 };
 struct Active{ProjectionSession session;''')
         cpp.write_text('#include "hostname_registry.hpp"\n'+prefix+suite)
-        sources=[ROOT/'components/consortium'/name for name in ('json.cpp','wire.cpp','session.cpp','owned_intent.cpp','settings.cpp','update.cpp','transfer.cpp')]
+        sources=[ROOT/'components/consortium'/name for name in ('json.cpp','wire.cpp','session.cpp','owned_intent.cpp','settings.cpp','update.cpp')]
         sources.append(ROOT/'components/amity_system/model.cpp')
         subprocess.run(shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-Wall','-Wextra','-Werror','-g','-fsanitize=address,undefined','-I'+str(directory)]+['-I'+str(ROOT/path) for path in ('components/consortium','components/consortium/include','components/amity_system/include')]+[str(cpp),*map(str,sources),'-o',str(binary)],check=True)
         subprocess.run([str(binary)],check=True)

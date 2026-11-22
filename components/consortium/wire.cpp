@@ -1,7 +1,6 @@
 // Copyright 2026. SPDX-License-Identifier: GPL-3.0-or-later
 #include "amity/consortium/wire.hpp"
 #include "amity/consortium/owned_intent.hpp"
-#include "amity/consortium/transfer.hpp"
 #include "amity/consortium/update.hpp"
 #include "amity/consortium/hostname.hpp"
 #include "amity/consortium/settings.hpp"
@@ -40,11 +39,6 @@ bool payload(Kind kind,const Json &v) {
     case Kind::enrollment_control:return enrollment(v);
     case Kind::membership_event:return membership(v)&&!v.get("result");
     case Kind::membership_result:return membership(v)&&v.get("result");
-    case Kind::snapshot_request:{SnapshotManifest manifest;std::string phase;uint32_t next=0;return parse_snapshot_manifest(v,manifest,phase,next)==Error::none;}
-    case Kind::snapshot_chunk:{
-        if(!closed(v,{"transfer_id","index","total_length","payload_hash","data"})||!generic_id(v.get("transfer_id"))||!uint_field(v,"index",0,15)||!uint_field(v,"total_length",1,32768)||!hex(v.get("payload_hash"),64))return false;
-        const auto *data=v.get("data");return data&&data->type==Json::Type::string&&!data->string.empty()&&data->string.size()<=4096&&data->string.size()%2==0&&hex(data,data->string.size());
-    }
     case Kind::update_begin:case Kind::update_chunk:case Kind::update_install:case Kind::update_status:case Kind::update_abort:case Kind::update_result:return valid_update(kind,v);
     }
     return false;
@@ -63,12 +57,12 @@ std::optional<WifiSignalReport> parse_wifi_signal(const Json& device_status){
 Error parse_synchronization(const Json& value,model::MessageId& round,std::string& phase,uint64_t& revision){
     model::MessageId parsed_round;std::string parsed_phase;uint64_t parsed_revision=0;
     if(!closed(value,{"round_id","phase","config_revision"})||!id(value.get("round_id"),parsed_round)||
-       !text_is(value.get("phase"),{"begin","ack","reject"})||!json_string(value.get("phase"),parsed_phase,1,6)||
+       !text_is(value.get("phase"),{"begin","ack","reject","advance"})||!json_string(value.get("phase"),parsed_phase,1,7)||
        !decimal(value.get("config_revision"),parsed_revision)||!parsed_revision)return Error::invalid_message;
     round=parsed_round;phase=std::move(parsed_phase);revision=parsed_revision;return Error::none;
 }
 std::string synchronization_json(model::MessageId round,std::string_view phase,uint64_t revision){
-    if(!round||!revision||(phase!="begin"&&phase!="ack"&&phase!="reject"))return {};
+    if(!round||!revision||(phase!="begin"&&phase!="ack"&&phase!="reject"&&phase!="advance"))return {};
     return "{\"round_id\":\""+round.str()+"\",\"phase\":\""+std::string(phase)+"\",\"config_revision\":\""+std::to_string(revision)+"\"}";
 }
 const char *error_name(Error v) {
@@ -81,7 +75,7 @@ const char *error_name(Error v) {
 const char *kind_name(Kind k) {switch(k) {
 #define K(a) case Kind::a:return #a
 K(enrollment_control);K(membership_event);K(membership_result);
-K(snapshot_request);K(snapshot_chunk);K(update_begin);K(update_chunk);K(update_install);K(update_status);K(update_abort);K(update_result);K(device_status);K(settings_read);K(settings_write);K(settings_result);K(scoped_intent);K(scoped_result);K(synchronization);K(log_request);K(log_result);
+K(update_begin);K(update_chunk);K(update_install);K(update_status);K(update_abort);K(update_result);K(device_status);K(settings_read);K(settings_write);K(settings_result);K(scoped_intent);K(scoped_result);K(synchronization);K(log_request);K(log_result);
 #undef K
 }return "";}
 bool decimal(const Json *v,uint64_t &out) {if(!v||v->type!=Json::Type::string)return false;const auto parsed=model::parse_uint64(v->string);if(!parsed)return false;out=*parsed;return true;}
@@ -91,7 +85,7 @@ Error parse_envelope(std::string_view body,Envelope &out,JsonError *detail) {
     if(!closed(v,{"config_revision","kind","ttl_ms","payload"}))return Error::invalid_message;
     uint64_t ttl=0;Envelope x;
     if(!decimal(v.get("config_revision"),x.config_revision)||!json_uint(v.get("ttl_ms"),ttl,1,10000))return Error::invalid_message;
-    bool recognized=false;for(auto kind:{Kind::enrollment_control,Kind::membership_event,Kind::membership_result,Kind::snapshot_request,Kind::snapshot_chunk,Kind::update_begin,Kind::update_chunk,Kind::update_install,Kind::update_status,Kind::update_abort,Kind::update_result,Kind::device_status,Kind::settings_read,Kind::settings_write,Kind::settings_result,Kind::scoped_intent,Kind::scoped_result,Kind::synchronization,Kind::log_request,Kind::log_result})if(text_is(v.get("kind"),{kind_name(kind)})){x.kind=kind;recognized=true;break;}
+    bool recognized=false;for(auto kind:{Kind::enrollment_control,Kind::membership_event,Kind::membership_result,Kind::update_begin,Kind::update_chunk,Kind::update_install,Kind::update_status,Kind::update_abort,Kind::update_result,Kind::device_status,Kind::settings_read,Kind::settings_write,Kind::settings_result,Kind::scoped_intent,Kind::scoped_result,Kind::synchronization,Kind::log_request,Kind::log_result})if(text_is(v.get("kind"),{kind_name(kind)})){x.kind=kind;recognized=true;break;}
     if(!recognized)return Error::unsupported_kind;
     if((x.kind==Kind::membership_event||x.kind==Kind::membership_result)&&ttl>2000)return Error::invalid_message;
     if(x.kind==Kind::scoped_intent){model::OwnedIntent intent;if(parse_owned_intent(*v.get("payload"),intent)!=Error::none)return Error::invalid_message;x.intent=std::move(intent);}

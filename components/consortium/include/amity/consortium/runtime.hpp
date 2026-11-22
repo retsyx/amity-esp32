@@ -85,8 +85,9 @@ struct RuntimeSnapshotRetry {
     uint8_t adapter=0;
 };
 struct RuntimeControlHooks {
-    std::function<std::string(model::OctopusId)> snapshot;
-    std::function<Error(model::OctopusId,const Json &)> synchronize;
+    // A member binds its controller's configuration revision. Its device
+    // reports then travel as ordinary results.
+    std::function<Error(model::OctopusId controller,uint64_t config_revision)> synchronize;
     // The authenticated logical session and the exact receiver-local deadline.
     std::function<Error(const LinkScope&,const Envelope &,uint64_t)> control;
     std::function<bool(model::OctopusId,model::BootId,model::LinkId)> disconnected;
@@ -95,7 +96,6 @@ struct RuntimeControlHooks {
     std::function<bool(model::OctopusId,uint64_t,std::function<void(model::OwnedContextResult)>)> ready = {};
     // Current locally executing configuration; no owner-task or network wait.
     std::function<uint64_t()> configuration_revision = {};
-    std::function<std::string(model::OctopusId,uint64_t)> configuration_snapshot = {};
     std::function<void(const RuntimeSnapshotRetry&)> snapshot_retry = {};
     // Fence only the old logical execution session while retaining its healthy
     // TLS transport and independent owner observations.

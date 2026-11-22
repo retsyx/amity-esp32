@@ -183,7 +183,7 @@ int main(){return removal_fixture::run();}
                    'components/config_store/configuration_journal.cpp', 'components/config_store/configuration_replacement.cpp',
                    'components/consortium/json.cpp', 'components/consortium/wire.cpp',
                    'components/consortium/owned_intent.cpp', 'components/consortium/settings.cpp',
-                   'components/consortium/update.cpp', 'components/consortium/transfer.cpp']
+                   'components/consortium/update.cpp']
         openssl = ['-I/opt/homebrew/opt/openssl@3/include', '-L/opt/homebrew/opt/openssl@3/lib'] if Path('/opt/homebrew/opt/openssl@3').exists() else []
         subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) + ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined', '-I'+str(json_dir)] + openssl + ['-I'+str(ROOT/path) for path in includes] + [str(temp/'test.cpp')] + [str(ROOT/path) for path in sources] + [str(temp/'json.o'), '-lcrypto', '-o', str(temp/'test')], check=True)
         subprocess.run([str(temp/'test')], check=True)

@@ -26,8 +26,7 @@ public:
     // supplied fresh logical link fences old work without changing TLS or
     // identity. No positive work until synchronized again.
     Error begin_synchronization(uint64_t target_revision,model::LinkId new_link={});
-    // Called by the owning link task after an authenticated in-place snapshot.
-    // Preserve peer/boot/link identity.
+    // A live configuration change on the ready session. Preserve peer/boot/link identity.
     Error advance_configuration(uint64_t revision);
     void disconnect();
     void restrict_lifecycle();

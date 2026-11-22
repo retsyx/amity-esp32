@@ -57,7 +57,6 @@ amity::SystemControl control(bool member=false){
     if(member){role.coordinator=false;role.member=true;role.authority_ready=false;}
     return result;
 }
-c::Json string_document(std::string text){c::Json value;value.type=c::Json::Type::string;value.string=std::move(text);return value;}
 c::Json json(std::string_view text){c::Json value;c::JsonError error;if(!c::parse_json(text,value,error)){std::cerr<<"Invalid generated fixture JSON ("<<text.size()<<" bytes): "<<text<<"\n";assert(false);}return value;}
 s::OwnedAdapterSnapshot report(s::OctopusId owner,s::BootId boot,uint8_t adapter=0){
     s::OwnedAdapterSnapshot value;value.owner=owner;value.boot=boot;value.adapter=adapter;
@@ -149,32 +148,22 @@ void configuration_publication_is_driven_by_application(){
 }
 void startup_and_minimal_handshake(){
     reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);
-    assert(hooks.snapshot&&hooks.synchronize&&hooks.control&&hooks.disconnected&&hooks.ready&&hooks.restart_session&&main.sender&&main.observer&&main.authorizer);
+    assert(hooks.synchronize&&hooks.control&&hooks.disconnected&&hooks.ready&&hooks.restart_session&&main.sender&&main.observer&&main.authorizer);
     assert(amity::start_configuration_synchronization(main)==ESP_OK&&task_creations==1);
     auto other=control();assert(amity::start_configuration_synchronization(other)==ESP_ERR_INVALID_STATE);
-    const auto document=json(hooks.snapshot(id<s::OctopusId>(9)));
-    assert(c::closed(document,{"controller","config_revision"}));
-    assert(document.get("controller")->string==main.octopus_id().str()&&document.get("config_revision")->string=="1");
-    assert(!document.get("activities")&&!document.get("components")&&!document.get("configuration"));
+    assert(hooks.synchronize(id<s::OctopusId>(9),1)==c::Error::unauthorized_role); // The main binds no controller.
     assert(memory.writes==0&&main.configure_calls==0&&fixture::sent.empty());
     const auto ready_owner=id<s::OctopusId>(9);assert(hooks.ready(ready_owner,1,{})&&main.refreshed_context==std::vector<s::OctopusId>{ready_owner});
     main.refresh_result=false;assert(!hooks.ready(ready_owner,1,{})&&main.refreshed_context.size()==2&&memory.writes==0&&fixture::sent.empty());
     reset();auto member=control(true);const auto original=*member.configuration.controller_octopus_id;
     assert(amity::start_configuration_synchronization(member)==ESP_OK);
     const auto saved=serialize_configuration(member.configuration);
-    auto accepted=string_document("{\"controller\":\""+original.str()+"\",\"config_revision\":\"37\"}");
-    assert(hooks.synchronize(original,accepted)==c::Error::none&&member.bound_controller==original&&member.bound_revision==37);
+    assert(hooks.synchronize(original,37)==c::Error::none&&member.bound_controller==original&&member.bound_revision==37);
     assert(memory.writes==0&&member.configure_calls==0&&serialize_configuration(member.configuration)==saved);
-    assert(hooks.synchronize(id<s::OctopusId>(99),accepted)==c::Error::unauthorized_role);
-    auto zero=string_document("{\"controller\":\""+original.str()+"\",\"config_revision\":\"0\"}");
-    assert(hooks.synchronize(original,zero)==c::Error::unauthorized_role);
-    auto forged=string_document("{\"controller\":\""+id<s::OctopusId>(99).str()+"\",\"config_revision\":\"1\"}");
-    assert(hooks.synchronize(id<s::OctopusId>(99),forged)!=c::Error::none&&member.bound_controller==original);
-    auto replica=accepted;replica.string.pop_back();replica.string+=",\"activities\":[]}";
-    assert(hooks.synchronize(original,replica)!=c::Error::none);
-    assert(hooks.synchronize(original,json("{}"))==c::Error::invalid_message);
+    assert(hooks.synchronize(original,0)==c::Error::unauthorized_role);
+    assert(hooks.synchronize(id<s::OctopusId>(99),1)!=c::Error::none&&member.bound_controller==original);
     reset();task_ok=false;auto unavailable=control();assert(amity::start_configuration_synchronization(unavailable)==ESP_ERR_NO_MEM&&amity::state.control==nullptr);
-    assert(!hooks.snapshot&&!hooks.synchronize&&!hooks.control&&!hooks.disconnected&&!hooks.ready&&!hooks.restart_session);
+    assert(!hooks.synchronize&&!hooks.control&&!hooks.disconnected&&!hooks.ready&&!hooks.restart_session);
     assert(!unavailable.sender&&!unavailable.observer&&!unavailable.authorizer);
     // Failed initialization leaves no callback into the unstarted task, and a
     // later legitimate start can install a fresh set of callbacks.
@@ -261,7 +250,7 @@ void activity_selection_delivery_is_independent(){
 void reports_and_exact_disconnect(){
     reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);
     peers={remote(9,19,2,0b11)};const auto owner=peers[0].id;const auto oldboot=peers[0].boot_id;auto first=report(owner,oldboot);
-    assert(hooks.synchronize(owner,string_document("{\"adapters\":["+c::owned_snapshot_json(first)+"]}"))==c::Error::none&&main.updates.size()==1);
+    assert(deliver(owner,report_envelope(first),100,id<s::LinkId>(1))==c::Error::none&&main.updates.size()==1);
     assert(main.updates[0].discovery_generation==3);
     auto available=amity::discovered_equipment();assert(available.size()==1&&available[0].endpoint.port.octopus_id==owner&&available[0].endpoint.logical_address==4&&available[0].owner_boot_id==oldboot);
     const auto count=main.updates.size();auto bad=first;bad.owner=id<s::OctopusId>(98);auto value=report_envelope(bad);
@@ -337,13 +326,11 @@ void full_roster_adapter_reports_keep_exact_owner_fences(){
     std::vector<s::OwnedAdapterSnapshot> expected;
     for(unsigned index=0;index<c::maximum_roster_peers;++index){
         peers.push_back(remote(9+index,19+index,amity::max_tentacles,0b1111));
-        const auto& owner=peers.back();std::string adapters="{\"adapters\":[";
+        const auto& owner=peers.back();
         for(uint8_t adapter=0;adapter<amity::max_tentacles;++adapter){
             auto value=report(owner.id,owner.boot_id,adapter);value.discovery_generation=100+index*amity::max_tentacles+adapter;
-            if(adapter)adapters+=',';
-            adapters+=c::owned_snapshot_json(value);expected.push_back(value);
+            assert(deliver(owner.id,report_envelope(value),100,id<s::LinkId>(1))==c::Error::none);expected.push_back(value);
         }
-        assert(hooks.synchronize(owner.id,string_document(adapters+"]}"))==c::Error::none);
     }
     const auto count=c::maximum_roster_peers*amity::max_tentacles;
     const auto retained=[&]{
@@ -399,7 +386,7 @@ void logical_session_restart_preserves_reports(){
     reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);
     peers={remote(9,19,2,0b11)};const auto owner=peers[0].id,other=id<s::OctopusId>(10);const auto boot=peers[0].boot_id;
     auto first=report(owner,boot);auto second=first;second.adapter=1;
-    assert(hooks.synchronize(owner,string_document("{\"adapters\":["+c::owned_snapshot_json(first)+","+c::owned_snapshot_json(second)+"]}"))==c::Error::none);
+    assert(deliver(owner,report_envelope(first),100,id<s::LinkId>(1))==c::Error::none&&deliver(owner,report_envelope(second),100,id<s::LinkId>(1))==c::Error::none);
     const auto oldlink=id<s::LinkId>(81);const auto updates=main.updates.size(),reports=amity::state.reports.size();
     const auto saved_first=c::owned_snapshot_json(amity::state.reports.front());
     const auto observations=amity::discovered_equipment();assert(observations.size()==2);
@@ -421,11 +408,14 @@ void logical_session_restart_preserves_reports(){
 }
 void report_coalescing_and_no_intent_backlog(){
     reset();auto member=control(true);assert(amity::start_configuration_synchronization(member)==ESP_OK);
-    auto local=report(member.identity,member.boot);member.snapshots={local};const auto snapshot=json(hooks.snapshot({}));assert(c::closed(snapshot,{"adapters"})&&snapshot.get("adapters")->array.size()==1);
+    auto local=report(member.identity,member.boot);member.snapshots={local};
     const auto original=*member.configuration.controller_octopus_id;peers={remote(2,12,1,1)};assert(peers[0].id==original);
+    // Binding the controller republishes every adapter as an ordinary result.
+    assert(hooks.synchronize(original,23)==c::Error::none&&amity::state.pending_reports.size()==1);
+    amity::flush_reports();assert(packets.size()==1&&amity::state.pending_reports.empty());
     member.observer(local);local.discovery_generation=4;member.snapshots={local};member.observer(local);assert(amity::state.pending_reports.size()==1);
-    report_result=ESP_FAIL;amity::flush_reports();assert(packets.size()==1&&amity::state.pending_reports.empty()&&amity::state.retry_reports[0]&&sent.empty());
-    report_result=ESP_OK;amity::flush_reports();assert(packets.size()==2&&amity::state.pending_reports.empty());
+    report_result=ESP_FAIL;amity::flush_reports();assert(packets.size()==2&&amity::state.pending_reports.empty()&&amity::state.retry_reports[0]&&sent.empty());
+    report_result=ESP_OK;amity::flush_reports();assert(packets.size()==3&&amity::state.pending_reports.empty());
     assert(packets.back().kind==c::Kind::scoped_result&&packets.back().owner==original);
     auto body=json(packets.back().payload);s::OwnedAdapterSnapshot actual;assert(c::parse_owned_snapshot(*body.get("snapshot"),actual)&&actual.discovery_generation==4);
     reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);auto intent=down(main);intent.target.port.octopus_id=id<s::OctopusId>(9);
@@ -437,7 +427,7 @@ void report_coalescing_and_no_intent_backlog(){
 void dropped_snapshot_recaptures_latest_without_regression(){
     reset();auto member=control(true);assert(amity::start_configuration_synchronization(member)==ESP_OK);
     const auto controller=*member.configuration.controller_octopus_id;peers={remote(2,12,1,1)};current_result_link=id<s::LinkId>(71);
-    assert(hooks.synchronize(controller,string_document("{\"controller\":\""+controller.str()+"\",\"config_revision\":\"23\"}"))==c::Error::none);
+    assert(hooks.synchronize(controller,23)==c::Error::none);
     c::RuntimeSnapshotRetry retry{controller,member.boot,peers[0].boot_id,current_result_link,23,0};
     auto latest=report(member.identity,member.boot);
     member.snapshots={latest};member.observer(latest);amity::flush_reports();assert(packets.size()==1&&amity::state.pending_reports.empty());

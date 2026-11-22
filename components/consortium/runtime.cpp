@@ -11,7 +11,6 @@
 #include "wifi_signal.hpp"
 #include "amity/consortium/bootstrap.hpp"
 #include "amity/consortium/enrollment.hpp"
-#include "amity/consortium/transfer.hpp"
 #include "amity/consortium/update.hpp"
 #include "amity/consortium/owned_intent.hpp"
 #include "amity/consortium/settings.hpp"
@@ -202,7 +201,7 @@ bool current_peer_credential(const Active &link,const Group &current){
 bool send(Active &link,Kind kind,std::string_view payload,uint32_t ttl=1000){
     if(link.cancelled|| (link.lifecycle_only&&!lifecycle_kind(kind)) || (link.retiring&&kind!=Kind::membership_event&&kind!=Kind::membership_result))return false;
     if(link.management_ready&&!is_update_kind(kind)&&!is_log_kind(kind)&&!lifecycle_kind(kind))return false;
-    if(link.restart_requested&&kind!=Kind::synchronization&&kind!=Kind::snapshot_request&&kind!=Kind::snapshot_chunk&&kind!=Kind::device_status&&!lifecycle_kind(kind))return false;
+    if(link.restart_requested&&kind!=Kind::synchronization&&kind!=Kind::device_status&&!lifecycle_kind(kind))return false;
     // The TLS anchor snapshot may predate a roster mutation. Ordinary work must
     // still belong to the current allowlist immediately before it is sent.
     if(kind!=Kind::membership_event&&kind!=Kind::membership_result){
@@ -256,110 +255,42 @@ bool enroll_lan(Active &active,bool server){
     if(!server)runtime_close_enrollment();
     return timing.done(true);
 }
-bool same_manifest(const SnapshotManifest &a,const SnapshotManifest &b){
-    return a.transfer_id==b.transfer_id&&a.owner_octopus_id==b.owner_octopus_id&&a.owner_boot_id==b.owner_boot_id&&a.config_revision==b.config_revision&&a.total_length==b.total_length&&a.payload_hash==b.payload_hash&&a.document_kind==b.document_kind;
-}
-bool synchronize(Active &active,bool server,bool publish_ready=true,uint64_t revision=0,const Envelope* first=nullptr,LinkTrace* diagnostic=nullptr){
-    BoundedSetupTimings<5> timing("synchronize",now_ms);timing.peer=active.peer;timing.link=active.session.scope().link_id;timing.begin("total");
-    LinkTrace local;auto& trace=diagnostic?*diagnostic:local;trace.phase="synchronization";trace.has_kind=trace.has_queue=false;trace.error=Error::none;
+// A member binds its controller's configuration revision before it
+// acknowledges a barrier or applies an advance. Its device reports then
+// travel as ordinary results on the ready session.
+bool bind_configuration(Active& active,uint64_t revision,LinkTrace& trace){
+    BoundedSetupTimings<2> timing("synchronize",now_ms);timing.peer=active.peer;timing.link=active.session.scope().link_id;timing.begin("total");
+    trace.phase="configuration_apply";
     RuntimeControlHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=controls;}
-    if(!hooks.snapshot||!hooks.synchronize)return trace.fail("synchronization_hooks",Error::not_ready);
-    const auto scope=active.session.scope();
-    const auto target=revision?revision:scope.config_revision;
-    active.synchronization.revision=target;
-    const bool refresh=target!=scope.config_revision;
-    if(refresh&&target<scope.config_revision)return trace.fail("synchronization_revision",Error::stale_config);
-    if(refresh){std::lock_guard<std::mutex> guard(lock);if(active.cancelled||active.retiring){trace.reason=active.retiring?"retiring":"cancelled";return false;}active.refreshing=true;}
-    auto receive=[&](Envelope &envelope,uint32_t timeout=10000){
-        if(first){envelope=*first;first=nullptr;trace.kind=envelope.kind;trace.has_kind=true;return true;}
-        const auto until=now_ms()+timeout;
-        for(unsigned n=0;n<64&&now_ms()<until;++n){
-            const auto before=now_ms();if(before>=until)return trace.fail("synchronization_timeout");
-            std::string body;if(!active.tls->receive(body,static_cast<uint32_t>(until-before)))return trace.fail("synchronization_receive");
-            const auto parsed=parse_envelope(body,envelope);if(parsed!=Error::none)return trace.fail("synchronization_parse",parsed);
-            if(active.tls->received_bulk()!=is_update_kind(envelope.kind))return trace.fail("synchronization_frame_class",Error::invalid_message);
-            trace.kind=envelope.kind;trace.has_kind=true;
-            const auto now=now_ms();const auto result=active.session.admit(envelope,now,now);
-            if(result==Error::stale_config){const auto discarded=active.session.discard_stale(envelope,now,now);if(discarded==Error::none)continue;}
-            if(result!=Error::none&&envelope.kind!=Kind::synchronization){
-                const auto discarded=active.session.discard_synchronization_frame(envelope,now,now);
-                // A restarted session has already fenced every old lookup.
-                // No new lookup can be issued before it becomes ready.
-                if(discarded==Error::none)continue;
-            }
-            if(result!=Error::none)return trace.fail("synchronization_admission",result);
-            if(envelope.kind==Kind::synchronization){
-                SynchronizationRound round;std::string phase;
-                if(parse_synchronization(envelope.payload,round.id,phase,round.revision)!=Error::none)return trace.fail("synchronization_barrier_parse",Error::invalid_message);
-                if(!server&&phase=="begin"){
-                    active.pending_synchronization=round;
-                    return trace.fail("synchronization_restarted");
-                }
-                if(server&&phase=="reject"&&round.id==active.synchronization.id&&round.revision==target)return trace.fail("synchronization_peer_rejected");
-                continue; // An old round's reply cannot complete this transfer.
-            }
-            if(envelope.kind==Kind::snapshot_request||envelope.kind==Kind::snapshot_chunk)return true;
-            if(!refresh)return trace.fail("synchronization_interleaving"); // Only already-admitted old traffic can interleave a live refresh.
-
-        }
-        return trace.fail("synchronization_receive_bound");
-    };
-    auto send_slice=[&](){
-        trace.phase=server?"configuration_send":"owner_state_send";
-        const auto captured=timing.begin(server?"config_capture":"owner_capture");
-        std::string payload=server&&hooks.configuration_snapshot?hooks.configuration_snapshot(active.peer,target):hooks.snapshot(active.peer);timing.finish(captured,!payload.empty()&&payload.size()<=32768);if(payload.empty()||payload.size()>32768)return trace.fail("synchronization_payload");
-        const auto transfer_stage=timing.begin(server?"config_transfer":"owner_transfer");
-        SnapshotManifest manifest;manifest.transfer_id=random_id<model::MessageId>();manifest.owner_octopus_id=server?scope.peer_id:scope.local_id;manifest.owner_boot_id=server?scope.peer_boot_id:scope.local_boot_id;manifest.config_revision=target;manifest.total_length=payload.size();manifest.payload_hash=sha256(payload);manifest.document_kind=server?"configuration":"owner_state";
-        if(!send(active,Kind::snapshot_request,snapshot_manifest_json(manifest,"begin",0)))return trace.fail("synchronization_begin_send");
-        Envelope reply;SnapshotManifest ack;std::string phase;uint32_t next=0;
-        if(!receive(reply))return false;
-        if(reply.kind!=Kind::snapshot_request||parse_snapshot_manifest(reply.payload,ack,phase,next)!=Error::none||!same_manifest(ack,manifest)||phase!="ack"||next!=0)return trace.fail("synchronization_begin_ack");
-        for(uint32_t i=0;i<manifest.chunk_count();++i){
-            if(!send(active,Kind::snapshot_chunk,snapshot_chunk_json(manifest,i,payload)))return trace.fail("synchronization_chunk_send");
-            if(!receive(reply,i+1==manifest.chunk_count()?40000:10000))return false;
-            if(reply.kind!=Kind::snapshot_request||parse_snapshot_manifest(reply.payload,ack,phase,next)!=Error::none||!same_manifest(ack,manifest)||next!=i+1||phase!=(i+1==manifest.chunk_count()?"complete":"ack"))return trace.fail("synchronization_chunk_ack");
-        }
-        timing.finish(transfer_stage,true,manifest.chunk_count());return true;
-    };
-    auto receive_slice=[&](){
-        trace.phase=server?"owner_state_receive":"configuration_receive";
-        Envelope envelope;SnapshotManifest manifest;std::string phase;uint32_t next=0;
-        const auto received_stage=timing.begin(server?"owner_receive":"config_receive");
-        if(!receive(envelope))return false;
-        if(envelope.kind!=Kind::snapshot_request||parse_snapshot_manifest(envelope.payload,manifest,phase,next)!=Error::none||phase!="begin"||manifest.document_kind!=(server?"owner_state":"configuration"))return trace.fail("synchronization_begin_manifest");
-        SnapshotTransfer transfer([](std::string_view value){return sha256(value);});
-        const auto begun=transfer.begin(manifest,server?scope.peer_id:scope.local_id,server?scope.peer_boot_id:scope.local_boot_id,target,now_ms());if(begun!=Error::none)return trace.fail("synchronization_transfer_begin",begun);
-        if(!send(active,Kind::snapshot_request,snapshot_manifest_json(manifest,"ack",0)))return trace.fail("synchronization_begin_ack_send");
-        while(!transfer.complete()){
-            if(!receive(envelope))return false;
-            if(envelope.kind!=Kind::snapshot_chunk)return trace.fail("synchronization_chunk_kind");
-            const auto result=transfer.accept(envelope.payload,now_ms());if(result!=Error::none&&result!=Error::duplicate)return trace.fail("synchronization_transfer_chunk",result);
-            bool applied=true;
-            if(transfer.complete()){const auto apply=timing.begin(server?"owner_apply":"config_apply");Json document;document.type=Json::Type::string;document.string=transfer.payload();applied=hooks.synchronize(active.peer,document)==Error::none;timing.finish(apply,applied);}
-            if(!send(active,Kind::snapshot_request,snapshot_manifest_json(manifest,applied?(transfer.complete()?"complete":"ack"):"reject",transfer.next_index())))return trace.fail("synchronization_chunk_ack_send");
-            if(!applied)return trace.fail("synchronization_apply");
-        }
-        timing.finish(received_stage,true,manifest.chunk_count());return true;
-    };
-    auto advance=[&](){
-        if(!refresh)return true;
-        std::lock_guard<std::mutex> guard(lock);std::lock_guard<std::mutex> queue(active.mutex);
-        trace.phase="configuration_advance";
-        const auto advanced=active.session.advance_configuration(target);if(advanced!=Error::none)return trace.fail("synchronization_advance",advanced);
-        active.status.config_revision=target;
-        active.context_ready=false;active.context_requested=false;
-        if(!server)configuration=target;
-        return true;
-    };
-    // One bounded chunk in flight avoids filling both TCP send buffers while
-    // each endpoint waits for the other; coordinator sends its owner slice first.
-    if(server?(!send_slice()||!advance()||!receive_slice()):(!receive_slice()||!advance()||!send_slice()))return false;
-    if(!refresh){const auto synchronized=active.session.synchronized(scope.config_revision,true,true);if(synchronized!=Error::none)return trace.fail("synchronization_ready",synchronized);}
-    // A hostname update can cross the peer's configuration refresh and be
-    // discarded with old-scope observation traffic. Publish it again in the
-    // new scope without replacing the connection or execution session.
-    {std::lock_guard<std::mutex> guard(active.mutex);active.ready=publish_ready;active.status.ready=publish_ready;if(refresh)active.advertised_hostname.clear();}if(!server){std::lock_guard<std::mutex> persistence(persistence_lock);std::unique_lock<std::mutex> guard(lock);configuration=target;if(group.role==Group::member&&!active.endpoint_hint.empty()&&group.authority_host!=active.endpoint_hint){auto next=group;next.authority_host=active.endpoint_hint;if(without_runtime_lock(guard,[&]{return save_group(next);})==ESP_OK)group=std::move(next);}}
+    if(!hooks.synchronize)return timing.done(trace.fail("synchronization_hooks",Error::not_ready));
+    const auto apply=timing.begin("config_apply");const auto applied=hooks.synchronize(active.peer,revision);timing.finish(apply,applied==Error::none);
+    if(applied!=Error::none)return timing.done(trace.fail("synchronization_apply",applied));
     return timing.done(true);
+}
+// Live configuration changes keep the logical session. Frames carry the new
+// revision after this point; older in-flight frames are discarded as stale.
+bool apply_configuration_advance(Active& active,bool server,uint64_t target,LinkTrace& trace){
+    trace.phase="configuration_advance";
+    std::lock_guard<std::mutex> guard(lock);std::lock_guard<std::mutex> queue(active.mutex);
+    const auto advanced=active.session.advance_configuration(target);if(advanced!=Error::none)return trace.fail("synchronization_advance",advanced);
+    active.status.config_revision=target;active.context_ready=false;active.context_requested=false;active.refreshing=true;
+    // A hostname update can cross the change and be discarded as stale.
+    // Publish it again in the new scope.
+    active.advertised_hostname.clear();
+    if(!server)configuration=target;
+    return true;
+}
+bool advance_configuration(Active& active,uint64_t target,LinkTrace& trace){
+    trace.phase="configuration_advance";
+    if(!send(active,Kind::synchronization,synchronization_json(random_id<model::MessageId>(),"advance",target),10000))return trace.fail("synchronization_advance_send");
+    return apply_configuration_advance(active,true,target,trace);
+}
+bool finish_synchronization(Active& active,bool server,uint64_t revision,LinkTrace& trace){
+    trace.phase="synchronization";
+    const auto synchronized=active.session.synchronized(revision,true,true);if(synchronized!=Error::none)return trace.fail("synchronization_ready",synchronized);
+    {std::lock_guard<std::mutex> guard(active.mutex);active.ready=true;active.status.ready=true;}
+    if(!server){std::lock_guard<std::mutex> persistence(persistence_lock);std::unique_lock<std::mutex> guard(lock);configuration=revision;if(group.role==Group::member&&!active.endpoint_hint.empty()&&group.authority_host!=active.endpoint_hint){auto next=group;next.authority_host=active.endpoint_hint;if(without_runtime_lock(guard,[&]{return save_group(next);})==ESP_OK)group=std::move(next);}}
+    return true;
 }
 bool synchronization_current(const Active& active){
     std::lock_guard<std::mutex> guard(lock);
@@ -489,11 +420,13 @@ bool synchronize_connection(Active& active,bool server,bool publish_ready=true,u
             continue;
         }
         if(!restart_synchronization_scope(active,round,trace)){if(!synchronization_recoverable(active,trace))return false;continue;}
-        if(!server&&!send(active,Kind::synchronization,synchronization_json(round.id,"ack",round.revision),10000)){
+        // The member binds the round's configuration revision before it
+        // acknowledges, so the acknowledgement means the member is current.
+        const bool bound=server||bind_configuration(active,round.revision,trace);
+        if(bound&&!server&&!send(active,Kind::synchronization,synchronization_json(round.id,"ack",round.revision),10000)){
             trace.fail("synchronization_barrier_ack_send");if(!synchronization_recoverable(active,trace))return false;continue;
         }
-        const bool named=exchange_hostname(active,active.expected_hostname,&trace);
-        if(named&&synchronize(active,server,true,round.revision,nullptr,&trace)){
+        if(bound&&exchange_hostname(active,active.expected_hostname,&trace)&&finish_synchronization(active,server,round.revision,trace)){
             {std::lock_guard<std::mutex> guard(active.mutex);active.status.config_revision=round.revision;active.status.management_ready=false;active.execution_fenced=false;active.restart_requested=false;}
             return true;
         }
@@ -527,12 +460,12 @@ bool application_failure_recoverable(const Active& active,const LinkTrace& trace
     // These failures concern authenticated protocol/security admission, not
     // lost ordinary application work. Keep their existing terminal fences.
     for(const auto* terminal:{"socket_select","envelope_parse","synchronization_control_admit","synchronization_control_parse","stale_frame",
-        "live_configuration_role","live_configuration_admit","live_configuration_manifest","membership_revoked","retirement","retirement_admit",
+        "membership_revoked","retirement","retirement_admit",
         "update_admit","update_authority","control_admit","settings_admit","settings_boot","settings_authority"})
         if(!strcmp(trace.reason,terminal))return false;
     if(active.restart_requested)return true;
     for(const auto* recoverable:{"application_restart_requested","causal_expired","cleanup_queue_full","causal_result_fence","context_recapture_failed",
-        "initial_context","control_dispatch","frame_receive_expired","queued_send","queued_invalid","settings_dispatch","update_not_ready","update_stream","live_configuration_not_ready"})
+        "initial_context","control_dispatch","frame_receive_expired","queued_send","queued_invalid","settings_dispatch","update_not_ready","update_stream"})
         if(!strcmp(trace.reason,recoverable))return true;
     return false;
 }
@@ -948,7 +881,7 @@ void active_loop_work(void *arg){
                 bool drain=false;{std::lock_guard<std::mutex> guard(active->mutex);
                     while(!active->queue.empty()&&active->queue.front().revision!=active->session.scope().config_revision&&active->queue.front().revision!=target)active->queue.pop_front();
                     drain=!active->queue.empty()&&active->queue.front().revision==active->session.scope().config_revision;}
-                if(!drain&&!synchronize(*active,true,true,target,nullptr,&trace)){
+                if(!drain&&!advance_configuration(*active,target,trace)){
                     if(!synchronization_recoverable(*active,trace)||!synchronize_connection(*active,true,true,target,&trace))break;
                 }
             }
@@ -1016,6 +949,10 @@ void active_loop_work(void *arg){
             if(!server&&phase=="begin"){
                 active->pending_synchronization=round;
                 if(!synchronize_connection(*active,false,active->execution_supported,round.revision,&trace))break;
+            }else if(!server&&phase=="advance"){
+                if(!bind_configuration(*active,round.revision,trace)||!apply_configuration_advance(*active,false,round.revision,trace)){
+                    if(!recover_operational_frame(*active,false,trace))break;
+                }
             }else if(server&&phase=="reject"&&round.id==active->synchronization.id&&round.revision==active->synchronization.revision){
                 if(!synchronize_connection(*active,true,active->execution_supported,round.revision,&trace))break;
             }
@@ -1025,17 +962,6 @@ void active_loop_work(void *arg){
             const auto discarded=active->session.discard_stale(envelope,received,received);
             if(discarded==Error::none)continue;
             trace.fail("stale_frame",discarded);break;
-        }
-        if(envelope.kind==Kind::snapshot_request||envelope.kind==Kind::snapshot_chunk){
-            if(server){trace.fail("live_configuration_role",Error::unauthorized_role);break;}
-            if(!active->ready){trace.fail("live_configuration_not_ready");break;}
-            const auto admitted=active->session.admit(envelope,received,received);if(admitted!=Error::none){trace.fail("live_configuration_admit",admitted);break;}
-            SnapshotManifest manifest;std::string phase;uint32_t next=0;
-            if(envelope.kind!=Kind::snapshot_request||parse_snapshot_manifest(envelope.payload,manifest,phase,next)!=Error::none||phase!="begin"||next||manifest.document_kind!="configuration"||manifest.config_revision<=active->session.scope().config_revision){trace.fail("live_configuration_manifest");break;}
-            if(!synchronize(*active,false,true,manifest.config_revision,&envelope,&trace)){
-                if(!recover_operational_frame(*active,false,trace))break;
-            }
-            continue;
         }
         if(server){bool enrolled=false;{std::lock_guard<std::mutex> guard(lock);for(const auto &peer:group.peers)if(peer.id==active->peer&&peer.active)enrolled=true;}if(!enrolled){if(active->retiring){retirement_attempted=true;finish_retirement(*active);trace.reason="retired";}else trace.fail("membership_revoked");break;}}
         if(!server&&envelope.kind==Kind::membership_event){const auto admitted=active->session.admit(envelope,received,received);if(admitted!=Error::none){trace.fail("retirement_admit",admitted);break;}trace.phase="retirement";if(!retire_member(*active,envelope))trace.fail("retirement");else trace.reason="retired";break;}

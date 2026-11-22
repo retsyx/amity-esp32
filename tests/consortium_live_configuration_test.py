@@ -15,7 +15,6 @@ PREFIX = r'''
 #include "runtime_persistence.hpp"
 #include "tls_receive_trace.hpp"
 #include "amity/consortium/owned_intent.hpp"
-#include "amity/consortium/transfer.hpp"
 #include "amity/consortium/settings.hpp"
 #include "amity/consortium/update.hpp"
 #include "controller_policy.hpp"
@@ -41,9 +40,6 @@ uint64_t clock_ms=100;
 uint64_t now_ms(){return clock_ms;}
 template<class T>T ident(unsigned value){char text[33];snprintf(text,sizeof(text),"%032x",value);return *T::parse(text);}
 template<class T>T random_id(){static unsigned next=1000;return ident<T>(next++);}
-// Cryptography has independent coverage; this lower-layer fixture gives the
-// real SnapshotTransfer a deterministic digest and still checks its binding.
-std::string sha256(std::string_view){return std::string(64,'a');}
 struct Queued{Kind kind;std::string payload;uint32_t ttl=0;uint64_t created=0,revision=0;std::shared_ptr<const model::OwnedIntent> owned;std::shared_ptr<const model::OwnedAdapterSnapshot> snapshot{};bool firmware_stream=false;};
 std::vector<std::string> diagnostic_logs,key_transfer_logs;
 template<class... Args>void capture_log(const char* level,const char* tag,const char* format,Args... args){
@@ -108,9 +104,6 @@ Envelope inbound(const LinkScope&,uint64_t revision,Kind kind,std::string_view p
  JsonError error;assert(parse_json(payload,e.payload,error)&&valid_envelope_payload(kind,e.payload));return e;
 }
 void feed(Active& active,const Envelope& e){active.tls->incoming.push_back(packet(e));}
-SnapshotManifest manifest(model::OctopusId owner,model::BootId boot,uint64_t revision,std::string_view kind,std::string_view payload){
- SnapshotManifest m;m.transfer_id=random_id<model::MessageId>();m.owner_octopus_id=owner;m.owner_boot_id=boot;m.config_revision=revision;m.total_length=payload.size();m.payload_hash=sha256(payload);m.document_kind=kind;return m;
-}
 std::shared_ptr<Active> start(bool server){
  auto a=std::make_shared<Active>();
  const auto coordinator=ident<model::OctopusId>(2),member=ident<model::OctopusId>(3);const auto mainboot=ident<model::BootId>(4),memberboot=ident<model::BootId>(5);
@@ -121,8 +114,6 @@ std::shared_ptr<Active> start(bool server){
  clock_ms=100;controls={};updates={};restart_fences.clear();controls.restart_session=[](auto owner,auto peer_boot,auto old_link){restart_fences.emplace_back(owner,peer_boot,old_link);return true;};network={};network.get_hostname=[server]{return server?"amity-main":"amity-member";};configuration=7;status={};status.authority_ready=server;identity.id=scope.local_id;group={};group.consortium=scope.consortium_id;group.role=server?Group::coordinator:Group::member;group.authority=coordinator;links={a};on_send={};shutdowns=0;diagnostic_logs.clear();key_transfer_logs.clear();
  return a;
 }
-std::string controller_slice(const LinkScope& scope,uint64_t revision){return "{\"controller\":\""+scope.coordinator_id.str()+"\",\"config_revision\":\""+std::to_string(revision)+"\"}";}
-const std::string owner_state="{\"adapters\":[]}";
 const std::string device_status="{\"hostname\":\"amity-member\"}";
 std::string observation(const LinkScope& scope){model::OwnedAdapterSnapshot report;report.owner=scope.peer_id;report.boot=scope.peer_boot_id;report.ready=true;return "{\"snapshot\":"+owned_snapshot_json(report)+"}";}
 void unchanged(const Active& active,const LinkScope& original,const FakeTls* tls){
@@ -148,62 +139,41 @@ void terminal_receive_trace(){
 void coordinator_refresh(){
  auto a=start(true);const auto original=a->session.scope();const auto* tls=a->tls.get();std::vector<std::string> cached={"TV","AVR","Player"};
  a->advertised_hostname="renamed-main";network.get_hostname=[]{return "renamed-main";};
- unsigned applied=0;std::optional<SnapshotManifest> config_manifest;std::optional<Envelope> stale,result;
- controls.snapshot=[](auto){return owner_state;};controls.configuration_snapshot=[&](auto owner,uint64_t revision){assert(owner==a->peer&&revision==8);return controller_slice(original,revision);};
- controls.synchronize=[&](auto owner,const Json& value){++applied;assert(owner==a->peer&&value.type==Json::Type::string&&value.string==owner_state&&cached.size()==3);return Error::none;};
+ controls.synchronize=[](auto,uint64_t){assert(false&&"The main binds no configuration");return Error::none;};
  controls.control=[](const auto&,const auto&,auto){assert(false&&"Observation refresh must not deliver a CEC completion");return Error::none;};
- a->tls->before_receive=[&]{unchanged(*a,original,tls);assert(cached.size()==3);};
- on_send=[&](Active& active,const Envelope& e){
-  unchanged(active,original,tls);SnapshotManifest m;std::string phase;uint32_t next=0;
-  if(e.kind==Kind::snapshot_request){assert(parse_snapshot_manifest(e.payload,m,phase,next)==Error::none);
-   if(m.document_kind=="configuration"){assert(phase=="begin"&&e.config_revision==7&&m.config_revision==8);config_manifest=m;
-    feed(active,inbound(original,7,Kind::device_status,"{\"hostname\":\"renamed-member\"}")); // Admitted metadata interleaving the transfer.
-    result=inbound(original,7,Kind::scoped_result,observation(original));feed(active,*result);
-    feed(active,inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(m,"ack",0)));}
-   else assert(e.config_revision==8&&m.config_revision==8&&(phase=="ack"||phase=="complete"));
-  }else{assert(config_manifest&&e.kind==Kind::snapshot_chunk&&e.config_revision==7);
-   feed(active,inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(*config_manifest,"complete",1)));
-   // Already-in-flight obsolete messages are safely discarded after advance,
-   // they cannot masquerade as the new owner-state slice.
-   feed(active,inbound(original,7,Kind::device_status,"{\"hostname\":\"renamed-member\"}")); // Old-scope metadata after local advance.
-   stale=inbound(original,7,Kind::device_status,device_status);feed(active,*stale);
-   const auto state=manifest(original.peer_id,original.peer_boot_id,8,"owner_state",owner_state);
-   feed(active,inbound(original,8,Kind::snapshot_request,snapshot_manifest_json(state,"begin",0)));
-   feed(active,inbound(original,8,Kind::snapshot_chunk,snapshot_chunk_json(state,0,owner_state)));
-  }
- };
+ on_send=[&](Active& active,const Envelope&){unchanged(active,original,tls);assert(cached.size()==3);};
  runtime_configuration_changed(8);
- assert(configuration==8&&a->session.scope()==original&&a->ready&&a->status.ready&&shutdowns==0&&applied==0&&cached.size()==3);
- assert(synchronize(*a,true,true,8));unchanged(*a,original,tls);assert(applied==1&&cached.size()==3&&a->session.scope().config_revision==8&&a->status.config_revision==8);
- assert(!a->context_ready);
- assert(stale&&a->session.admit(*stale,clock_ms,clock_ms)==Error::stale_config&&a->session.discard_stale(*stale,clock_ms,clock_ms)==Error::none);
- assert(result&&a->session.admit(*result,clock_ms,clock_ms)==Error::stale_config&&a->session.discard_stale(*result,clock_ms,clock_ms)==Error::none);
- assert(a->tls->sent.size()==4&&a->tls->sent[0].config_revision==7&&a->tls->sent[1].config_revision==7&&a->tls->sent[2].config_revision==8&&a->tls->sent[3].config_revision==8);
+ assert(configuration==8&&a->session.scope()==original&&a->ready&&a->status.ready&&shutdowns==0&&cached.size()==3);
+ assert(refresh_turn(*a));unchanged(*a,original,tls);assert(cached.size()==3&&a->session.scope().config_revision==8&&a->status.config_revision==8);
+ assert(!a->context_ready&&a->refreshing);
+ // One marker in the old scope; there is no transfer or reply to wait for.
+ model::MessageId round;std::string phase;uint64_t target=0;
+ assert(a->tls->sent.size()==1&&a->tls->sent[0].kind==Kind::synchronization&&a->tls->sent[0].config_revision==7);
+ assert(parse_synchronization(a->tls->sent[0].payload,round,phase,target)==Error::none&&phase=="advance"&&target==8);
+ // Messages already in flight from the old scope are discarded, never applied.
+ const auto stale=inbound(original,7,Kind::device_status,device_status);
+ assert(a->session.admit(stale,clock_ms,clock_ms)==Error::stale_config&&a->session.discard_stale(stale,clock_ms,clock_ms)==Error::none);
+ const auto result=inbound(original,7,Kind::scoped_result,observation(original));
+ assert(a->session.admit(result,clock_ms,clock_ms)==Error::stale_config&&a->session.discard_stale(result,clock_ms,clock_ms)==Error::none);
  runtime_configuration_changed(6);assert(configuration==8&&shutdowns==0);
  assert(a->advertised_hostname.empty());on_send={};assert(refresh_local_hostname(*a));
- assert(a->tls->sent.size()==5&&a->tls->sent.back().kind==Kind::device_status&&a->tls->sent.back().config_revision==8&&a->tls->sent.back().payload.get("hostname")->string=="renamed-main");
- assert(refresh_local_hostname(*a)&&a->tls->sent.size()==5);unchanged(*a,original,tls);
+ assert(a->tls->sent.size()==2&&a->tls->sent.back().kind==Kind::device_status&&a->tls->sent.back().config_revision==8&&a->tls->sent.back().payload.get("hostname")->string=="renamed-main");
+ assert(refresh_local_hostname(*a)&&a->tls->sent.size()==2);unchanged(*a,original,tls);
 }
-void future_context_recaptures_after_slow_refresh(){
- auto a=start(true);const auto original=a->session.scope();unsigned applied=0;std::optional<SnapshotManifest> config_manifest;
- controls.snapshot=[](auto){return owner_state;};controls.configuration_snapshot=[&](auto,uint64_t rev){return controller_slice(original,rev);};controls.synchronize=[&](auto,const Json&){++applied;return Error::none;};
- on_send=[&](Active& active,const Envelope& e){SnapshotManifest m;std::string phase;uint32_t next=0;
-  if(e.kind==Kind::snapshot_request){assert(parse_snapshot_manifest(e.payload,m,phase,next)==Error::none);if(m.document_kind=="configuration"){config_manifest=m;feed(active,inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(m,"ack",0)));}}
-  else if(e.kind==Kind::snapshot_chunk){assert(config_manifest);feed(active,inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(*config_manifest,"complete",1)));
-   const auto state=manifest(original.peer_id,original.peer_boot_id,8,"owner_state",owner_state);feed(active,inbound(original,8,Kind::snapshot_request,snapshot_manifest_json(state,"begin",0)));feed(active,inbound(original,8,Kind::snapshot_chunk,snapshot_chunk_json(state,0,owner_state)));}
- };
- unsigned receives=0;a->tls->before_receive=[&]{if(++receives==3)clock_ms+=1150;};runtime_configuration_changed(8);
+void future_context_recaptures_after_refresh(){
+ auto a=start(true);const auto original=a->session.scope();
+ runtime_configuration_changed(8);
  model::OwnedIntent context;context.kind=model::OwnedIntentKind::context;context.target.port={original.consortium_id,original.peer_id,0,model::Side::front};context.config_revision=8;context.generation=1;
  assert(runtime_send_owned(context)==ESP_OK&&a->queue.empty());
  auto positive=context;positive.kind=model::OwnedIntentKind::key_edges;positive.edges[0]={4,true};positive.edge_count=1;
  assert(runtime_send_owned(positive)==ESP_ERR_INVALID_STATE&&a->queue.empty());
- assert(refresh_turn(*a)&&clock_ms==1250&&applied==1&&a->session.scope().config_revision==8&&!a->context_ready&&!a->cancelled&&a->queue.empty());
+ assert(refresh_turn(*a)&&a->session.scope().config_revision==8&&!a->context_ready&&!a->cancelled&&a->queue.empty());
  assert(pump(*a)&&diagnostic_logs.empty()); // No old context payload or deadline.
  unsigned requested=0;controls.ready=[&](auto,auto,auto){++requested;return true;};assert(initialize_context(*a)&&initialize_context(*a)&&requested==1&&a->context_requested&&!a->context_ready);
  assert(runtime_send_owned(positive)==ESP_ERR_INVALID_STATE&&a->queue.empty());
  // The asynchronous callback reads current state when it actually runs. Its
  // fresh current generation enters before any later admitted action.
- context.generation=3;context.selected=true;assert(runtime_send_owned(context)==ESP_OK&&a->context_ready&&a->queue.size()==1&&a->queue.front().created==1250);
+ context.generation=3;context.selected=true;assert(runtime_send_owned(context)==ESP_OK&&a->context_ready&&a->queue.size()==1&&a->queue.front().created==clock_ms);
  positive.generation=3;assert(runtime_send_owned(positive)==ESP_OK&&a->queue.size()==2);
  const auto before=a->tls->sent.size();assert(pump(*a)&&pump(*a)&&a->tls->sent.size()==before+2);
  model::OwnedIntent delivered;
@@ -211,54 +181,26 @@ void future_context_recaptures_after_slow_refresh(){
  assert(parse_owned_intent(a->tls->sent[before+1].payload,delivered)==Error::none&&delivered.kind==model::OwnedIntentKind::key_edges&&!a->tls->sent[before+1].payload.get("sequence")&&a->tls->sent[before+1].config_revision==8);
  unchanged(*a,original,a->tls.get());
 }
-void rejected_interleaved_observations(){
- for(unsigned failure=0;failure<1;++failure){
-  auto a=start(true);const auto original=a->session.scope();unsigned applied=0;
-  controls.snapshot=[](auto){return owner_state;};controls.configuration_snapshot=[&](auto,uint64_t revision){return controller_slice(original,revision);};
-  controls.synchronize=[&](auto,const Json&){++applied;return Error::none;};
-  on_send=[&](Active& active,const Envelope& e){
-   assert(e.kind==Kind::snapshot_request);SnapshotManifest m;std::string phase;uint32_t next=0;assert(parse_snapshot_manifest(e.payload,m,phase,next)==Error::none&&phase=="begin");
-   auto result=inbound(original,7,Kind::scoped_result,observation(original));
-   switch(failure){
-    case 0:result.config_revision=8;break;
-   }
-   feed(active,result);feed(active,inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(m,"ack",0)));
-  };
-  LinkTrace trace;assert(!synchronize(*a,true,true,8,nullptr,&trace));assert(applied==0&&a->session.scope()==original);
-  assert(trace.unexpected&&trace.has_kind&&trace.kind==Kind::scoped_result&&!trace.has_queue);
-  assert(std::string(trace.phase)=="configuration_send"&&std::string(trace.reason)=="synchronization_admission");
- }
-}
 void member_refresh(){
  auto a=start(false);const auto original=a->session.scope();const auto* tls=a->tls.get();unsigned applied=0;std::vector<std::string> cached={"Member TV","Member Player"};
  a->advertised_hostname="renamed-member";network.get_hostname=[]{return "renamed-member";};
- const auto payload=controller_slice(original,8);const auto incoming=manifest(original.local_id,original.local_boot_id,8,"configuration",payload);
- const auto first=inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(incoming,"begin",0));
- assert(a->session.admit(first,clock_ms,clock_ms)==Error::none); // The real outer loop pre-admits the first manifest.
- feed(*a,inbound(original,7,Kind::snapshot_chunk,snapshot_chunk_json(incoming,0,payload)));
- controls.snapshot=[&](auto){assert(cached.size()==2);return owner_state;};controls.synchronize=[&](auto owner,const Json& value){assert(owner==a->peer&&value.string==payload&&a->session.scope()==original&&cached.size()==2);++applied;return Error::none;};
- a->tls->before_receive=[&]{unchanged(*a,original,tls);assert(cached.size()==2);};
- std::optional<SnapshotManifest> outgoing_state;
- on_send=[&](Active& active,const Envelope& e){
-  unchanged(active,original,tls);SnapshotManifest m;std::string phase;uint32_t next=0;
-  if(e.kind==Kind::snapshot_request){assert(parse_snapshot_manifest(e.payload,m,phase,next)==Error::none);
-   if(m.document_kind=="configuration"){assert(e.config_revision==7&&m.config_revision==8&&(phase=="ack"||phase=="complete"));if(phase=="complete")assert(applied==1&&active.session.scope()==original);}
-   else{assert(e.config_revision==8&&phase=="begin");outgoing_state=m;feed(active,inbound(original,8,Kind::snapshot_request,snapshot_manifest_json(m,"ack",0)));}
-  }else{assert(outgoing_state&&e.kind==Kind::snapshot_chunk&&e.config_revision==8);feed(active,inbound(original,8,Kind::snapshot_request,snapshot_manifest_json(*outgoing_state,"complete",1)));}
- };
- assert(synchronize(*a,false,true,8,&first));unchanged(*a,original,tls);assert(configuration==8&&applied==1&&cached.size()==2&&shutdowns==0);
- assert(a->advertised_hostname.empty());
- assert(a->tls->sent.size()==4&&a->tls->sent[0].config_revision==7&&a->tls->sent[1].config_revision==7&&a->tls->sent[2].config_revision==8&&a->tls->sent[3].config_revision==8);
- on_send={};assert(refresh_local_hostname(*a));assert(a->tls->sent.size()==5&&a->tls->sent.back().kind==Kind::device_status&&a->tls->sent.back().config_revision==8&&a->tls->sent.back().payload.get("hostname")->string=="renamed-member");unchanged(*a,original,tls);
- assert(!a->context_ready);
+ const auto advance=inbound(original,7,Kind::synchronization,synchronization_json(ident<model::MessageId>(81),"advance",8));
+ assert(a->session.admit(advance,clock_ms,clock_ms)==Error::none); // The real outer loop admits the coordinator's marker.
+ controls.synchronize=[&](auto owner,uint64_t revision){assert(owner==a->peer&&revision==8&&a->session.scope()==original&&cached.size()==2);++applied;return Error::none;};
+ LinkTrace trace;assert(bind_configuration(*a,8,trace)&&apply_configuration_advance(*a,false,8,trace));unchanged(*a,original,tls);
+ assert(configuration==8&&applied==1&&cached.size()==2&&shutdowns==0&&a->session.scope().config_revision==8&&a->status.config_revision==8);
+ assert(a->advertised_hostname.empty()&&a->tls->sent.empty()&&!a->context_ready);
+ assert(refresh_local_hostname(*a)&&a->tls->sent.size()==1&&a->tls->sent.back().kind==Kind::device_status&&a->tls->sent.back().config_revision==8&&a->tls->sent.back().payload.get("hostname")->string=="renamed-member");unchanged(*a,original,tls);
+ const auto repeated=inbound(original,8,Kind::synchronization,synchronization_json(ident<model::MessageId>(82),"advance",8));
+ assert(a->session.admit(repeated,clock_ms,clock_ms)==Error::stale_config); // A marker never moves back or repeats.
+ auto main=start(true);assert(main->session.admit(advance,clock_ms,clock_ms)==Error::unauthorized_role); // Only the coordinator advances.
 }
-void rejected_frames(){
- for(unsigned failure=0;failure<2;++failure){auto a=start(false);const auto original=a->session.scope();unsigned applied=0;
-  controls.snapshot=[](auto){return owner_state;};controls.synchronize=[&](auto,const Json&){++applied;return Error::none;};
-  const auto value=controller_slice(original,8);auto m=manifest(original.local_id,original.local_boot_id,8,"configuration",value);auto e=inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(m,"begin",0));
-  switch(failure){case 0:e.config_revision=9;break;case 1:m.owner_octopus_id=original.peer_id;e=inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(m,"begin",0));break;}
-  feed(*a,e);assert(!synchronize(*a,false,true,8)&&applied==0&&a->session.scope()==original);
- }
+void rejected_bind_keeps_scope(){
+ auto a=start(false);const auto original=a->session.scope();
+ controls.synchronize=[](auto,uint64_t){return Error::not_ready;};
+ LinkTrace trace;assert(!bind_configuration(*a,8,trace)&&std::string(trace.reason)=="synchronization_apply"&&trace.error==Error::not_ready);
+ assert(a->session.scope()==original&&configuration==7&&a->ready);
+ controls.synchronize={};trace=LinkTrace{};assert(!bind_configuration(*a,8,trace)&&std::string(trace.reason)=="synchronization_hooks");
 }
 void immutable_queue(){
  auto a=start(true);on_send={};const auto original=a->session.scope();
@@ -302,7 +244,7 @@ void observation_expiry_is_not_lost_causal_work(){
  assert(diagnostic_logs.size()==1&&diagnostic_logs.front().find("reason=causal_expired phase=operational")!=std::string::npos);
 }
 }
-int main(){using namespace amity::consortium;terminal_receive_trace();coordinator_refresh();member_refresh();future_context_recaptures_after_slow_refresh();rejected_frames();rejected_interleaved_observations();immutable_queue();observation_expiry_is_not_lost_causal_work();std::cout<<"PASS actual in-place runtime synchronization: both roles retain TLS/link/boots/readiness/cache; strict identity/boot/configuration and observation fences; old-scope observation discarded before new owner state; fresh context and original queued revision/deadline; snapshot expiry independent of causal input state\n";}
+int main(){using namespace amity::consortium;terminal_receive_trace();coordinator_refresh();member_refresh();future_context_recaptures_after_refresh();rejected_bind_keeps_scope();immutable_queue();observation_expiry_is_not_lost_causal_work();std::cout<<"PASS actual in-place configuration advance: both roles retain TLS/link/boots/readiness/cache; one forward-only marker; old-scope messages discarded; fresh context and original queued revision/deadline; snapshot expiry independent of causal input state\n";}
 '''
 
 
@@ -316,7 +258,7 @@ def main():
     end = source.index('        fd_set reads;', start)
     pump = '\nbool pump(Active& storage){Active* active=&storage;LinkTrace trace;trace.phase="operational";while(true){' + source[start:end] + 'return true;}trace_link_closed(storage,trace,now_ms());return false;}\n'
     actual = ''.join(function(source, name) for name in (
-        'Envelope outgoing(', 'bool same_manifest(', 'bool synchronize(', 'bool exchange_hostname(Active& active,const std::string& expected,LinkTrace* diagnostic=nullptr) {',
+        'Envelope outgoing(', 'bool bind_configuration(', 'bool apply_configuration_advance(', 'bool advance_configuration(', 'bool finish_synchronization(', 'bool exchange_hostname(Active& active,const std::string& expected,LinkTrace* diagnostic=nullptr) {',
         'bool synchronization_current(', 'bool synchronization_recoverable(', 'bool synchronization_barrier(', 'bool fence_synchronization_scope(', 'bool restart_synchronization_scope(', 'bool synchronize_connection(', 'bool refresh_local_hostname(',
         'void runtime_configuration_changed(', 'static bool queued_firmware_stream(', 'static bool queued_expired(', 'static bool pure_key_release(', 'static bool queued_cleanup(', 'static bool queued_causal('))
     actual = function(source, 'void request_session_restart(') + source[source.index('struct LinkTraceSnapshot {'):source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry(')] + actual
@@ -335,7 +277,7 @@ def main():
         prefix = PREFIX.replace('struct Active{', trace + 'struct Active{')
         cpp.write_text(timing_support() + prefix + 'namespace amity::consortium {\n' + actual + queued + pump + refresh + '\n}\n' + SUPPORT + SUITE)
         sources = [ROOT / 'components/consortium' / name for name in
-                   ('json.cpp', 'wire.cpp', 'owned_intent.cpp', 'session.cpp', 'settings.cpp', 'update.cpp', 'transfer.cpp')]
+                   ('json.cpp', 'wire.cpp', 'owned_intent.cpp', 'session.cpp', 'settings.cpp', 'update.cpp')]
         sources.append(ROOT / 'components/amity_system/model.cpp')
         subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) +
                        ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-pthread', '-g', '-fsanitize=address,undefined',

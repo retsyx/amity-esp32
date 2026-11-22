@@ -67,22 +67,6 @@ bool accept_report(s::OctopusId sender,const s::OwnedAdapterSnapshot& report){
     if(prior!=state.reports.end())*prior=report;else if(state.reports.size()<amity::max_tentacles*c::maximum_roster_peers)state.reports.push_back(report);else return false;
     return state.control->update_owned_snapshot(report);
 }
-std::string snapshot(s::OctopusId){
-    const auto group=c::runtime_status();
-    if(group.coordinator){
-        auto config=state.control->active_configuration();if(!config)return {};
-        return "{\"controller\":\""+state.control->octopus_id().str()+"\",\"config_revision\":\""+std::to_string(config->config_revision)+"\"}";
-    }
-    std::string out="{\"adapters\":[";
-    for(const auto& report:state.control->owned_snapshots())if(report.owner==state.control->octopus_id()){
-        auto bytes=c::owned_snapshot_json(report);if(bytes.empty())return {};if(out.back()!='[')out+=',';out+=bytes;
-    }
-    return out+"]}";
-}
-std::string configuration_snapshot(s::OctopusId,uint64_t revision){
-    if(!revision||!c::runtime_status().coordinator)return {};
-    return "{\"controller\":\""+state.control->octopus_id().str()+"\",\"config_revision\":\""+std::to_string(revision)+"\"}";
-}
 void publish_configuration_revision(){
     if(!c::runtime_status().coordinator)return;
     const auto config=state.control->active_configuration();if(!config)return;
@@ -95,19 +79,18 @@ void publish_configuration_revision(){
 void flush_configuration(){
     if(state.configuration_pending.exchange(false))publish_configuration_revision();
 }
-c::Error synchronize(s::OctopusId sender,const c::Json& value){
-    if(value.type!=c::Json::Type::string)return c::Error::invalid_message;
-    c::Json document;c::JsonError error;if(!c::parse_json(value.string,document,error,32768,2048))return c::Error::invalid_message;
-    const auto group=c::runtime_status();
-    if(group.coordinator){
-        if(!c::closed(document,{"adapters"})||document.get("adapters")->type!=c::Json::Type::array||document.get("adapters")->array.size()>amity::max_tentacles)return c::Error::invalid_message;
-        std::set<uint8_t> seen;for(const auto& item:document.get("adapters")->array){s::OwnedAdapterSnapshot report;if(!c::parse_owned_snapshot(item,report)||!seen.insert(report.adapter).second||!accept_report(sender,report))return c::Error::invalid_message;}
-        return c::Error::none;
-    }
-    s::OctopusId controller;uint64_t revision=0;
-    if(!group.member||!c::closed(document,{"controller","config_revision"})||!c::id(document.get("controller"),controller)||controller!=sender||!c::decimal(document.get("config_revision"),revision)||!revision)return c::Error::unauthorized_role;
+// The member binds its controller's revision, then republishes every adapter
+// report in the new scope as ordinary results.
+c::Error synchronize(s::OctopusId controller,uint64_t revision){
+    if(!c::runtime_status().member||!revision)return c::Error::unauthorized_role;
     if(state.control->bind_owned_controller(controller,revision)!=ESP_OK)return c::Error::not_ready;
-    {std::lock_guard<std::mutex> guard(state.mutex);state.owner_revision=revision;}
+    const auto latest=state.control->owned_snapshots();const auto local=state.control->octopus_id();
+    std::lock_guard<std::mutex> guard(state.mutex);state.owner_revision=revision;
+    for(const auto& report:latest)if(report.owner==local&&report.adapter<amity::max_tentacles){
+        auto prior=std::find_if(state.pending_reports.begin(),state.pending_reports.end(),[&](const auto& p){return p.adapter==report.adapter;});
+        if(prior!=state.pending_reports.end())*prior=report;else state.pending_reports.push_back(report);
+        state.retry_reports[report.adapter].reset();
+    }
     return c::Error::none;
 }
 c::Error receive(const c::LinkScope& scope,const c::Envelope& envelope,uint64_t deadline){
@@ -218,7 +201,7 @@ esp_err_t start_configuration_synchronization(SystemControl& control){
     // publication off the owner task and coalesce changes until this worker runs.
     control.on_configuration_applied([]{state.configuration_pending.store(true);});
     state.configuration_pending.store(true); // Capture configuration applied before startup.
-    c::runtime_control_hooks({snapshot,synchronize,receive,disconnected,[](s::OctopusId owner,uint64_t revision,std::function<void(s::OwnedContextResult)> completed){return state.control->refresh_owned_context(owner,revision,std::move(completed));},[]{return state.control->executing_configuration_revision();},configuration_snapshot,retry_report,restart_session});return ESP_OK;
+    c::runtime_control_hooks({synchronize,receive,disconnected,[](s::OctopusId owner,uint64_t revision,std::function<void(s::OwnedContextResult)> completed){return state.control->refresh_owned_context(owner,revision,std::move(completed));},[]{return state.control->executing_configuration_revision();},retry_report,restart_session});return ESP_OK;
 }
 esp_err_t activate_distributed_configuration(cs::Configuration candidate,cs::RevisionPair expected,s::MessageId request,
     std::function<esp_err_t()> before_commit){

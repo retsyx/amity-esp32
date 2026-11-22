@@ -144,7 +144,7 @@ void synchronization_tests(){
     assert(parse_synchronization(begin.payload,round,phase,target)==Error::none&&round==ident<m::MessageId>(120)&&phase=="begin"&&target==8);
     assert(synchronization_json(round,phase,target)==payload("begin",8));
     assert(synchronization_json({},phase,target).empty()&&synchronization_json(round,"retry",target).empty()&&synchronization_json(round,phase,0).empty());
-    for(const auto phase:{"begin","ack","reject"})assert(parse_envelope(packet(original,Kind::synchronization,payload(phase,8)),begin)==Error::none);
+    for(const auto phase:{"begin","ack","reject","advance"})assert(parse_envelope(packet(original,Kind::synchronization,payload(phase,8)),begin)==Error::none);
     for(const auto invalid:{"0","08","18446744073709551616"})assert(parse_envelope(packet(original,Kind::synchronization,replace(payload("begin",8),"\"8\"","\""+std::string(invalid)+"\"")),begin)==Error::invalid_message);
     assert(parse_envelope(packet(original,Kind::synchronization,payload("retry",8)),begin)==Error::invalid_message);
     assert(parse_envelope(replace(encoded,"\"phase\":\"begin\"","\"phase\":\"begin\",\"extra\":true"),begin)==Error::invalid_message);
@@ -198,8 +198,9 @@ void synchronization_tests(){
     Session controller;start(controller,PeerRole::actuator);assert(controller.begin_synchronization(8)==Error::none);
     for(const auto role:{PeerRole::coordinator,PeerRole::actuator}){
         Session value;start(value,role);
-        for(const auto phase:{"begin","ack","reject"}){auto message=begin;assert(parse_json(payload(phase,8),message.payload,detail));
-            assert(value.admit(message,100,100)==((std::string_view(phase)=="begin")== (role==PeerRole::coordinator)?Error::none:Error::unauthorized_role));
+        for(const auto phase:{"begin","ack","reject","advance"}){auto message=begin;assert(parse_json(payload(phase,8),message.payload,detail));
+            const bool coordinator_phase=std::string_view(phase)=="begin"||std::string_view(phase)=="advance";
+            assert(value.admit(message,100,100)==(coordinator_phase==(role==PeerRole::coordinator)?Error::none:Error::unauthorized_role));
         }
     }
     for(const auto role:{PeerRole::coordinator,PeerRole::provisional_candidate}){Session passive;start(passive,role,false);assert(passive.begin_synchronization(8)==Error::not_ready&&passive.admit(begin,100,100)==Error::unauthorized_role);}
@@ -264,11 +265,15 @@ void live_configuration_tests(){
     assert(with_intent(foreign,target));assert(session.discard_stale(foreign,100,103)==Error::target_not_local);
     target=action(old);assert(with_intent(foreign,target));
     assert(session.discard_stale(foreign,100,103)==Error::none); // Discarding obsolete work grants no execution authority.
-    auto snapshot=envelope(current);snapshot.kind=Kind::snapshot_request;
-    assert(session.admit(snapshot,100,104)==Error::none);snapshot.kind=Kind::snapshot_chunk;assert(session.admit(snapshot,100,104)==Error::none);
+    // A live configuration advance only moves forward.
+    const auto advance_to=[](uint64_t revision){return "{\"round_id\":\""+ident<m::MessageId>(130).str()+"\",\"phase\":\"advance\",\"config_revision\":\""+std::to_string(revision)+"\"}";};
+    auto advance=envelope(current);advance.kind=Kind::synchronization;
+    assert(parse_json(advance_to(9),advance.payload,detail)&&session.admit(advance,100,104)==Error::none);
+    assert(parse_json(advance_to(8),advance.payload,detail)&&session.admit(advance,100,104)==Error::stale_config);
     Session management;start(management);management.restrict_management();auto update=envelope(old);update.kind=Kind::update_begin;assert(management.admit(update,100,104)==Error::none);
     assert(management.advance_configuration(8)==Error::not_ready); // Different firmware remains update-capable, never operational.
     Session actuator;start(actuator,PeerRole::actuator);assert(actuator.advance_configuration(8)==Error::none);
+    assert(parse_json(advance_to(9),advance.payload,detail)&&actuator.admit(advance,100,104)==Error::unauthorized_role); // Only the coordinator advances.
     auto wrong_role=foreign;assert(actuator.discard_stale(wrong_role,100,104)==Error::unauthorized_role);
     Session named;start(named,PeerRole::actuator);assert(named.advance_configuration(8)==Error::none);
     auto name=envelope(old);name.kind=Kind::device_status;assert(parse_json("{\"hostname\":\"member\"}",name.payload,detail));assert(named.discard_stale(name,100,104)==Error::none);
@@ -341,7 +346,7 @@ void update_tests() {
     }
     {auto sc=scope();Session management;auto peer=hello(sc);
      assert(management.authenticate(sc,sc.peer_id,PeerRole::coordinator,true)==Error::none&&management.hello(peer)==Error::none&&management.synchronized(7,true,true)==Error::none);management.restrict_management();auto message=envelope(sc);message.kind=Kind::update_begin;assert(management.admit(message,0,0)==Error::none);
-     for(auto kind:{Kind::scoped_intent,Kind::settings_write,Kind::snapshot_request}){message.kind=kind;assert(management.admit(message,0,0)!=Error::none);}}
+     for(auto kind:{Kind::scoped_intent,Kind::settings_write,Kind::synchronization}){message.kind=kind;assert(management.admit(message,0,0)!=Error::none);}}
 }
 void binary_update_tests(){
     const auto begin=ident<m::MessageId>(40);
