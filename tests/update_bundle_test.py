@@ -13,6 +13,8 @@ import tempfile
 import unittest
 from consortium_gatt_callback_test import function
 ROOT=Path(__file__).resolve().parents[1]
+# The tools run without site-packages whenever this test does.
+PYTHON=[sys.executable]+(['-S'] if sys.flags.no_site else [])
 sys.path.insert(0,str(ROOT/'tools'))
 import update_bundle as bundle
 import hardware_profile as hardware
@@ -160,11 +162,11 @@ class BundleTests(unittest.TestCase):
     def test_cli_preserves_native_artifacts_and_previous_output_on_rejection(self):
         with tempfile.TemporaryDirectory(prefix='amity-bundle-cli-') as directory:
             base=Path(directory);image,value=self.image_manifest();native=base/'amity.bin';manifest=base/'amity.release.json';output=base/'amity-update.bin';native.write_bytes(image);manifest.write_bytes(self.canonical(value))
-            command=[sys.executable,str(ROOT/'tools/update_bundle.py'),'--image',str(native),'--manifest',str(manifest)]
+            command=[*PYTHON,str(ROOT/'tools/update_bundle.py'),'--image',str(native),'--manifest',str(manifest)]
             subprocess.run(command,check=True,capture_output=True);produced=output.read_bytes();offset=bundle.parse_header(produced[:32],len(produced))[3];self.assertEqual(produced[offset:],image);self.assertEqual(native.read_bytes(),image)
             value['image_sha256']='0'*64;manifest.write_bytes(self.canonical(value));failure=subprocess.run(command,capture_output=True);self.assertNotEqual(failure.returncode,0);self.assertEqual(output.read_bytes(),produced);self.assertEqual(native.read_bytes(),image)
     def test_actual_release_packaging_and_publish_arguments(self):
-        package=[sys.executable,str(ROOT/'tools/release_assets.py')]
+        package=[*PYTHON,str(ROOT/'tools/release_assets.py')]
         publish=['bash',str(ROOT/'tools/publish_release.sh')]
         for signed in (False,True):
             with tempfile.TemporaryDirectory(prefix='amity-release-assets-') as directory:

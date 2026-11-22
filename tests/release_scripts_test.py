@@ -7,10 +7,12 @@ import sys
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+# The tools run without site-packages whenever this test does.
+PYTHON = [sys.executable] + (['-S'] if sys.flags.no_site else [])
 
 
 def run(name, *args):
-    return subprocess.run([sys.executable, str(ROOT / 'tools' / name), *args], capture_output=True, text=True)
+    return subprocess.run([*PYTHON, str(ROOT / 'tools' / name), *args], capture_output=True, text=True)
 
 
 class ReleaseScriptTests(unittest.TestCase):

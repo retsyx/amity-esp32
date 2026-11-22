@@ -332,7 +332,7 @@ if(AMITY_HOST_TESTS MATCHES "^(all|standalone)$")
         SOURCES "${T}/firmware_version_test.cpp"
         INCLUDES "${C}/system_services/include"
         ARGS "${T}/firmware_versions.tsv")
-    amity_command_test(release_manifest_fixture "${PYTHON3}" "${T}/release_manifest_fixture.py"
+    amity_command_test(release_manifest_fixture "${PYTHON3}" -S "${T}/release_manifest_fixture.py"
         "${CMAKE_BINARY_DIR}/release-manifest.json")
     set_tests_properties(release_manifest_fixture PROPERTIES FIXTURES_SETUP release_manifest)
     amity_test(release_manifest_test
