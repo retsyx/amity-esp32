@@ -53,7 +53,7 @@ back bus, choose its lowest valid non-root reported physical address, or use
 the configured fallback when none is available. The back TV announces first;
 front allocation and announcements wait for this determination. Later rescans
 do not change the result. This topology inference is a heuristic when the
-directly attached device stays silent; see the hub component README.
+directly attached device stays silent.
 
 | Activity/device operation | Expected Python behavior reproduced |
 | --- | --- |
@@ -120,17 +120,12 @@ its press first, then attempts final release immediately only if the press was
 admitted and no other key keeps the recipient stream open. At seven occupied
 slots the press enters slot eight and release drops; at eight the press drops
 and no release is attempted. Its release does not wait for completion or first
-edge. Generic explicitly submitted Bus batches retain all-or-none admission.
-Release admission is immediate:
+edge. Release admission is immediate:
 a release submitted at eight is dropped, logged and consumed. Every TX dropped
-because the FIFO is full must be logged, including each frame of a rejected
-atomic batch.
+because the FIFO is full must be logged.
 No later tick or capacity change retries that admission, including power
 and switch-key cleanup. CEC applies supplied attempt budgets and the same
-eight-message admission limit without interpreting button policy. The
-[hub component README](../components/amity_hub/README.md) also documents
-per-key and release-all emergency epochs used only when the command queue is
-full, plus activity-generation validation.
+eight-message admission limit without interpreting button policy.
 
 Matter Speaker support adds Give Audio Status (`71`) and handles Report
 Audio Status (`7a`) from the current audio device. Absolute volume/mute are
@@ -144,8 +139,7 @@ request or reply. A rejected initial press does not change play/pause emulation.
 Siri's fixed activity macros follow Python's default Power+Select/Up/Right/Down/
 Left combinations, selecting activities 0–4 on a short selector hold and 5–9
 when the selector has been held at least 500 ms. They are enabled only for the
-Siri profile and are not configurable. The complete mapping is recorded in the
-[remote component README](../components/ble_remote/README.md). Either macro
+Siri profile and are not configurable. Either macro
 button may be pressed or released first; the selector's press timestamp
 determines the duration. An unrelated release does not execute the macro.
 Execution consumes the gesture until all physical keys are up, even if activity
