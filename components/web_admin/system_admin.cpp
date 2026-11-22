@@ -246,7 +246,7 @@ esp_err_t snapshot(httpd_req_t* req){
         auto* record=cJSON_CreateObject();cJSON_AddItemToArray(peers,record);
         cJSON_AddStringToObject(record,"octopus_id",peer.id.str().c_str());cJSON_AddBoolToObject(record,"ready",peer.ready);cJSON_AddBoolToObject(record,"management_ready",peer.management_ready);
         if(peer.boot_id)cJSON_AddStringToObject(record,"boot_id",peer.boot_id.str().c_str());else cJSON_AddNullToObject(record,"boot_id");
-        cJSON_AddBoolToObject(record,"enrolled",peer.enrolled);
+        cJSON_AddBoolToObject(record,"enrolled",peer.enrolled);cJSON_AddBoolToObject(record,"provisional",peer.provisional);
         cJSON_AddNumberToObject(record,"supported_tentacles",peer.supported_tentacles);cJSON_AddNumberToObject(record,"configured_tentacles_mask",peer.configured_tentacles_mask);
         cJSON_AddStringToObject(record,"firmware_identity",peer.firmware_identity.c_str());
         cJSON_AddStringToObject(record,"hostname",peer.hostname.c_str());
