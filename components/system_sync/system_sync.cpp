@@ -151,7 +151,10 @@ void adopt_owners(){
             next.octopuses.push_back({remote.id,label,label,false,remote.supported_tentacles});
         }
         else for(auto& owner:next.octopuses)if(owner.octopus_id==remote.id)owner.supported_tentacles=remote.supported_tentacles;
-        activate_distributed_configuration(std::move(next),config->revisions(),fresh<s::MessageId>());return;
+        // Retries reuse one request, so a failing adoption replaces its own
+        // status rather than pushing out the statuses of followed saves.
+        static const auto adoption=fresh<s::MessageId>();
+        activate_distributed_configuration(std::move(next),config->revisions(),adoption);return;
     }
 }
 void worker(void*){

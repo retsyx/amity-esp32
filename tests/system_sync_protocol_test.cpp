@@ -453,6 +453,18 @@ void earlier_save_completes_after_a_later_save(){
     apply();assert(amity::configuration_activation_status(id<s::MessageId>(141)).phase=="applied");
     assert(amity::configuration_activation_status(id<s::MessageId>(142)).phase=="idle"&&amity::configuration_activation_status({}).phase=="idle");
 }
+void failed_adoption_retries_keep_save_statuses(){
+    reset();auto main=control();
+    Configuration active;commit(*journal,main.configuration,{},active);main.configuration=active;main.auto_apply=false;
+    assert(amity::start_configuration_synchronization(main)==ESP_OK);
+    auto edited=active;edited.activities[0].label="Followed";edited.activities[0].label_override=true;
+    const auto followed=id<s::MessageId>(150);
+    assert(amity::activate_distributed_configuration(edited,active.revisions(),followed)==ESP_OK);
+    // An enrolled member that the saved roster lacks keeps failing adoption.
+    peers={remote(9,19,1,1)};main.configure_result=ESP_ERR_INVALID_STATE;
+    for(unsigned n=0;n<20;++n)amity::adopt_owners();
+    assert(main.configure_calls>=20&&amity::configuration_activation_status(followed).phase=="configuring");
+}
 void scans_and_saved_intent_without_peer_ack(){
     reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);
     peers={remote(),remote(10,20,3,0b010),remote(11,21,1,1),remote(12,22,1,1)};peers[2].ready=false;peers[3].enrolled=false;
@@ -535,4 +547,4 @@ void removal_commit_boundary(){
     assert(amity::configuration_activation_status(id<s::MessageId>(133)).phase=="applied"&&serialize_configuration(main.configuration).find(removed.str())==std::string::npos&&main.configuration.activities.empty());
 }
 }
-int main(){configuration_publication_is_driven_by_application();configuration_revision_waits_for_application();startup_and_minimal_handshake();intent_delivery_preserves_authorization();key_rejection_diagnostics_preserve_results();activity_selection_delivery_is_independent();reports_and_exact_disconnect();removal_serializes_report_and_disconnect_publication();full_roster_adapter_reports_keep_exact_owner_fences();logical_session_restart_preserves_reports();report_coalescing_and_no_intent_backlog();dropped_report_republishes_latest();scans_and_saved_intent_without_peer_ack();earlier_save_completes_after_a_later_save();saved_owner_capacity_does_not_shrink();added_owner_label_remains_unique_after_middle_removal();removal_commit_boundary();std::cout<<"PASS actual owner synchronization: minimal handshake, compact key edges/link/generation/deadline without duplicate authorization, unchanged non-key authority, bounded key rejection diagnostics, independent activity-selection delivery, latest snapshot recapture without failed-send regression, twelve adapter reports with exact owner/boot updates and disconnect fences, serialized removal/report cleanup, unique labels after middle removal, sparse scans/capacity retention and real journal save/applied revisions independent of offline peers, removal only after stage and owner reservation\n";}
+int main(){configuration_publication_is_driven_by_application();configuration_revision_waits_for_application();startup_and_minimal_handshake();intent_delivery_preserves_authorization();key_rejection_diagnostics_preserve_results();activity_selection_delivery_is_independent();reports_and_exact_disconnect();removal_serializes_report_and_disconnect_publication();full_roster_adapter_reports_keep_exact_owner_fences();logical_session_restart_preserves_reports();report_coalescing_and_no_intent_backlog();dropped_report_republishes_latest();scans_and_saved_intent_without_peer_ack();earlier_save_completes_after_a_later_save();failed_adoption_retries_keep_save_statuses();saved_owner_capacity_does_not_shrink();added_owner_label_remains_unique_after_middle_removal();removal_commit_boundary();std::cout<<"PASS actual owner synchronization: minimal handshake, compact key edges/link/generation/deadline without duplicate authorization, unchanged non-key authority, bounded key rejection diagnostics, independent activity-selection delivery, latest snapshot recapture without failed-send regression, twelve adapter reports with exact owner/boot updates and disconnect fences, serialized removal/report cleanup, unique labels after middle removal, sparse scans/capacity retention and real journal save/applied revisions independent of offline peers, removal only after stage and owner reservation\n";}
