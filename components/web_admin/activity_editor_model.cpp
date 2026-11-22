@@ -1,5 +1,6 @@
 #include "activity_editor_model.hpp"
 #include "include/json_input.hpp"
+#include "esp_log.h"
 #include <cstring>
 #include <memory>
 #include <map>
@@ -164,7 +165,10 @@ bool parse_restore_request(const cJSON* root,const cs::Configuration& current,m:
     if(!semantic||!presentation||cs::RevisionPair{*semantic,*presentation}!=current.revisions()){error="The saved configuration changed. Review it before restoring";return false;}
     const auto* configuration=cJSON_GetObjectItemCaseSensitive(root,"configuration");if(!cJSON_IsObject(configuration)){error="Choose a complete saved configuration";return false;}
     char* encoded=cJSON_PrintUnformatted(configuration);const std::string raw=encoded?encoded:"";cJSON_free(encoded);
-    return cs::parse_configuration(raw,backup,error);
+    if(cs::parse_configuration(raw,backup,error))return true;
+    // The browser shows this text; the parser's reason names saved-format internals.
+    ESP_LOGW("web","Backup rejected: %s",error.c_str());
+    error="This backup is from an unsupported Amity version or is damaged.";return false;
 }
 std::vector<m::ActivityId> projected_activities(const cs::Configuration& config) {
     auto result=cs::ordered_activities(config);if(result.size()>16)result.resize(16);

@@ -80,8 +80,28 @@ void test_current_activity_retention(){
         assert(edited.activities[0].label=="Renamed other activity");
     }
 }
+// A backup the parser refuses, including one from an older Amity, is reported
+// in words the browser can show, not the saved format's internal terms.
+void test_restore_rejection_text(){
+    const auto current=empty_configuration();const auto boot=id<model::BootId>(55);
+    const auto restore=[&](const std::string& backup,std::string& error){
+        const std::string body="{\"request_id\":\""+id<model::MessageId>(77).str()+"\",\"expected_config_revision\":\"1\",\"expected_presentation_revision\":\"1\",\"expected_boot_id\":\""+boot.str()+"\",\"confirm\":true,\"previous_controller_isolated\":true,\"configuration\":"+backup+"}";
+        auto* json=web_admin::parse_json_input(body);assert(json);Configuration parsed;
+        const bool ok=ae::parse_restore_request(json,current,boot,parsed,error);cJSON_Delete(json);return ok;
+    };
+    const auto rejected=[&](const std::string& backup){std::string error;assert(!restore(backup,error));return error;};
+    const auto replace=[](std::string text,const std::string& from,const std::string& to){const auto at=text.find(from);assert(at!=std::string::npos);text.replace(at,from.size(),to);return text;};
+    const auto backup=serialize_configuration(switch_configuration(direct_configuration()));
+    std::string error;assert(restore(backup,error));
+    const auto first=backup.find("\"qualified_name\":{");auto unnamed=backup;unnamed.replace(first,backup.find('}',first)-first+1,"\"qualified_name\":null");
+    for(const auto& invalid:{replace(backup,"\"version\":4","\"version\":3"),replace(backup,"\"version\":4","\"version\":5"),
+        replace(backup,"\"activity_order\"","\"zones\":[],\"activity_order\""),unnamed,replace(backup,"\"kind\":\"source\"","\"kind\":\"tv\""),
+        replace(backup,"\"slot\":1,","\"slot\":0,"),replace(backup,"\"tentacle_id\":0","\"tentacle_id\":1")})
+        assert(rejected(invalid)=="This backup is from an unsupported Amity version or is damaged.");
+    assert(rejected("[]")=="Choose a complete saved configuration");
+}
 int main(){
-    test_current_activity_retention();
+    test_current_activity_retention();test_restore_rejection_text();
     auto c=direct_configuration();auto avr=switch_configuration(c,"Play Wii");std::vector<std::string> unresolved;std::string error;
     // No equipment observations or path approval are required to retain or save
     // local and remote selections, including AVR volume and switching.
