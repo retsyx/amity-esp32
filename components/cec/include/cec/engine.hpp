@@ -24,7 +24,7 @@ struct Frame {
     uint8_t source() const { return data[0] >> 4; }
     uint8_t destination() const { return data[0] & 15; }
 };
-enum class TxResult : uint8_t { Pending, Success, Nack, ArbitrationLost, LineError, Timeout, Cancelled, Expired };
+enum class TxResult : uint8_t { Pending, Success, Nack, ArbitrationLost, LineError, Timeout, Cancelled };
 
 // Numeric wire evidence only. A LineError can be a missed timer deadline or
 // a sampled low line; it is not by itself proof of faulty external wiring.
@@ -46,9 +46,6 @@ struct ExecutionFence {
     uint32_t expected_generation = 0;
     const std::atomic<uint32_t> *secondary_generation = nullptr;
     uint32_t expected_secondary_generation = 0;
-    uint64_t expires_at_us = 0; // Receiver clock; zero is reserved for matching cleanup/legacy.
-    const std::atomic<uint32_t> *tertiary_generation = nullptr;
-    uint32_t expected_tertiary_generation = 0;
 };
 // Xtensa does not report all atomic read/modify/write operations lock-free,
 // but an aligned 32-bit acquire load is inline. Audit the target load's IRAM

@@ -226,10 +226,6 @@ static void terminal_failure_diagnostics_tests() {
         finish(completion);
         assert(completion.result.load() == cec::TxResult::Cancelled && warning_logs.size() == ++logged);
         assert(warning_logs.back() == "TX failed (GPIO 36, 3 bytes: 40 44 6d, result Cancelled, attempts 0, started false)");
-        assert(bus.send_async_guarded(press, {nullptr, 0, nullptr, 0, now + 1}, completion, 1)); step();
-        finish(completion);
-        assert(completion.result.load() == cec::TxResult::Expired && warning_logs.size() == ++logged);
-        assert(warning_logs.back() == "TX failed (GPIO 36, 3 bytes: 40 44 6d, result Expired, attempts 0, started false)");
 
         external_low |= mask; gpio_set_level(pin, 1); step();
         assert(bus.send_async_guarded(press, {}, completion, 1)); finish(completion);
@@ -494,36 +490,35 @@ static void full_fifo_tests() {
 }
 
 static void independent_epoch_fence_tests() {
-    std::atomic<uint32_t> route{1}, authority{1}, epoch{1};
-    cec::ExecutionFence fence{&route,1,&authority,1};
-    fence.tertiary_generation=&epoch;fence.expected_tertiary_generation=1;
+    std::atomic<uint32_t> route{1}, epoch{1};
+    cec::ExecutionFence fence{&route,1,&epoch,1};
     const cec::Frame frame{{0x4f,0xab},2};
     {
         cec::Bus bus;assert(bus.start(36)==ESP_OK);
         const auto edges=pin_edges[36];cec::TxCompletion completion;
-        // Changing only the third lifetime cancels queued work before dispatch.
+        // Changing only the second lifetime cancels queued work before dispatch.
         assert(bus.send_async_guarded(frame,fence,completion,1));epoch.store(2);
         finish(completion);assert(completion.result.load()==cec::TxResult::Cancelled&&pin_edges[36]==edges);
         // The same guard is checked after Engine::begin while waiting for a
         // free wire, before the actual first edge.
         external_low|=uint64_t{1}<<36;gpio_set_level(36,1);step();
         external_low&=~(uint64_t{1}<<36);gpio_set_level(36,1);step();
-        fence.expected_tertiary_generation=2;const auto cancel_at=now+5000;
+        fence.expected_secondary_generation=2;const auto cancel_at=now+5000;
         before_tick=[&]{if(now>=cancel_at)epoch.store(3);};
         assert(bus.send_async_guarded(frame,fence,completion,1));finish(completion);
         before_tick={};assert(completion.result.load()==cec::TxResult::Cancelled&&pin_edges[36]==edges);
         // An already-started waveform finishes even if that lifetime changes.
-        fence.expected_tertiary_generation=3;
+        fence.expected_secondary_generation=3;
         before_tick=[&]{if(pin_edges[36]>edges)epoch.store(4);};
         assert(bus.send_async_guarded(frame,fence,completion,1));finish(completion);
         before_tick={};assert(completion.result.load()==cec::TxResult::Success&&epoch.load()==4);
         assert(!bus.send_async_guarded(frame,fence,completion,1));
-        fence.expected_tertiary_generation=4;
+        fence.expected_secondary_generation=4;
         auto unaligned=fence;
-        unaligned.tertiary_generation=reinterpret_cast<const std::atomic<uint32_t>*>(reinterpret_cast<uintptr_t>(&epoch)+1);
+        unaligned.secondary_generation=reinterpret_cast<const std::atomic<uint32_t>*>(reinterpret_cast<uintptr_t>(&epoch)+1);
         assert(!bus.send_async_guarded(frame,unaligned,completion,1));
         assert(bus.send_async_guarded(frame,fence,completion,1));finish(completion);
-        assert(completion.result.load()==cec::TxResult::Success&&route.load()==1&&authority.load()==1);
+        assert(completion.result.load()==cec::TxResult::Success&&route.load()==1);
         assert(bus.statistics().cancelled==2&&bus.statistics().transmitted==2&&bus.statistics().tx_errors==0);
     }
     assert(!timer&&tasks.empty()&&!output_low);
@@ -606,9 +601,9 @@ int main() {
         assert(cec::Bus::runtime_statistics().timer_instances == 1);
         external_low = (uint64_t{1} << 10) | (uint64_t{1} << 12); gpio_set_level(10, 1); step();
         external_low &= ~(uint64_t{1} << 12); gpio_set_level(12, 1); step(); // Fresh free-time interval before first edge.
-        const auto cancelled_edges = pin_edges[11], expired_edges = pin_edges[12];
+        const auto cancelled_edges = pin_edges[11];
         for (unsigned i = 0; i < lines.size(); ++i) {
-            const cec::ExecutionFence current{&counters[i], 1, nullptr, 0, i == 2 ? now + 5000 : 0};
+            const cec::ExecutionFence current{&counters[i], 1};
             assert(lines[i].send_async_guarded(f, current, completed[i], 1));
         }
         counters[1].store(2); // Already queued; no first edge is permitted.
@@ -618,10 +613,9 @@ int main() {
         }
         assert(completed[0].result.load() == cec::TxResult::Pending);
         assert(completed[1].result.load() == cec::TxResult::Cancelled);
-        assert(completed[2].result.load() == cec::TxResult::Expired);
-        for (unsigned i = 3; i < lines.size(); ++i)
+        for (unsigned i = 2; i < lines.size(); ++i)
             assert(completed[i].result.load() == cec::TxResult::Success);
-        assert(pin_edges[11] == cancelled_edges && pin_edges[12] == expired_edges);
+        assert(pin_edges[11] == cancelled_edges);
         for (unsigned pass = 0; pass < 1400; ++pass) pump();
         assert(completed[0].result.load() != cec::TxResult::Pending && completed[0].result.load() != cec::TxResult::Success);
         lines[0].stop(); external_low = 0; gpio_set_level(10, 1);

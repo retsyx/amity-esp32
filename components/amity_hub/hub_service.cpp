@@ -950,7 +950,7 @@ struct HubService::Impl : Adapter {
         if(command->reply&&command->reply->canceled.load()&&command->kind!=Kind::SettingsCommit){free_reservation(*command);return;}
         if(command->kind==Kind::Owned&&command->action().owned.kind==system::OwnedIntentKind::activity){
             const auto& intent=command->action().owned;
-            if(command->action().auth.authority!=system::OwnedAuthority::control||!owner_authorized(command->action().auth)||
+            if(!owner_authorized(command->action().auth)||
                intent.target.port.octopus_id!=octopus||intent.target.port.consortium_id!=consortium){finish(command->reply,{system::AdmissionCode::unauthorized,"Original controller authority is unavailable"});free_reservation(*command);return;}
             if(!intent.generation){finish(command->reply,{system::AdmissionCode::invalid,"Missing original activity generation"});free_reservation(*command);return;}
             observe_controller_boot(command->action().auth.controller_boot);
@@ -1156,7 +1156,6 @@ struct HubService::Impl : Adapter {
             auto* engine=adapter(intent.target.port.tentacle_id);if(!engine)return dispatched(false);
             system::OwnedAuthorization auth=activity_auth;
             if(local_coordinator.load()){auth.controller_id=owned_controller;auth.controller_boot=auth.owner_boot=local_boot;auth.config_revision=owned_config_revision;auth.link_id={};}
-            auth.authority=system::OwnedAuthority::control;
             if(intent.activity_step){
                 auto* request=new(std::nothrow)ActionCommand{Kind::Owned};if(!request)return dispatched(false);
                 request->action().owned=intent;request->action().auth=auth;request->action().activity_instance=activity_instance.load();request->local_activity_step=true;return dispatched(submit(request)==ESP_OK,{},true);
@@ -1501,13 +1500,10 @@ bool HubService::Adapter::send(BusSide side, uint8_t destination, const uint8_t 
         }else if(executing_auth) {
             fence.secondary_generation=&owned_wire_generation;
             fence.expected_secondary_generation=owned_wire_generation.load();
-            const uint64_t deadline=executing_auth->deadline_ms;
             const auto& root=owner;
             auto check=std::atomic_load(&root.authorizer_slot);
             if(check&&!(*check)(*executing_auth))return false;
-            if(deadline&&deadline!=UINT64_MAX&&data[0]!=0x45)fence.expires_at_us=deadline>UINT64_MAX/1000?UINT64_MAX:deadline*1000;
         }
-        if(emitting_user_key){const auto& root=owner;fence.tertiary_generation=&root.key_generation;fence.expected_tertiary_generation=root.applied_key_generation;}
         const unsigned attempts = data[0] == 0x44 ? 1 : 3;
         const bool paced=setting_activity||pacing_receive||emitting_key_cleanup;
         auto *flight = sending_key && data[0] == 0x44 ? sending_key : paced ? reserve_flight() : nullptr;
@@ -1728,7 +1724,6 @@ bool HubService::Adapter::source_input_next(const system::OwnedIntent& intent,co
 system::AdmissionResult HubService::Adapter::execute_owned(const system::OwnedIntent& intent,const system::OwnedAuthorization& auth,bool validate_only,bool input_announced,uint32_t instance,bool local_step) {
         auto& root=owner;
         using K=system::OwnedIntentKind;
-        if(auth.authority!=system::OwnedAuthority::control)return {system::AdmissionCode::unauthorized,"Original action has the wrong authority class"};
         if(!(local_step?local_activity_authorized(auth,instance):owner_authorized(auth)))return {system::AdmissionCode::unauthorized,"Original controller authority is unavailable"};
         if(intent.target.port.octopus_id!=root.octopus || intent.target.port.consortium_id!=root.consortium ||
            intent.target.port.tentacle_id!=adapter_id || !root.connector_configured(adapter_id))

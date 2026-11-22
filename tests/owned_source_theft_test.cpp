@@ -79,7 +79,7 @@ static void distributed_source_comparison(){
         {{"tv-a",name(controller,m::Side::front,"TV")},{"player-a",name(controller,m::Side::back,"Source")},{"tv-b",name(member,m::Side::front,"TV")},{"player-b",name(member,m::Side::back,"Source")}},
         [&](const m::OwnedIntent& intent){
             assert(intent.target.port.octopus_id==member);auto* previous=latest_task;latest_task=other_task;
-            m::OwnedAuthorization auth{controller,controller_boot,member_boot,link,1,0};auth.authority=m::OwnedAuthority::control;
+            m::OwnedAuthorization auth{controller,controller_boot,member_boot,link,1,0};
             const auto result=(intent.kind==m::OwnedIntentKind::key_edges?other.submit_key_edges(intent.edges,intent.edge_count,intent.generation,link,0):other.submit_owned(intent,auth));latest_task=previous;
             return result.code==m::AdmissionCode::accepted||result.code==m::AdmissionCode::pending||result.code==m::AdmissionCode::overloaded||result.code==m::AdmissionCode::unresolved;
         },controller,1)==ESP_OK);
@@ -153,7 +153,7 @@ static void three_owner_standby_cycles(){
        [&](const m::OwnedIntent& intent){
           const bool is_third=intent.target.port.octopus_id==third;assert(is_third||intent.target.port.octopus_id==member);
           auto* previous=latest_task;latest_task=is_third?third_task:second_task;
-          m::OwnedAuthorization auth{controller,controller_boot,is_third?third_boot:member_boot,is_third?third_link:link,1,0};auth.authority=m::OwnedAuthority::control;
+          m::OwnedAuthorization auth{controller,controller_boot,is_third?third_boot:member_boot,is_third?third_link:link,1,0};
           const auto result=(intent.kind==m::OwnedIntentKind::key_edges?(is_third?tertiary:second).submit_key_edges(intent.edges,intent.edge_count,intent.generation,link,0):(is_third?tertiary:second).submit_owned(intent,auth));latest_task=previous;
           return result.code==m::AdmissionCode::accepted||result.code==m::AdmissionCode::pending||result.code==m::AdmissionCode::overloaded||result.code==m::AdmissionCode::unresolved;
        },controller,1)==ESP_OK);

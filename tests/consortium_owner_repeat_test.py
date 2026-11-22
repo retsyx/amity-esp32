@@ -318,7 +318,7 @@ void asynchronous_context_ignores_ended_logical_session(){
  // Cleanup authority also belongs to the exact logical link, even with the
  // same peer boots, configuration and TLS object on both sides of restart.
  group.role=Group::member;group.authority=a->peer;boot=original.local_boot_id;configuration=1;
- model::OwnedAuthorization old_auth{a->peer,original.peer_boot_id,boot,original.link_id,1,1000};old_auth.authority=model::OwnedAuthority::cleanup;
+ model::OwnedAuthorization old_auth{a->peer,original.peer_boot_id,boot,original.link_id,1,1000};
  auto current_auth=old_auth;current_auth.link_id=new_link;
  assert(!runtime_owned_authorized(old_auth)&&runtime_owned_authorized(current_auth));
 }
@@ -384,7 +384,7 @@ void restart_flags_gate_front_doors_before_scope_rotation(){
   unsigned captures=0;a->context_ready=false;controls.ready=[&](auto,auto,auto){++captures;return true;};
   assert(!initialize_context(*a)&&captures==0&&a->queue.empty());
   group.role=Group::member;group.authority=a->peer;boot=original.local_boot_id;
-  model::OwnedAuthorization auth{a->peer,original.peer_boot_id,boot,original.link_id,1,5000};auth.authority=model::OwnedAuthority::cleanup;
+  model::OwnedAuthorization auth{a->peer,original.peer_boot_id,boot,original.link_id,1,5000};
   assert(!runtime_owned_authorized(auth));
   assert(a->session.scope()==original&&a->tls==transport&&a->tls->usable()&&!a->cancelled&&shutdowns==0&&diagnostic_logs.empty());
  }
@@ -396,9 +396,7 @@ void authorization(){
  group.role=Group::member;group.authority=a->peer;boot=ident<model::BootId>(4);configuration=1;
  const auto scope=a->session.scope();
  model::OwnedAuthorization auth{a->peer,scope.peer_boot_id,boot,scope.link_id,1,200};
- for(auto kind:{model::OwnedAuthority::input,model::OwnedAuthority::control,model::OwnedAuthority::cleanup}){
-  auth.authority=kind;assert(runtime_owned_authorized(auth));clock_ms+=60000;assert(runtime_owned_authorized(auth));
- }
+ assert(runtime_owned_authorized(auth));clock_ms+=60000;assert(runtime_owned_authorized(auth));
  auth.link_id=ident<model::LinkId>(99);assert(!runtime_owned_authorized(auth));auth.link_id=scope.link_id;
  auth.controller_boot=ident<model::BootId>(99);assert(!runtime_owned_authorized(auth));auth.controller_boot=scope.peer_boot_id;
  auth.owner_boot=ident<model::BootId>(99);assert(!runtime_owned_authorized(auth));auth.owner_boot=boot;

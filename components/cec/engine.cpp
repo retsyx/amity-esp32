@@ -12,9 +12,7 @@ namespace cec {
 bool fence_current(ExecutionFence fence) {
     return (!fence.generation || fence.generation->load(std::memory_order_acquire) == fence.expected_generation) &&
         (!fence.secondary_generation ||
-         fence.secondary_generation->load(std::memory_order_acquire) == fence.expected_secondary_generation) &&
-        (!fence.tertiary_generation ||
-         fence.tertiary_generation->load(std::memory_order_acquire) == fence.expected_tertiary_generation);
+         fence.secondary_generation->load(std::memory_order_acquire) == fence.expected_secondary_generation);
 }
 void Engine::set_address(uint8_t address) {
     auto replacement = policy_pending_ ? pending_policy_ : policy_;
@@ -35,8 +33,7 @@ bool Engine::install_receive_policy(ReceivePolicy policy) {
 }
 
 bool Engine::begin(const Frame &frame, uint64_t now, bool retry, ExecutionFence fence) {
-    if (busy() || frame.size == 0 || frame.size > 16 || !fence_current(fence) ||
-        (fence.expires_at_us && now >= fence.expires_at_us)) return false;
+    if (busy() || frame.size == 0 || frame.size > 16 || !fence_current(fence)) return false;
     tx_ = frame;
     tx_fence_ = fence;
     pending_ = true;
@@ -159,8 +156,7 @@ bool Engine::tick(uint64_t now, bool high) {
     if (pending_) {
         // Recheck at the actual first wire edge, after arbitrary bus free-time
         // waits. In-flight frames finish normally; they cannot be unsent.
-        if (tx_fence_.expires_at_us && now >= tx_fence_.expires_at_us) fail(TxResult::Expired);
-        else if (!fence_current(tx_fence_)) fail(TxResult::Cancelled);
+        if (!fence_current(tx_fence_)) fail(TxResult::Cancelled);
         else if (now - requested_ > 1000000) fail(TxResult::Timeout);
         else if (high && !receiving_ && now - high_since_ >= free_time_) {
             pending_ = false;

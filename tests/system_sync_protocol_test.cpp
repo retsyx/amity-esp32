@@ -191,7 +191,7 @@ void intent_delivery_preserves_authorization(){
     // Activity and other non-key work retain the existing ownership check.
     auto power=intent;power.kind=s::OwnedIntentKind::activity;power.selected=true;power.source=intent.target;auto powered=envelope(member,original,power);
     assert(deliver(original,powered,deadline,link)==c::Error::none&&member.submitted.size()==1&&authorization_checks==1);
-    const auto& auth=member.authorizations.back();assert(auth.controller_id==original&&auth.controller_boot==id<s::BootId>(12)&&auth.owner_boot==member.boot&&auth.link_id==link&&auth.config_revision==23&&auth.deadline_ms==deadline&&auth.authority==s::OwnedAuthority::control);
+    const auto& auth=member.authorizations.back();assert(auth.controller_id==original&&auth.controller_boot==id<s::BootId>(12)&&auth.owner_boot==member.boot&&auth.link_id==link&&auth.config_revision==23&&auth.deadline_ms==deadline);
     auth_allowed=false;assert(deliver(original,powered,deadline,link)==c::Error::unauthorized_role&&authorization_checks==2);auth_allowed=true;
     for(const auto& test:std::vector<std::pair<s::AdmissionCode,c::Error>>{{s::AdmissionCode::overloaded,c::Error::queue_full},{s::AdmissionCode::expired,c::Error::expired},{s::AdmissionCode::stale,c::Error::stale_boot},{s::AdmissionCode::invalid,c::Error::invalid_message}}){member.admission=test.first;assert(deliver(original,received,deadline,link)==test.second);}member.admission=s::AdmissionCode::accepted;
     assert(authorization_checks==2);
@@ -238,7 +238,7 @@ void activity_selection_delivery_is_independent(){
         member.admission=code;assert(deliver(original,received,123456,link)==c::Error::none);
         const auto& delivered=member.submitted.back();
         assert(delivered.kind==s::OwnedIntentKind::activity&&delivered.selected&&delivered.repair&&delivered.source==activity.source);
-        assert(!delivered.activity_step&&member.authorizations.back().authority==s::OwnedAuthority::control);
+        assert(!delivered.activity_step);
         assert(result_packets.empty()&&result_fences.empty()&&packets.empty()&&now==began);
     }
     activity.selected=false;activity.repair=false;member.admission=s::AdmissionCode::accepted;

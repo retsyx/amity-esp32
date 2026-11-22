@@ -43,13 +43,11 @@ struct OwnedIntent {
 };
 // Local owner-task completion, not a wire message or saved execution state.
 enum class OwnedContextResult {published,stale,failed};
-enum class OwnedAuthority {control,input,cleanup};
 struct OwnedAuthorization {
     OctopusId controller_id;
     BootId controller_boot, owner_boot;
     LinkId link_id;
     uint64_t config_revision = 0, deadline_ms = 0;
-    OwnedAuthority authority = OwnedAuthority::control;
 };
 struct ScopedSelector {
     std::string value;

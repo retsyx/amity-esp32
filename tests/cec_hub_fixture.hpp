@@ -266,8 +266,7 @@ bool Bus::idle() const {
 }
 static bool current_fence(ExecutionFence fence) {
     return (!fence.generation || fence.generation->load()==fence.expected_generation) &&
-        (!fence.secondary_generation || fence.secondary_generation->load()==fence.expected_secondary_generation) &&
-        (!fence.tertiary_generation || fence.tertiary_generation->load()==fence.expected_tertiary_generation);
+        (!fence.secondary_generation || fence.secondary_generation->load()==fence.expected_secondary_generation);
 }
 bool Bus::send_guarded(const Frame& frame,ExecutionFence fence,unsigned attempts) {
     if(!attempts||!current_fence(fence))return false;
@@ -301,7 +300,6 @@ static bool fixture_complete_next(cec::TxResult result, int gpio) {
     fixture_pending.erase(next); // Return the queue slot before terminal publication.
     if (fixture_before_start) fixture_before_start(pending.gpio, pending.frame);
     if (!cec::current_fence(pending.fence)) result = cec::TxResult::Cancelled;
-    else if (pending.fence.expires_at_us && uint64_t(fixture_time) >= pending.fence.expires_at_us) result = cec::TxResult::Expired;
     else {
         if (pending.frame.size > 1) {
             fixture_completed.push_back(pending.frame);

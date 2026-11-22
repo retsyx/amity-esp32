@@ -251,7 +251,6 @@ void Bus::Impl::log_tx_failure(const Work& work, TxResult outcome, unsigned atte
     case TxResult::LineError: result = "LineError"; break;
     case TxResult::Timeout: result = "Timeout"; break;
     case TxResult::Cancelled: result = "Cancelled"; break;
-    case TxResult::Expired: result = "Expired"; break;
     }
     char bytes[16 * 3]{};
     format_frame(work.frame, bytes);
@@ -338,11 +337,10 @@ void Bus::Impl::service() {
             }
             attempt_pending = false;
         }
-        const bool terminal = outcome == TxResult::Success || outcome == TxResult::Cancelled || outcome == TxResult::Expired;
+        const bool terminal = outcome == TxResult::Success || outcome == TxResult::Cancelled;
         if (!terminal && attempt < work.attempts) {
             const auto fence = work.fence;
-            if (fence.expires_at_us && now >= fence.expires_at_us) outcome = TxResult::Expired;
-            else if (!fence_current(fence)) outcome = TxResult::Cancelled;
+            if (!fence_current(fence)) outcome = TxResult::Cancelled;
             else {
                 xQueueReset(result);
                 portENTER_CRITICAL(&r.lock);
@@ -350,8 +348,7 @@ void Bus::Impl::service() {
                 if (begun && attempt) ++stats.retries;
                 portEXIT_CRITICAL(&r.lock);
                 if (begun) { ++attempt; attempt_pending = true; attempt_started_us = now; return; }
-                outcome = !fence_current(fence) ? TxResult::Cancelled :
-                    fence.expires_at_us && uint64_t(esp_timer_get_time()) >= fence.expires_at_us ? TxResult::Expired : TxResult::LineError;
+                outcome = !fence_current(fence) ? TxResult::Cancelled : TxResult::LineError;
                 if (outcome == TxResult::LineError) {
                     diagnostic = {};
                     diagnostic.reason = LineErrorReason::BeginRejected;
@@ -363,7 +360,7 @@ void Bus::Impl::service() {
         }
         portENTER_CRITICAL(&r.lock);
         if (outcome == TxResult::Success) ++stats.transmitted;
-        else if (outcome == TxResult::Cancelled || outcome == TxResult::Expired) ++stats.cancelled;
+        else if (outcome == TxResult::Cancelled) ++stats.cancelled;
         else if (!(work.frame.size == 1 && outcome == TxResult::Nack)) ++stats.tx_errors;
         portEXIT_CRITICAL(&r.lock);
         log_tx_failure(work, outcome, attempt, work_started, diagnostic);
@@ -441,7 +438,7 @@ static bool valid_fence_storage(ExecutionFence fence) {
             ((reinterpret_cast<uintptr_t>(counter) % alignof(std::atomic<uint32_t>)) == 0 &&
              esp_ptr_internal(counter) && esp_ptr_byte_accessible(counter));
     };
-    return valid(fence.generation) && valid(fence.secondary_generation) && valid(fence.tertiary_generation);
+    return valid(fence.generation) && valid(fence.secondary_generation);
 }
 bool Bus::send_guarded(const Frame &frame, ExecutionFence fence, unsigned attempts) {
     if (!impl_ || !valid_fence_storage(fence) || !fence_current(fence) || !attempts) return false;
