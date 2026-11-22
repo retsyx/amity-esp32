@@ -791,7 +791,7 @@ struct HubService::Impl : Adapter {
         case Kind::OwnerActivity:
             if(!accepted_activity_authorized(command.action().auth)||(command.activity_started&&command.action().activity_instance!=activity_instance.load())){
                 if(command.activity_started){activity_hub.cancel_activity();step_pending=false;pending_step.reset();}
-                last_activity_error="Original controller authority is unavailable";break;
+                last_activity_error="The main Amity disconnected or restarted before the activity finished.";break;
             }
             if(!command.activity_started){stage_owner_selection(command);command.activity_started=true;}
             if(key_cleanup_roles||key_cleanup_pending())return false;
@@ -1127,12 +1127,15 @@ struct HubService::Impl : Adapter {
         if(expected.kind!=actual.kind||expected.target!=actual.target||expected.generation!=actual.generation)return false;
         pending_step=result;step_pending=false;
         using C=system::AdmissionCode;
+        // The activity error is shown to the user; the reason names internals.
+        const char* error=nullptr;
         switch(result.result.code){
-        case C::invalid:case C::stale:case C::expired:case C::unauthorized:
-            last_activity_error=result.result.reason.empty()?"An Amity could not complete the activity command":result.result.reason;
-            break;
+        case C::unauthorized:error="An Amity disconnected or restarted before the activity finished. Choose the activity again.";break;
+        case C::expired:error="An Amity did not respond in time. Choose the activity again.";break;
+        case C::invalid:case C::stale:error="An Amity could not complete the activity. Choose the activity again.";break;
         default:break;
         }
+        if(error){last_activity_error=error;ESP_LOGW(TAG,"Activity step failed code=%d reason=%s",static_cast<int>(result.result.code),result.result.reason.c_str());}
         activity_hub.owned_step_result(actual,result.result);
         return true;
     }
@@ -1317,7 +1320,7 @@ struct HubService::Impl : Adapter {
             finish(command.reply,{system::AdmissionCode::accepted,{}});return true;
         case K::OwnedFence:
             if(step_pending&&pending_step&&pending_step->request.target.port.octopus_id!=octopus&&(!command.management().controller||pending_step->request.target.port.octopus_id==command.management().controller)){
-                last_activity_error="The equipment owner disconnected before activity setup completed";
+                last_activity_error="An Amity disconnected before the activity finished. Choose the activity again.";
                 action_result({pending_step->request,{system::AdmissionCode::unauthorized,last_activity_error}});
             }
             if(!command.management().controller||command.management().controller==owned_controller)for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=adapter(id))if(!command.management().link||command.management().link==engine->received_link){engine->stop_holds();}

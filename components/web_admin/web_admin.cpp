@@ -104,6 +104,7 @@ const char* command_failure(const std::string& path,esp_err_t error) {
     if(path=="/api/password")return error==ESP_ERR_INVALID_ARG?"Enter a password of no more than 128 bytes.":"Could not save password. Please try again.";
     if(path.rfind("/api/matter/",0)==0)return "Matter pairing could not be changed. Try again.";
     if(path.rfind("/api/homekit/",0)==0)return "HomeKit pairing could not be changed. Try again.";
+    if(path.rfind("/api/remotes/",0)==0)return "The remote could not be changed. Try again.";
     return "The request could not be completed. Try again.";
 }
 esp_err_t api(httpd_req_t *req) {
@@ -202,7 +203,7 @@ esp_err_t api(httpd_req_t *req) {
             const auto admitted=remote_approvals.execute(boot,approval,[&]{return approval.pair?ble_remote_start_pairing(20):ble_remote_unpair();});
             if(!admitted.accepted)return web::error(req,"The remote's pairing state changed. Review it before continuing.","409 Conflict");
             e=admitted.result;
-            if(e!=ESP_OK)return web::error(req,esp_err_to_name(e),"409 Conflict");
+            if(e!=ESP_OK){ESP_LOGW("web","%s failed: %s",path.c_str(),esp_err_to_name(e));return web::error(req,command_failure(path,e),"409 Conflict");}
             Json response(cJSON_CreateObject(),cJSON_Delete);cJSON_AddBoolToObject(response.get(),"saved",true);cJSON_AddBoolToObject(response.get(),"admitted",true);cJSON_AddBoolToObject(response.get(),"duplicate",admitted.duplicate);cJSON_AddStringToObject(response.get(),"remote_generation",amity::system::format_uint64(admitted.generation).c_str());return send(req,response.get());
         }
         else if(path=="/api/matter/open")e=amity_matter_open_commissioning(300);
@@ -226,7 +227,6 @@ esp_err_t api(httpd_req_t *req) {
         else if(path=="/api/reboot")system_services::reboot_later();
         else return web::error(req,"Unknown endpoint","404 Not Found");
         if(e==ESP_OK)return web::json(req,"{\"ok\":true}");
-        if(path.rfind("/api/remotes/",0)==0)return web::error(req,esp_err_to_name(e),"409 Conflict");
         ESP_LOGW("web","%s failed: %s",path.c_str(),esp_err_to_name(e));
         return web::error(req,command_failure(path,e),"409 Conflict");
     }
