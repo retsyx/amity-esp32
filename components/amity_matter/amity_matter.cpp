@@ -28,6 +28,7 @@
 #include <app/AttributeAccessInterfaceRegistry.h>
 #include <app/CommandHandler.h>
 #include <app/server/Dnssd.h>
+#include <app/clusters/color-control-server/color-control-server.h>
 #include <app/clusters/keypad-input-server/keypad-input-delegate.h>
 #include <app/clusters/media-input-server/media-input-delegate.h>
 #include <app/clusters/media-playback-server/media-playback-delegate.h>
@@ -395,6 +396,11 @@ esp_err_t start_actuator_substrate() {
 }
 
 }
+
+// Amity exposes no Color Control cluster. Level Control calls this coupling
+// hook only for an endpoint with a color temperature; defining it here keeps
+// the otherwise unused Color Control server out of the image.
+void emberAfPluginLevelControlCoupledColorTempChangeCallback(chip::EndpointId) {}
 
 extern "C" esp_err_t amity_matter_start(const amity_matter_callbacks_t *app_callbacks)
 {
