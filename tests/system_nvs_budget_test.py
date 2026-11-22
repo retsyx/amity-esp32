@@ -3,6 +3,7 @@
 import csv
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 
@@ -24,12 +25,26 @@ records = [('amity_config', [('c0', 16384 + 256), ('c1', 16384 + 256), ('cm0', 1
            ('amity', [('tls_cert', 1600), ('tls_key', 1600), ('admin_auth', 97), ('front_defaults', 256),
                       ('hostname', 128), ('hap_name', 64), ('hap_setup', 404)])]
 
-# A modeled record the firmware no longer names is a stale model.
-sources = ''.join(path.read_text(errors='replace') for path in (ROOT / 'components').rglob('*')
-                  if path.suffix in ('.c', '.cpp', '.h', '.hpp'))
-stale = [name for space, values in records for name in [space] + [key for key, _ in values]
-         if '"' + name + '"' not in sources]
-assert not stale, ('NVS model names records the firmware no longer uses', stale)
+# The model names exactly the records that the amity_cfg writers store.
+components = ROOT / 'components'
+sources = {str(path.relative_to(components)): path.read_text(errors='replace') for path in components.rglob('*')
+           if path.suffix in ('.c', '.cpp', '.h', '.hpp', '.inc')}
+writers = sorted(name for name, text in sources.items() if re.search(r'nvs_open_from_partition\(\s*"amity_cfg"', text))
+assert writers == ['config_store/config_store.cpp', 'config_store/system_configuration_nvs.cpp',
+                   'config_store/system_identity.cpp', 'consortium/credentials.cpp',
+                   'device_settings/factory_reset.cpp'], ('Model the records of this amity_cfg writer', writers)
+space = lambda name: re.search(r'nvs_open_from_partition\(\s*"amity_cfg"\s*,\s*"(\w+)"\s*,\s*NVS_READWRITE', sources[name]).group(1)
+everything = ''.join(sources.values())
+stored = {(space('config_store/config_store.cpp'), key) for key in re.findall(r'config_store::write\(\s*"(\w+)"', everything)}
+stored |= set(re.findall(r'write_record\(\s*"(\w+)"\s*,\s*"(\w+)"', everything))
+stored |= {(space('config_store/system_configuration_nvs.cpp'), key) for pair in
+           re.findall(r'write_verified\(\s*\w+\s*\?\s*"(\w+)"\s*:\s*"(\w+)"', sources['config_store/configuration_journal.cpp']) for key in pair}
+stored |= {(name, key) for name in re.findall(r'\(\s*"(\w+)"\s*\)', re.search(r'NvsIdentity\s+(\w+\(\s*"\w+"\s*\)[^;]*);', sources['config_store/system_identity.cpp']).group(1))
+           for key in re.findall(r'store\.write\(\s*"(\w+)"', sources['config_store/include/identity_journal.hpp'])}
+stored |= {(space('device_settings/factory_reset.cpp'), key) for key in
+           re.findall(r'nvs_set_\w+\(\s*journal\.value\s*,\s*"(\w+)"', sources['device_settings/factory_reset.cpp'])}
+modeled = {(name, key) for name, values in records for key, _ in values}
+assert modeled == stored, ('NVS model differs from the stored records', sorted(modeled - stored), sorted(stored - modeled))
 
 
 def generate(directory, name, records, fits):
