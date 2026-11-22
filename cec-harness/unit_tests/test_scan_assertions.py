@@ -219,15 +219,19 @@ class ScanAssertionTests(unittest.TestCase):
         self.rows[0]["name"] = "component:" + "1" * 32
         name = saved["qualified_name"]
         identity = {"component_id": saved["component_id"]}
-        malformed = {"list": {**identity, "qualified_name": [deepcopy(name)]},
-                     "consortium_id": {**identity, "qualified_name": {"consortium_id": self.group, **name}},
-                     "missing osd_name": {**identity, "qualified_name":
-                                          {key: value for key, value in name.items() if key != "osd_name"}},
-                     "placeholder": {**identity, "qualified_name": None},
-                     "version 3 list": {**identity, "qualified_names": [{"consortium_id": self.group, **name}]}}
-        for case, component in malformed.items():
+        malformed = {"list": ({**identity, "qualified_name": [deepcopy(name)]}, "Malformed saved"),
+                     "consortium_id": ({**identity, "qualified_name": {"consortium_id": self.group, **name}},
+                                       "Malformed saved"),
+                     "missing osd_name": ({**identity, "qualified_name":
+                                           {key: value for key, value in name.items() if key != "osd_name"}},
+                                          "Malformed saved"),
+                     "placeholder": ({**identity, "qualified_name": None}, "has no qualified name"),
+                     # A missing field must fail as missing, not pass as a placeholder.
+                     "version 3 list": ({**identity, "qualified_names": [{"consortium_id": self.group, **name}]},
+                                        "no qualified_name field")}
+        for case, (component, message) in malformed.items():
             self.config["components"] = [component]
-            with self.subTest(case), self.assertRaises(AssertionError):
+            with self.subTest(case), self.assertRaisesRegex(AssertionError, message):
                 self.result.assert_on(self.tv, self.tv.endpoint)
         self.config["components"] = [saved]
         self.result.assert_on(self.tv, self.tv.endpoint)

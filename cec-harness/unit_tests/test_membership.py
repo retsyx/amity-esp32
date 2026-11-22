@@ -376,6 +376,18 @@ class MembershipTests(unittest.TestCase):
         self.assertEqual(f.posts("remove"), [])
         self.assertEqual(f.config, before)
 
+    def test_owner_filter_rejects_saved_equipment_without_a_qualified_name_field(self):
+        f = Fixture()
+        target = f.candidate.identity.device_id
+        row = {"component_id": "5" * 32, "label": "Old source", "kind": "source"}
+        name = {"octopus_id": target, "tentacle_id": 0, "side": "back", "osd_name": "Old source"}
+        for case, component in {"missing": row,
+                                "version 3 list": {**row, "qualified_names": [{"consortium_id": f.group, **name}]}}.items():
+            config = deepcopy(f.config)
+            config["components"].append(component)
+            with self.subTest(case), self.assertRaisesRegex(AssertionError, "no qualified_name field"):
+                AddedAmity._owned_components(config, {target})
+
     def test_cleanup_rejects_retained_owner_settings_or_equipment_after_reset_acknowledgment(self):
         for key in ("octopuses", "adapter_settings", "components"):
             with self.subTest(key=key):

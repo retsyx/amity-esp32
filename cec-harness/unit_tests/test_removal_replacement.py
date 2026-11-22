@@ -105,6 +105,19 @@ class ReplacementTests(unittest.TestCase):
                                                 removed=(SimpleNamespace(device_id="e" * 32),))
                 self.assertEqual(fixture.posts("remove"), [])
 
+    def test_removed_owner_check_rejects_saved_equipment_without_a_qualified_name_field(self):
+        removed = SimpleNamespace(device_id="e" * 32)
+        row = {"component_id": "1" * 32, "label": "Removed source", "kind": "source"}
+        name = {"octopus_id": removed.device_id, "tentacle_id": 0, "side": "back", "osd_name": "Removed source"}
+        for case in ("missing", "version 3 list"):
+            with self.subTest(case):
+                fixture, continuity = self.continuity_fixture()
+                fields = {} if case == "missing" else {"qualified_names": [{"consortium_id": fixture.group, **name}]}
+                fixture.config["components"].append({**row, **fields})
+                with self.assertRaisesRegex(AssertionError, "no qualified_name field"):
+                    continuity.assert_preserved(fixture.member, SimpleNamespace(device_id=fixture.existing_id),
+                                                removed=(removed,))
+
 
 if __name__ == "__main__":
     unittest.main()
