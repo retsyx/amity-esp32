@@ -140,8 +140,7 @@ std::optional<std::string> device_settings_target(const std::string& path){
 }
 std::optional<std::vector<std::string>> request_fields(const std::string& path){
     std::vector<std::string> allowed{"request_id"};
-    if(path=="/api/config"||path=="/api/config/validate")allowed.insert(allowed.end(),{"expected_config_revision","expected_presentation_revision","configuration"});
-    else if(path=="/api/replacements/preview"||path=="/api/replacements/apply")allowed.insert(allowed.end(),{"expected_config_revision","expected_presentation_revision","expected_membership_revision","expected_target_boot_id","previous_octopus_id","replacement_octopus_id","old_hardware_isolated","ports","equipment"});
+    if(path=="/api/replacements/apply")allowed.insert(allowed.end(),{"expected_config_revision","expected_presentation_revision","expected_membership_revision","expected_target_boot_id","previous_octopus_id","replacement_octopus_id","old_hardware_isolated","ports","equipment"});
     else if(path=="/api/membership/scan"){}
     else if(path=="/api/membership/cancel")allowed.push_back("scan_id");
     else if(path=="/api/membership/add")allowed.insert(allowed.end(),{"scan_id","candidate_token","name"});
@@ -151,8 +150,8 @@ std::optional<std::vector<std::string>> request_fields(const std::string& path){
     return allowed;
 }
 bool administrative_path(const std::string& path){
-    for(const auto* exact:{"/api/system","/api/config","/api/config/validate","/api/backup"})if(path==exact)return true;
-    for(const auto* prefix:{"/api/devices/","/api/membership/","/api/operations/","/api/updates","/api/replacements/"})if(path.rfind(prefix,0)==0)return true;
+    for(const auto* exact:{"/api/system","/api/config","/api/updates/cohort"})if(path==exact)return true;
+    for(const auto* prefix:{"/api/devices/","/api/membership/","/api/operations/","/api/replacements/"})if(path.rfind(prefix,0)==0)return true;
     return false;
 }
 void update_operation(Tracked& operation){
@@ -183,11 +182,6 @@ void update_operation(Tracked& operation){
         const auto stage=string(status.get(),"stage");
         if(stage=="admitted"||stage=="applied"||stage=="failed"||stage=="unknown")operation.status=stage;
         operation.error=string(status.get(),"message");operation.rebooting=cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(status.get(),"rebooting"));
-        return;
-    }
-    if(operation.path=="/api/config"||operation.path=="/api/replacements/apply"){
-        const auto status=amity::configuration_activation_status();
-        if(status.request_id.str()==operation.id){operation.status=status.phase;operation.error=status.error;}
         return;
     }
     if(operation.path=="/api/membership/add"){
@@ -378,13 +372,7 @@ bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
         if(path=="/api/system"){result=snapshot(req);return true;}
         if(path=="/api/membership/admission"){result=admission_response(req);return true;}
         if(path=="/api/config"){result=active?web::json(req,published->canonical):error(req,"configuration_unavailable","Equipment configuration needs recovery.","409 Conflict");return true;}
-        if(path=="/api/updates"){result=web::json(req,system_services::updates::status_json());return true;}
         if(path=="/api/updates/cohort"){result=web::json(req,system_services::updates::cohort_status_json());return true;}
-        if(path=="/api/backup"){
-            if(!active){result=error(req,"configuration_unavailable","Equipment configuration needs recovery.","409 Conflict");return true;}
-            httpd_resp_set_hdr(req,"Content-Disposition","attachment; filename=amity-config.json");
-            result=web::json(req,published->canonical);return true;
-        }
         if(path.rfind("/api/operations/",0)==0){
             const auto id=path.substr(std::strlen("/api/operations/"));auto found=std::find_if(operations.begin(),operations.end(),[&](const auto& o){return o.id==id;});
             result=found==operations.end()?error(req,"unknown_operation","This operation is no longer retained. Check current state before retrying.","404 Not Found"):operation_response(req,*found);return true;
@@ -392,7 +380,7 @@ bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
         result=error(req,"not_found","Unknown operation.","404 Not Found");return true;
     }
     if(req->method!=HTTP_POST){result=error(req,"method_not_allowed","Use GET or POST.","405 Method Not Allowed");return true;}
-    if(configuration_is_passive()&&path!="/api/updates/validate"){
+    if(configuration_is_passive()){
         result=error(req,"coordinator_required","This Amity is passive. Open the system coordinator for equipment and activity changes.","403 Forbidden");return true;
     }
     const auto fields=request_fields(path);if(!fields){result=error(req,"not_found","Unknown operation.","404 Not Found");return true;}
@@ -425,7 +413,7 @@ bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
         operation.status="admitted";
         finish();return true;
     }
-    if(path=="/api/replacements/preview"||path=="/api/replacements/apply"){
+    if(path=="/api/replacements/apply"){
         config_store::RevisionPair expected;std::string message;
         if(!active||!expected_pair(root.get(),expected)||expected!=active->revisions()){result=error(req,"stale_revision","Equipment or configuration changed. Review the replacement mapping.","409 Conflict");return true;}
         config_store::ReplacementApproval approval;
@@ -458,41 +446,21 @@ bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
         }
         config_store::Configuration candidate;std::vector<m::ActivityId> affected;
         if(!config_store::propose_octopus_replacement(*active,approval,candidate,affected,message)){result=error(req,"replacement_not_ready",message,"409 Conflict");return true;}
-        if(path=="/api/replacements/apply"){
-            bool revoked=false;
-            const auto queued=amity::activate_distributed_configuration(std::move(candidate),expected,*m::MessageId::parse(id),[&]{
-                bool current_enrolled=false;if(!reviewed_member(*previous,membership_revision,target_boot,current_enrolled)||current_enrolled!=enrolled)return ESP_ERR_INVALID_STATE;
-                if(!enrolled)return ESP_OK;
-                const auto removed=amity::consortium::runtime_remove_octopus(*previous,*m::MessageId::parse(id),membership_revision,target_boot);
-                revoked=removed==ESP_OK;return removed;
-            });
-            operation.candidate=*previous;operation.removal_enrolled=enrolled;
-            if(queued!=ESP_OK){
-                if(revoked){operation.status="failed";operation.error="The previous device membership was removed, but its replacement configuration could not be committed. Replacement is incomplete.";finish();return true;}
-                result=error(req,"activation_pending","The replacement configuration could not be saved. Reload before retrying.","409 Conflict",true);return true;
-            }
-            const auto activation=amity::configuration_activation_status();
-            operation.removal_revisions={activation.config_revision,activation.presentation_revision};operation.status="configuring";
-            if(amity::consortium::runtime_forget_removed_octopus(*previous)!=ESP_OK){operation.status="failed";operation.error="The replacement configuration was saved, but the previous device's name or settings could not be erased. Replacement is incomplete.";}
-            finish();return true;
+        bool revoked=false;
+        const auto queued=amity::activate_distributed_configuration(std::move(candidate),expected,*m::MessageId::parse(id),[&]{
+            bool current_enrolled=false;if(!reviewed_member(*previous,membership_revision,target_boot,current_enrolled)||current_enrolled!=enrolled)return ESP_ERR_INVALID_STATE;
+            if(!enrolled)return ESP_OK;
+            const auto removed=amity::consortium::runtime_remove_octopus(*previous,*m::MessageId::parse(id),membership_revision,target_boot);
+            revoked=removed==ESP_OK;return removed;
+        });
+        operation.candidate=*previous;operation.removal_enrolled=enrolled;
+        if(queued!=ESP_OK){
+            if(revoked){operation.status="failed";operation.error="The previous device membership was removed, but its replacement configuration could not be committed. Replacement is incomplete.";finish();return true;}
+            result=error(req,"activation_pending","The replacement configuration could not be saved. Reload before retrying.","409 Conflict",true);return true;
         }
-        const auto canonical=config_store::serialize_configuration(candidate);
-        Json response(cJSON_CreateObject(),cJSON_Delete);cJSON_AddItemToObject(response.get(),"configuration",cJSON_Parse(canonical.c_str()));cJSON_AddStringToObject(response.get(),"canonical_configuration",canonical.c_str());
-        auto* ids=cJSON_AddArrayToObject(response.get(),"affected_activity_ids");for(auto activity:affected)cJSON_AddItemToArray(ids,cJSON_CreateString(activity.str().c_str()));
-        cJSON_AddStringToObject(response.get(),"pairing_notice","Reconnect and review the equipment on the replacement Amity before starting playback.");result=send(req,response.get());return true;
-    }
-    if(path=="/api/config"||path=="/api/config/validate"){
-        config_store::RevisionPair expected;config_store::Configuration candidate;std::string message;
-        auto* document=cJSON_GetObjectItemCaseSensitive(root.get(),"configuration");
-        if(!active||!expected_pair(root.get(),expected)||expected!=active->revisions()){result=error(req,"stale_revision","Configuration changed. Reload the current choices.","409 Conflict");return true;}
-        if(!document||!config_store::parse_configuration(json(document),candidate,message)||!config_store::reconcile_external_slots(*active,candidate,message)){
-            result=error(req,"invalid_configuration",message.empty()?"A valid configuration is required.":message);return true;
-        }
-        if(candidate.consortium_id!=active->consortium_id||candidate.controller_octopus_id!=active->controller_octopus_id||candidate.primary_zone_id!=active->primary_zone_id){result=error(req,"identity_change","System identity and the home-app screen cannot change through an ordinary configuration edit.","409 Conflict");return true;}
-        if(path=="/api/config/validate"){finish();return true;}
-        const auto e=amity::activate_distributed_configuration(std::move(candidate),expected,*m::MessageId::parse(id));
-        if(e!=ESP_OK){result=error(req,"activation_pending","A configuration activation is already in progress or its revision changed.","409 Conflict",true);return true;}
-        operation.status="configuring";
+        const auto activation=amity::configuration_activation_status();
+        operation.removal_revisions={activation.config_revision,activation.presentation_revision};operation.status="configuring";
+        if(amity::consortium::runtime_forget_removed_octopus(*previous)!=ESP_OK){operation.status="failed";operation.error="The replacement configuration was saved, but the previous device's name or settings could not be erased. Replacement is incomplete.";}
         finish();return true;
     }
     if(path=="/api/membership/scan"){

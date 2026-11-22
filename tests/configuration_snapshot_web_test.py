@@ -163,11 +163,10 @@ void reads_pin_one_revision_and_reuse_canonical_bytes(){
  httpd_req_t req;esp_err_t result=ESP_FAIL;
  req.during_send=[&]{service.published=next;fixture::saved.reset();fixture::loaded.reset();fixture::journal.reset();previous.reset();assert(!retained.expired());};
  assert(read_configuration(&req,"/api/config",result)&&result==ESP_OK&&req.response==bytes&&fixture::serializations==0&&retained.expired());
- req={};assert(read_configuration(&req,"/api/backup",result)&&result==ESP_OK&&req.response==next->canonical&&fixture::serializations==0);
- assert(req.disposition=="attachment; filename=amity-config.json");
+ req={};assert(read_configuration(&req,"/api/config",result)&&result==ESP_OK&&req.response==next->canonical&&fixture::serializations==0);
  service.published.reset();req={};assert(read_configuration(&req,"/api/config",result)&&result==ESP_FAIL);
 }
-int main(){retained_configuration_is_shared();changed_hardware_commits_before_publication();initial_configuration_uses_the_staged_snapshot();ota_health_defers_the_same_candidate();failures_preserve_the_previous_snapshot();reads_pin_one_revision_and_reuse_canonical_bytes();std::cout<<"PASS web configuration snapshots: shared startup/staging, OTA health deferral and retry, commit-before-publication, unchanged old readers, and pinned canonical API/backup reads\n";}
+int main(){retained_configuration_is_shared();changed_hardware_commits_before_publication();initial_configuration_uses_the_staged_snapshot();ota_health_defers_the_same_candidate();failures_preserve_the_previous_snapshot();reads_pin_one_revision_and_reuse_canonical_bytes();std::cout<<"PASS web configuration snapshots: shared startup/staging, OTA health deferral and retry, commit-before-publication, unchanged old readers and pinned canonical API reads\n";}
 '''
 
 
@@ -180,8 +179,7 @@ def main():
     # Exercise the real snapshot capture and read branches without unrelated UI routes.
     capture = router[router.index('    const auto published='):router.index('    if(req->method==HTTP_GET)')]
     config = function(router, '        if(path=="/api/config")')
-    backup = function(router, '        if(path=="/api/backup")')
-    actual += '\nbool read_configuration(httpd_req_t* req,const std::string& path,esp_err_t& result){\n' + capture + config + backup + '\nreturn false;\n}\n'
+    actual += '\nbool read_configuration(httpd_req_t* req,const std::string& path,esp_err_t& result){\n' + capture + config + '\nreturn false;\n}\n'
     cjson = ROOT / 'managed_components/espressif__cjson/cJSON'
     if not (cjson / 'cJSON.c').exists():
         cjson = cjson.parent

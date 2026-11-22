@@ -22,8 +22,6 @@
 #include "json_input.hpp"
 #include "qrcodegen.h"
 #include "esp_app_desc.h"
-#include "esp_wifi.h"
-#include "esp_heap_caps.h"
 #include "esp_https_server.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -48,46 +46,6 @@ esp_err_t send(httpd_req_t *req,cJSON *root) {
     char *s=cJSON_PrintUnformatted(root);
     if(!s)return web::error(req,"Out of memory","503 Service Unavailable");
     auto e=web::json(req,s);cJSON_free(s);return e;
-}
-esp_err_t status(httpd_req_t *req) {
-    auto s=hub->snapshot();Json root(cJSON_CreateObject(),cJSON_Delete);
-    cJSON_AddStringToObject(root.get(),"version",esp_app_get_description()->version);
-    cJSON_AddStringToObject(root.get(),"hostname",device_settings::hostname());
-    cJSON_AddStringToObject(root.get(),"front_physical_address",device_settings::format_physical_address(device_settings::front_physical_address()).c_str());
-    if(s.front_physical_address==0xffff)cJSON_AddNullToObject(root.get(),"determined_front_physical_address");
-    else cJSON_AddStringToObject(root.get(),"determined_front_physical_address",device_settings::format_physical_address(s.front_physical_address).c_str());
-    cJSON_AddNumberToObject(root.get(),"free_heap",esp_get_free_heap_size());
-    cJSON_AddNumberToObject(root.get(),"free_internal_heap",heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));
-    wifi_ap_record_t access_point{};
-    const bool wifi_connected=esp_wifi_sta_get_ap_info(&access_point)==ESP_OK;
-    cJSON_AddBoolToObject(root.get(),"wifi_connected",wifi_connected);
-    if(wifi_connected) {
-        cJSON_AddNumberToObject(root.get(),"wifi_rssi",access_point.rssi);
-        cJSON_AddNumberToObject(root.get(),"wifi_channel",access_point.primary);
-        const auto *ssid=reinterpret_cast<const char*>(access_point.ssid);
-        const std::string network(ssid,strnlen(ssid,sizeof(access_point.ssid)));
-        if(!network.empty())cJSON_AddStringToObject(root.get(),"wifi_ssid",network.c_str());
-    }
-    cJSON_AddBoolToObject(root.get(),"ready",s.ready);
-    cJSON_AddBoolToObject(root.get(),"discovering",s.discovering);
-    cJSON_AddBoolToObject(root.get(),"activity_settling",s.activity_settling);
-    cJSON_AddStringToObject(root.get(),"activity_error",s.activity_error.c_str());
-    cJSON_AddNumberToObject(root.get(),"discovery_generation",s.discovery_generation);
-    cJSON_AddNumberToObject(root.get(),"activity_generation",s.activity_generation);
-    cJSON_AddNumberToObject(root.get(),"current_activity",s.current_activity);
-    cJSON_AddNumberToObject(root.get(),"front_address",s.front_address);
-    cJSON_AddNumberToObject(root.get(),"back_address",s.back_address);
-    cJSON_AddNumberToObject(root.get(),"tx_errors",s.tx_errors);
-    cJSON_AddNumberToObject(root.get(),"rx_dropped",s.rx_dropped);
-    cJSON_AddStringToObject(root.get(),"hardware","Amity Board / Fin");
-    auto *devices=cJSON_AddArrayToObject(root.get(),"devices");
-    for(auto &d:s.devices) {
-        auto *o=cJSON_CreateObject();cJSON_AddItemToArray(devices,o);
-        cJSON_AddStringToObject(o,"name",d.name.c_str());cJSON_AddStringToObject(o,"bus",d.bus==amity::BusSide::Front?"front":"back");
-        cJSON_AddNumberToObject(o,"address",d.address);cJSON_AddNumberToObject(o,"physical_address",d.physical_address);cJSON_AddNumberToObject(o,"type",d.type);
-        cJSON_AddNumberToObject(o,"vendor_id",d.vendor_id);
-    }
-    return send(req,root.get());
 }
 esp_err_t remotes(httpd_req_t *req) {
     ble_remote_status_t s{};ble_remote_get_status(&s);Json root(cJSON_CreateObject(),cJSON_Delete);
@@ -203,12 +161,11 @@ esp_err_t api(httpd_req_t *req) {
     }
     if(!web::authenticated(req))return web::error(req,"Login required","401 Unauthorized");
     if(device_settings::reset_pending())return web::error(req,"Factory reset is pending. Restarting.","503 Service Unavailable");
-    if(configuration_is_passive()&&req->method==HTTP_POST&&path!="/api/logout"&&path!="/api/password"&&path!="/api/firmware"&&path!="/api/reboot"&&path!="/api/updates/validate")
+    if(configuration_is_passive()&&req->method==HTTP_POST&&path!="/api/logout"&&path!="/api/password"&&path!="/api/firmware"&&path!="/api/reboot")
         return web::error(req,"Configuration changes are unavailable while Amity is passive or updating.","403 Forbidden");
     esp_err_t administration_result=ESP_OK;if(activity_editor_request(*hub,req,path,administration_result))return administration_result;
     if(admin_request(req,path,administration_result))return administration_result;
     if(req->method==HTTP_GET) {
-        if(path=="/api/status")return status(req);
         if(path=="/api/remotes")return remotes(req);
         if(path=="/api/matter")return matter(req);
         if(path=="/api/homekit")return homekit(req);

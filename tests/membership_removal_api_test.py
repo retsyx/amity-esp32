@@ -37,7 +37,7 @@ def main():
     tracked = block(source, 'struct Tracked {') + ';\n'
     update = block(source[source.index('void update_operation('):], '    if(removing)')
     remove = block(source[source.index('    Tracked operation;'):], '    if(path=="/api/membership/remove")').replace('root.get()', 'root')
-    replacement = block(source[source.index('    Tracked operation;'):], '    if(path=="/api/replacements/preview"').replace('root.get()', 'root')
+    replacement = block(source[source.index('    Tracked operation;'):], '    if(path=="/api/replacements/apply"').replace('root.get()', 'root')
     test = '#include "configuration_replacement.hpp"\n' + fixture + r'''
 namespace removal_fixture {
 namespace m=amity::system;
@@ -48,10 +48,8 @@ amity::SystemControl* control=nullptr;
 std::unique_ptr<amity::SystemControl> owned_control;
 std::optional<config_store::Configuration> active;
 std::string rejection,rejection_message;
-std::string serialized;
 bool finished=false;
 esp_err_t error(httpd_req_t*,const char* code,const std::string& message,const char* ="400 Bad Request",bool=false){rejection=code;rejection_message=message;return ESP_FAIL;}
-esp_err_t send(httpd_req_t*,cJSON* root){char* text=cJSON_PrintUnformatted(root);serialized=text;cJSON_free(text);return ESP_OK;}
 }
 namespace amity::consortium {
 unsigned revoked=0,forgotten=0;
@@ -85,8 +83,8 @@ bool perform(cJSON* root){
 ''' + remove + r'''
     assert(false);return false;
 }
-bool perform_replace(cJSON* root,bool apply){
-    const std::string path=apply?"/api/replacements/apply":"/api/replacements/preview",id=string(root,"request_id");httpd_req_t* req=nullptr;[[maybe_unused]] esp_err_t result=ESP_OK;
+bool perform_replace(cJSON* root){
+    const std::string path="/api/replacements/apply",id=string(root,"request_id");httpd_req_t* req=nullptr;[[maybe_unused]] esp_err_t result=ESP_OK;
     Tracked operation;operation.id=id;operation.path=path;operation.status="complete";
     auto finish=[&]{finished=true;update_remove(operation);captured=operation;};
 ''' + replacement + r'''
@@ -154,13 +152,11 @@ int run(){
     prepare(false);Configuration clean;std::vector<m::ActivityId> affected;std::string error;assert(propose_octopus_removal(*active,id<m::OctopusId>(9),clean,affected,error));
     assert(amity::activate_distributed_configuration(clean,active->revisions(),id<m::MessageId>(201))==ESP_OK);active=control->configuration;
     root=request(false);cJSON_ReplaceItemInObjectCaseSensitive(root.get(),"affected_activity_ids",cJSON_CreateArray());perform(root.get());assert(finished&&captured.status=="complete"&&names.empty());
-    // Replace remains a separate action: preview is read-only while apply
-    // revokes the isolated old device and preserves every mapped activity ID.
+    // Replace revokes the isolated old device and preserves every mapped activity ID.
     prepare();auto expanded=*active;expanded.octopuses.push_back({id<m::OctopusId>(10),"Replacement","Replacement",false,1});
     assert(amity::activate_distributed_configuration(expanded,active->revisions(),id<m::MessageId>(202))==ESP_OK);active=control->configuration;
     fixture::peers.push_back(fixture::remote(10,20,1,1));const auto original_order=active->activity_order;
-    root=replacement_request();perform_replace(root.get(),false);assert(!finished&&revoked==0&&forgotten==0&&!serialized.empty()&&control->configuration.activity_order==original_order);
-    perform_replace(root.get(),true);assert(finished&&captured.status=="configuring"&&revoked==1&&forgotten==1&&control->configuration.activity_order==original_order);
+    root=replacement_request();perform_replace(root.get());assert(finished&&captured.status=="configuring"&&revoked==1&&forgotten==1&&control->configuration.activity_order==original_order);
     assert(control->configuration.activities.size()==2&&serialize_configuration(control->configuration).find(id<m::OctopusId>(9).str())==std::string::npos);
     removal_stage="complete";reset_result="offline";update_remove(captured);assert(captured.status=="applied"&&captured.reset=="offline");
     std::cout<<"PASS actual Remove API: exact reviewed activity set and revision/boot fences, no revoke before stage/reservation, marker failure never complete, reset outcome independent, all owner traces purged, saved-only/metadata-only retries\n";

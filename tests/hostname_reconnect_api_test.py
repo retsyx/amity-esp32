@@ -68,7 +68,7 @@ int main(){
   assert(bool(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(body.get(),"ready")))==ready);
  }
  for(int method:{HTTP_POST,HTTP_OPTIONS}){httpd_req_t req;req.method=method;assert(api(&req)==ESP_FAIL&&req.status=="401 Unauthorized");no_cors(req);}
- for(const char* path:{"/api/config","/api/status","/api/ready?cache=1"}){httpd_req_t req;req.uri=path;assert(api(&req)==ESP_FAIL&&req.status=="401 Unauthorized");no_cors(req);}
+ for(const char* path:{"/api/config","/api/activity-editor/status","/api/ready?cache=1"}){httpd_req_t req;req.uri=path;assert(api(&req)==ESP_FAIL&&req.status=="401 Unauthorized");no_cors(req);}
  {httpd_req_t req;req.content_len=1;assert(api(&req)==ESP_FAIL&&req.status=="400 Bad Request");no_cors(req);}
  {httpd_req_t req;ui_enabled=false;assert(api(&req)==ESP_FAIL&&req.status=="403 Forbidden");no_cors(req);ui_enabled=true;}
  assert(downstream==0&&timing_reads==0);

@@ -42,11 +42,11 @@ int main(){
         "scans","zones/0123456789abcdef0123456789abcdef/activity",
         "zones/0123456789abcdef0123456789abcdef/key",
         "zones/0123456789abcdef0123456789abcdef/standby","settings/remotes",
-        "updates/validate","updates/cohort","updates/chunk","updates/install","updates/cancel"}){
+        "updates/validate","updates/cohort","updates/chunk","updates/install","updates/cancel",
+        "config","config/validate","replacements/preview"}){
         assert(!request_fields(std::string("/api/")+path));
     }
-    for(const auto* path:{"config","config/validate","replacements/preview",
-        "replacements/apply","membership/scan","membership/cancel","membership/add","membership/remove"}){
+    for(const auto* path:{"replacements/apply","membership/scan","membership/cancel","membership/add","membership/remove"}){
         const auto fields=request_fields(std::string("/api/")+path);
         assert(fields&&std::count(fields->begin(),fields->end(),"request_id")==1);
         for(const auto& field:*fields)assert(field!="remote_id"&&field!="allow"&&field!="primary_remote_id");
@@ -68,11 +68,12 @@ int main(){
     assert(!request_fields("/api/unknown"));
     for(const auto* path:{"/api/status","/api/setup","/api/login","/api/logout",
         "/api/password","/api/hostname","/api/reboot","/api/factory-reset","/api/firmware",
-        "/api/remotes","/api/remotes/pair","/api/matter","/api/matter/open","/api/homekit"})
+        "/api/remotes","/api/remotes/pair","/api/matter","/api/matter/open","/api/homekit",
+        "/api/backup","/api/config/validate","/api/updates","/api/updates/validate"})
         assert(!administrative_path(path));
-    for(const auto* path:{"/api/system","/api/config","/api/backup","/api/config/validate",
+    for(const auto* path:{"/api/system","/api/config",
         "/api/membership/admission","/api/operations/0123456789abcdef0123456789abcdef",
-        "/api/devices/0123456789abcdef0123456789abcdef/settings","/api/updates","/api/updates/cohort"})
+        "/api/devices/0123456789abcdef0123456789abcdef/settings","/api/updates/cohort"})
         assert(administrative_path(path));
     auto* body=cJSON_CreateObject();auto* capabilities=cJSON_AddObjectToObject(body,"capabilities");
 ''' + capacity + r'''
