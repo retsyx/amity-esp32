@@ -30,6 +30,8 @@ concurrency:
 jobs:
   browser-tests:
     name: Web UI tests
+    # Branch pushes cover pull requests from this repository; only forks need the PR run.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
@@ -59,21 +61,18 @@ jobs:
             echo "::endgroup::"
           done
 
-  build:
-    name: ESP32-S3 firmware
+  host-tests:
+    name: Host tests
+    # Branch pushes cover pull requests from this repository; only forks need the PR run.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 20
     defaults:
       run:
         shell: bash
     env:
-      IDF_PATH: ${{ github.workspace }}/.cache/esp-idf
-      ESP_MATTER_PATH: ${{ github.workspace }}/.cache/esp-matter
-      IDF_TOOLS_PATH: ${{ github.workspace }}/.cache/espressif
       GOCACHE: ${{ github.workspace }}/.cache/go-build
       GOMODCACHE: ${{ github.workspace }}/.cache/go-mod
-      RELEASE_TAG: ${{ inputs.release_tag || '' }}
-
     steps:
       - name: Check out firmware
         uses: actions/checkout@v7
@@ -91,11 +90,60 @@ jobs:
           go-version-file: amity-provision/go.mod
           cache-dependency-path: amity-provision/go.sum
 
-      - name: Set up Node.js for host tests
+      - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
           node-version: '22'
           package-manager-cache: false
+
+      - name: Install host test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends cmake ninja-build libssl-dev
+
+      # Every host test that needs no ESP-IDF checkout, managed components or
+      # firmware build, including the setup tool's Go and factory record tests.
+      - name: Run host tests
+        run: sh tests/run_host_tests.sh standalone
+
+  build:
+    name: ESP32-S3 firmware
+    # Branch pushes cover pull requests from this repository; only forks need the PR run.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      IDF_PATH: ${{ github.workspace }}/.cache/esp-idf
+      ESP_MATTER_PATH: ${{ github.workspace }}/.cache/esp-matter
+      IDF_TOOLS_PATH: ${{ github.workspace }}/.cache/espressif
+      GOCACHE: ${{ github.workspace }}/.cache/go-build
+      GOMODCACHE: ${{ github.workspace }}/.cache/go-mod
+      RELEASE_TAG: ${{ inputs.release_tag || '' }}
+      IDF_CCACHE_ENABLE: '1'
+      CCACHE_DIR: ${{ github.workspace }}/.cache/ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_MAXSIZE: 2G
+
+    steps:
+      - name: Check out firmware
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        id: python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: amity-provision/go.mod
+          cache-dependency-path: amity-provision/go.sum
 
       - name: Validate release version
         if: inputs.release_tag != ''
@@ -114,7 +162,19 @@ jobs:
             dfu-util libusb-1.0-0 libdbus-1-dev libglib2.0-dev libavahi-client-dev \
             libgirepository1.0-dev libcairo2-dev libreadline-dev libevent-dev default-jre
 
+      # The SDK tools' Python environment is bound to the exact interpreter.
+      - name: Restore SDKs and tools
+        id: sdk-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            .cache/esp-idf
+            .cache/esp-matter
+            .cache/espressif
+          key: sdk-${{ runner.os }}-python${{ steps.python.outputs.python-version }}-${{ hashFiles('SDK_VERSIONS.txt') }}
+
       - name: Check out ESP-IDF
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
         uses: actions/checkout@v7
         with:
           repository: espressif/esp-idf
@@ -123,6 +183,7 @@ jobs:
           persist-credentials: false
 
       - name: Check out ESP-Matter
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
         uses: actions/checkout@v7
         with:
           repository: espressif/esp-matter
@@ -131,6 +192,7 @@ jobs:
           persist-credentials: false
 
       - name: Initialize SDK submodules
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
         env:
           CHIP_COMMIT: ${{ steps.sdk.outputs.chip }}
         run: |
@@ -145,22 +207,51 @@ jobs:
           python3 scripts/checkout_submodules.py --platform esp32 linux --shallow --jobs 4
 
       - name: Install SDK tools
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
         run: |
           "$IDF_PATH/install.sh" esp32s3
           source "$IDF_PATH/export.sh"
           "$ESP_MATTER_PATH/install.sh" --no-host-tool
+
+      # Saved before the build so a later failure still keeps the installation.
+      - name: Save SDKs and tools
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            .cache/esp-idf
+            .cache/esp-matter
+            .cache/espressif
+          key: ${{ steps.sdk-cache.outputs.cache-primary-key }}
+
+      - name: Restore compiler cache
+        uses: actions/cache/restore@v6
+        with:
+          path: .cache/ccache
+          key: ccache-${{ runner.os }}-${{ hashFiles('SDK_VERSIONS.txt') }}-${{ github.sha }}
+          restore-keys: ccache-${{ runner.os }}-${{ hashFiles('SDK_VERSIONS.txt') }}-
 
       - name: Build firmware and provisioning package
         run: |
           source tools/env.sh
           idf.py set-target esp32s3
           idf.py build provisioning-package
+          ccache --show-stats
 
-      # Host tests use the pinned SDK, managed components and generated build configuration.
-      - name: Run firmware host tests
+      # Only main saves the compiler cache; other branches and tags restore main's.
+      - name: Save compiler cache
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v6
+        with:
+          path: .cache/ccache
+          key: ccache-${{ runner.os }}-${{ hashFiles('SDK_VERSIONS.txt') }}-${{ github.sha }}
+
+      # The rest of the host tests read the pinned SDK, managed components or
+      # the generated build configuration; the host-tests job runs the others.
+      - name: Run host tests that need the SDK
         run: |
           source tools/env.sh
-          sh tests/run_host_tests.sh
+          sh tests/run_host_tests.sh sdk
 
       - name: Build provisioner release packages
         run: python3 amity-provision/build_release.py
