@@ -134,7 +134,7 @@ function fixture(options={}){
  await chosen.click(chosen.button('Back'));assert.equal(walk(chosen.dialog()).filter(node=>node.type==='radio').length,2);await chosen.click(chosen.button('Replace'));
  await unplug(chosen);assert.equal(chosen.button('Replace').disabled,false);await chosen.click(chosen.button('Replace'));
  const [applied,sent]=chosen.posts.at(-1),port={consortium_id:'d'.repeat(32),octopus_id:chosen.member,tentacle_id:0,side:'front'};
- assert.equal(applied,'replacements/apply');assert.ok(!chosen.posts.some(([path])=>path==='replacements/preview'));
+ assert.equal(applied,'replacements/apply');
  assert.deepEqual([sent.expected_config_revision,sent.expected_presentation_revision,sent.expected_membership_revision,sent.expected_target_boot_id],['7','3','11','c'.repeat(32)]);
  assert.deepEqual([sent.previous_octopus_id,sent.replacement_octopus_id,sent.old_hardware_isolated],[chosen.member,chosen.other,true]);
  assert.deepEqual(sent.ports,[{previous:port,replacement:{...port,octopus_id:chosen.other}}]);

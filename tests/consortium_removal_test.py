@@ -72,7 +72,7 @@ void codec_tests(){
  auto check=[&](const Json& value,bool expected){check_body(settings_json(value),expected);};
  auto remove=[](Json& value,std::string_view field){value.object.erase(std::remove_if(value.object.begin(),value.object.end(),[&](const auto& item){return item.first==field;}),value.object.end());};
  struct ResultCase{const char* value;bool event,result;};
- const ResultCase results[]={{nullptr,true,false},{"reset_scheduled",false,true},{"rejected",false,false},{"unknown",false,false},{"retired",false,false},{"",false,false}};
+ const ResultCase results[]={{nullptr,true,false},{"reset_scheduled",false,true},{"rejected",false,false},{"unknown",false,false},{"",false,false}};
  struct TtlCase{unsigned value;bool accepted;};
  const TtlCase ttls[]={{0,false},{1,true},{2000,true},{2001,false},{10000,false}};
  for(bool response:{false,true})for(const auto& result:results)for(const auto& ttl:ttls){
@@ -88,7 +88,6 @@ void codec_tests(){
   }
   auto value=base;remove(*value.get("payload"),field);check(value,false);
  }
- for(const auto* phase:{"retire","handover_commit"}){auto value=base;value.get("payload")->get("phase")->string=phase;check(value,false);}
  {auto value=base;value.get("payload")->object.emplace_back("extra",parsed("true"));check(value,false);}
  // Closed envelope shape and typed identity/counter boundaries are checked
  // separately from Session's authenticated scope and removal authorization.

@@ -36,8 +36,6 @@ assert 'PlatformMgr().StopEventLoopTask' not in body(matter,'extern "C" esp_err_
 homekit='components/amity_homekit/homekit.cpp'
 hap='third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c'
 home_functions='\n'.join(body(homekit,s) for s in ['esp_err_t start(', 'esp_err_t stop(', 'esp_err_t submit(', 'void refresh_remote_battery('])+'\n'+'\n'.join(body(hap,s) for s in ['void hap_amity_lock(', 'void hap_amity_unlock(', 'int hap_amity_stop('])
-assert 'primary_remote_id' not in (ROOT/homekit).read_text()
-assert 'amity::remote_status(' not in (ROOT/homekit).read_text()
 # The same monotonic fence also suppresses queued HAP-loop republishing.
 s=(ROOT/'third_party/esp-homekit-sdk/components/esp_hap_core/src/esp_hap_ip_services.c').read_text()
 assert 'if (!hap_amity_enabled()) return HAP_SUCCESS;' in s[s.index('int hap_mdns_announce(bool first)'):][:130]

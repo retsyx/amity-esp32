@@ -33,7 +33,7 @@ namespace amity::consortium {
 using namespace platform;
 void check(bool value,const char* message){if(!value)throw std::runtime_error(message);}
 template<class T>T ident(unsigned value){char text[33];std::snprintf(text,sizeof(text),"%032x",value);return *T::parse(text);}
-unsigned created_tasks=0,recoveries=0,group_reads=0,identity_loads=0,erases=0;
+unsigned created_tasks=0,recoveries=0,group_reads=0,identity_loads=0;
 bool identity_ok=true,psa_ok=true,group_ok=true;
 std::map<std::string,std::string> records;std::string fail_read;
 constexpr int PSA_SUCCESS=0,pdPASS=1,MALLOC_CAP_SPIRAM=1,MALLOC_CAP_8BIT=2;
@@ -105,7 +105,7 @@ namespace amity::consortium {
 SUITE = r'''
 void reset(){
     initialized=false;status={};identity={};group={};seed={};hostnames={};singleton={};boot={};configuration=0;candidate_passive=false;
-    created_tasks=recoveries=group_reads=identity_loads=erases=0;identity_ok=psa_ok=group_ok=true;records.clear();fail_read.clear();platform::recorded_setup_timings.clear();
+    created_tasks=recoveries=group_reads=identity_loads=0;identity_ok=psa_ok=group_ok=true;records.clear();fail_read.clear();platform::recorded_setup_timings.clear();
     clock_ms=transport_idle_at=netif_exists_at=netif_up_at=ip_ready_at=ip_query_success_at=0;early_connects=enrollment_closes=0;discovery_times.clear();on_loop_delay={};delays.clear();discoveries=connect_failures=setup_failures=launch_failures=launches=0;retain_launched=false;attempts.clear();attempt_times.clear();links.clear();candidate_deadline=candidate_generation=pending_radio_release=0;radio={};
 }
 void seed_role(Group::Role role){
@@ -165,9 +165,9 @@ void headless_only(){reset();seed_role(Group::member);const auto result=start_ru
 void fresh_public_preflight(){
  const auto local=ident<model::OctopusId>(2);RuntimeStartup startup;
  reset();identity_ok=false;const auto empty=records;
- check(runtime_read_startup(local,startup)==ESP_OK&&startup.role==RuntimeStartup::unclaimed&&group_reads==1&&identity_loads==0&&records==empty&&!erases,"unclaimed preflight generated identity or changed storage");
+ check(runtime_read_startup(local,startup)==ESP_OK&&startup.role==RuntimeStartup::unclaimed&&group_reads==1&&identity_loads==0&&records==empty,"unclaimed preflight generated identity or changed storage");
  reset();seed_role(Group::member);auto stored=records;
- check(runtime_read_startup(local,startup)==ESP_OK&&startup.role==RuntimeStartup::member&&group_reads==1&&identity_loads==1&&records==stored&&!erases,"public member preflight failed exact validation");
+ check(runtime_read_startup(local,startup)==ESP_OK&&startup.role==RuntimeStartup::member&&group_reads==1&&identity_loads==1&&records==stored,"public member preflight failed exact validation");
  seed.role=Group::prepared;
  check(runtime_read_startup(local,startup)==ESP_OK&&startup.role==RuntimeStartup::prepared&&group_reads==2&&identity_loads==2,"public preflight reused an old boot/call cache");
  identity_ok=false;

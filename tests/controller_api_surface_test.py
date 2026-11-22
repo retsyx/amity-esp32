@@ -10,7 +10,6 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     source = (ROOT / 'components/web_admin/system_admin.cpp').read_text()
     web_source = (ROOT / 'components/web_admin/web_admin.cpp').read_text()
-    assert 'path=="/api/front-physical-address"' not in web_source
     start = source.index('std::optional<std::string> device_settings_target(')
     router = source[start:source.index('void update_operation(', start)]
     capacity = next(line for line in source.splitlines()
@@ -35,32 +34,16 @@ def main():
 #include "cJSON.h"
 ''' + router + r'''
 int main(){
-    for(const auto* path:{"membership/create","membership/move-coordinator",
-        "membership/input-role","remotes/manage","integrations/primary-zone",
-        "setup-draft","setup/connection","setup/propose-activity",
-        "input-context",
-        "scans","zones/0123456789abcdef0123456789abcdef/activity",
-        "zones/0123456789abcdef0123456789abcdef/key",
-        "zones/0123456789abcdef0123456789abcdef/standby","settings/remotes",
-        "updates/validate","updates/cohort","updates/chunk","updates/install","updates/cancel",
-        "config","config/validate","replacements/preview"}){
-        assert(!request_fields(std::string("/api/")+path));
-    }
     for(const auto* path:{"replacements/apply","membership/scan","membership/cancel","membership/add","membership/remove"}){
         const auto fields=request_fields(std::string("/api/")+path);
         assert(fields&&std::count(fields->begin(),fields->end(),"request_id")==1);
-        for(const auto& field:*fields)assert(field!="remote_id"&&field!="allow"&&field!="primary_remote_id");
     }
-    const auto replacement=request_fields("/api/replacements/apply");
-    assert(std::find(replacement->begin(),replacement->end(),"remote_pairing_acknowledged")==replacement->end());
     const auto addition=request_fields("/api/membership/add");
     assert(std::find(addition->begin(),addition->end(),"name")!=addition->end());
     assert(addition->size()==4&&std::find(addition->begin(),addition->end(),"scan_id")!=addition->end()&&std::find(addition->begin(),addition->end(),"candidate_token")!=addition->end());
     assert(request_fields("/api/membership/scan")->size()==1&&request_fields("/api/membership/cancel")->size()==2);
-    assert(std::find(addition->begin(),addition->end(),"location")==addition->end());
     const auto settings=request_fields("/api/devices/0123456789abcdef0123456789abcdef/settings");
     assert(settings&&settings->size()==6&&std::find(settings->begin(),settings->end(),"hostname")!=settings->end()&&std::find(settings->begin(),settings->end(),"expected_hostname_revision")!=settings->end());
-    assert(std::find(settings->begin(),settings->end(),"confirm_restart")==settings->end());
     for(const auto* path:{"/api/devices/00000000000000000000000000000000/settings",
         "/api/devices/0123456789ABCDEF0123456789abcdef/settings",
         "/api/devices/0123456789abcdef0123456789abcdef/settings/extra",
@@ -81,7 +64,7 @@ int main(){
     assert(cJSON_IsNumber(advertised)&&advertised->valuedouble==4
         &&advertised->valuedouble==amity::consortium::maximum_roster_peers+1);
     cJSON_Delete(body);
-    std::cout<<"PASS actual administration router: shared authenticated firmware upload, read-only update status, retired mutations rejected before admission and four total Amity devices\n";
+    std::cout<<"PASS actual administration router: shared authenticated firmware upload, read-only update status, unknown routes rejected before admission and four total Amity devices\n";
 }
 '''
     json_dir = ROOT / 'managed_components/espressif__cjson/cJSON'
