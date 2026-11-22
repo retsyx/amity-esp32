@@ -91,6 +91,7 @@ Error Session::typed(const Envelope& e)const{
         if(intent.kind!=model::OwnedIntentKind::key_edges&&(intent.target.port.consortium_id!=scope_.consortium_id||intent.target.port.octopus_id!=scope_.local_id))return Error::target_not_local;
     }
     if(e.kind==Kind::update_chunk&&!e.update_chunk)return Error::invalid_message;
+    if(e.kind==Kind::log_result&&!e.log_chunk)return Error::invalid_message;
     return Error::none;
 }
 Error Session::discard_stale(const Envelope& e,uint64_t received,uint64_t now){

@@ -47,6 +47,7 @@ extern "C" {
 #include <deque>
 #include <cstdio>
 #include <cstring>
+#include <new>
 namespace amity::consortium {
 using namespace platform;
 namespace {
@@ -229,8 +230,8 @@ bool send(Active &link,Kind kind,std::string_view payload,uint32_t ttl=1000){
         if(!current_peer_credential(link,group))return false;
     }
     const auto envelope=outgoing(link,kind,ttl);
-    const auto frame=kind==Kind::update_chunk?update_chunk_envelope(envelope,payload):envelope_json(envelope,payload);
-    return !frame.empty()&&link.tls->send(frame,is_update_kind(kind));
+    const auto frame=kind==Kind::update_chunk?update_chunk_envelope(envelope,payload):kind==Kind::log_result?log_chunk_envelope(envelope,payload):envelope_json(envelope,payload);
+    return !frame.empty()&&link.tls->send(frame,is_bulk_kind(kind));
 }
 #include "settings_runtime.inc"
 #include "logs_runtime.inc"
@@ -244,7 +245,7 @@ bool enroll_lan(Active &active,bool server){
     const auto digest=current.join_digest;std::string incoming;Envelope envelope;auto receive=[&](){
         if(!active.tls->receive(incoming))return false;
         const auto received=now_ms();
-        return parse_envelope(incoming,envelope)==Error::none&&active.tls->received_bulk()==is_update_kind(envelope.kind)&&active.session.admit(envelope,received,received)==Error::none&&envelope.kind==Kind::enrollment_control&&envelope.payload.get("join_id")->string==current.join_id.str()&&envelope.payload.get("join_digest")->string==digest;
+        return parse_envelope(incoming,envelope)==Error::none&&active.tls->received_bulk()==is_bulk_kind(envelope.kind)&&active.session.admit(envelope,received,received)==Error::none&&envelope.kind==Kind::enrollment_control&&envelope.payload.get("join_id")->string==current.join_id.str()&&envelope.payload.get("join_digest")->string==digest;
     };
     if(server){
         const auto store=timing.begin("membership_store");
@@ -340,7 +341,7 @@ bool synchronization_barrier(Active& active,bool server,SynchronizationRound& ro
         const auto now=now_ms();if(now>=until)break;
         std::string body;if(!active.tls->receive(body,static_cast<uint32_t>(until-now)))return trace.fail("synchronization_barrier_receive");
         Envelope envelope;const auto parsed=parse_envelope(body,envelope);if(parsed!=Error::none)return trace.fail("synchronization_barrier_parse",parsed);
-        if(active.tls->received_bulk()!=is_update_kind(envelope.kind))return trace.fail("synchronization_frame_class",Error::invalid_message);
+        if(active.tls->received_bulk()!=is_bulk_kind(envelope.kind))return trace.fail("synchronization_frame_class",Error::invalid_message);
         const auto received=now_ms();auto admitted=active.session.admit(envelope,received,received);
         if(admitted==Error::stale_config){admitted=active.session.discard_stale(envelope,received,received);if(admitted==Error::none)continue;}
         if(admitted!=Error::none&&envelope.kind!=Kind::synchronization){
@@ -486,7 +487,7 @@ bool lifecycle_receive(Active &active,Envelope &envelope,uint32_t timeout=5000){
     unsigned frames=0;
     while(!active.cancelled&&now_ms()<deadline&&frames++<32){
         const auto before=now_ms();if(before>=deadline)return false;
-        std::string bytes;if(!active.tls->receive(bytes,std::min<uint64_t>(5000,deadline-before))||parse_envelope(bytes,envelope)!=Error::none||active.tls->received_bulk()!=is_update_kind(envelope.kind))return false;
+        std::string bytes;if(!active.tls->receive(bytes,std::min<uint64_t>(5000,deadline-before))||parse_envelope(bytes,envelope)!=Error::none||active.tls->received_bulk()!=is_bulk_kind(envelope.kind))return false;
         const auto now=now_ms();if(now>=deadline)return false;const auto admitted=active.session.admit(envelope,now,now);
         if(admitted==Error::none)return true;
         // Valid observations/results can precede the reset ACK on the same
@@ -509,7 +510,7 @@ bool exchange_hostname(Active& active,const std::string& expected,LinkTrace* dia
     std::string raw;if(!active.tls->receive(raw))return trace.fail("hostname_receive");
     Envelope response;const auto received=now_ms();
     const auto parsed=parse_envelope(raw,response);if(parsed!=Error::none)return trace.fail("hostname_parse",parsed);
-    if(active.tls->received_bulk()!=is_update_kind(response.kind))return trace.fail("hostname_frame_class",Error::invalid_message);
+    if(active.tls->received_bulk()!=is_bulk_kind(response.kind))return trace.fail("hostname_frame_class",Error::invalid_message);
     const auto admitted=active.session.admit(response,received,received);if(admitted!=Error::none)return trace.fail("hostname_admission",admitted);
     if(response.kind==Kind::synchronization){
         SynchronizationRound round;std::string phase;
@@ -888,7 +889,7 @@ void active_loop_work(void *arg){
       while(!active->cancelled){
         poll_release_ack(*active);
         trace=LinkTrace{};trace.phase="operational";
-        if(active->log_snapshot&&now_ms()>=active->log_expires)log_snapshot_clear(*active);
+        if(active->log_transfer&&now_ms()>=active->log_expires)log_snapshot_clear(*active);
         if(active->restart_requested){trace.fail("application_restart_requested",Error::none,LinkTrace::Recovery::recoverable);break;}
         if(active->retiring&&!receive_until){retirement_attempted=true;finish_retirement(*active);break;}
         if(server&&active->ready&&!active->retiring&&!receive_until){
@@ -941,10 +942,11 @@ void active_loop_work(void *arg){
             }
             if(!sent){trace.queued(queued);trace.fail("queued_send",Error::none,LinkTrace::Recovery::recoverable);break;}
         }
+        if(!active->retiring&&!send_log_chunk(*active)){trace.fail("log_send",Error::none,LinkTrace::Recovery::recoverable);break;}
         // Queued work and state changes write the wakeup descriptor, so the
         // idle wait never delays them. Release ACK sampling keeps its cadence.
         fd_set reads;FD_ZERO(&reads);FD_SET(active->tls->socket,&reads);const int wakeup=active->wakeup;if(wakeup>=0)FD_SET(wakeup,&reads);
-        timeval wait{0,more?0:active->release_ack.pending?20000:100000};
+        timeval wait{0,more||active->log_transfer?0:active->release_ack.pending?20000:100000};
         int ready=::select(std::max(active->tls->socket,wakeup)+1,&reads,nullptr,nullptr,&wait);
         if(ready>0&&wakeup>=0&&FD_ISSET(wakeup,&reads)){uint64_t count=0;if(::read(wakeup,&count,sizeof(count))<0){}if(!FD_ISSET(active->tls->socket,&reads))ready=0;}
         if(ready<0){trace.socket_error=errno;trace.fail("socket_select",Error::none,LinkTrace::Recovery::terminal);break;}
@@ -965,7 +967,7 @@ void active_loop_work(void *arg){
             break;
         }
         Envelope envelope;const auto parsed=parse_envelope(text,envelope);if(parsed!=Error::none){trace.fail("envelope_parse",parsed,LinkTrace::Recovery::terminal);break;}const auto received=now_ms();trace.kind=envelope.kind;trace.has_kind=true;
-        if(active->tls->received_bulk()!=is_update_kind(envelope.kind)){trace.fail("frame_class",Error::invalid_message);break;}
+        if(active->tls->received_bulk()!=is_bulk_kind(envelope.kind)){trace.fail("frame_class",Error::invalid_message);break;}
         if(envelope.kind==Kind::synchronization){
             const auto admitted=active->session.admit(envelope,received,received);
             if(admitted!=Error::none){trace.fail("synchronization_control_admit",admitted,LinkTrace::Recovery::terminal);break;}

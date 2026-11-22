@@ -90,7 +90,7 @@ int capture_shutdown(int,int){++amity::consortium::shutdowns;return 0;}
 '''
 PREFIX += 'namespace amity::consortium {\n' + function(
     (ROOT/'components/consortium/logs_runtime.inc').read_text(),
-    'void log_snapshot_clear(') + '\n}\n'
+    'void log_snapshot_clear(') + '\nbool send_log_chunk(Active&){return true;}\n}\n'
 SUPPORT = r'''
 namespace amity::consortium {
 std::string packet(const Envelope& e){

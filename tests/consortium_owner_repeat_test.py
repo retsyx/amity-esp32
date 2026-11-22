@@ -455,7 +455,7 @@ def main():
  actual+=function(source,'enum class QueuedState').rstrip()+';\n'+function(source,'QueuedState prepare_queued(')
  queue_start=source.index('\n',source.index('        if(!active->retiring&&!refresh_local_hostname(*active))'))+1
  queue_end=source.index('        fd_set reads;',queue_start)
- actual+='\nbool pump(Active& storage){auto* active=&storage;LinkTrace trace;trace.phase="operational";while(true){'+source[queue_start:queue_end]+'(void)more;return true;}trace_link_closed(storage,trace,now_ms());return false;}\n'
+ actual+='\nbool send_log_chunk(Active&){return true;}\nbool pump(Active& storage){auto* active=&storage;LinkTrace trace;trace.phase="operational";while(true){'+source[queue_start:queue_end]+'(void)more;return true;}trace_link_closed(storage,trace,now_ms());return false;}\n'
  with tempfile.TemporaryDirectory(prefix='amity-qualified-transport-') as directory:
   temp=Path(directory);(temp/'esp_err.h').write_text('#pragma once\nusing esp_err_t=int;constexpr int ESP_OK=0,ESP_ERR_INVALID_ARG=1,ESP_ERR_INVALID_STATE=2,ESP_ERR_NO_MEM=3,ESP_ERR_TIMEOUT=4,ESP_FAIL=5,ESP_ERR_NOT_FOUND=6,ESP_ERR_NOT_SUPPORTED=7;\n')
   cpp=temp/'test.cpp';binary=temp/'test';cpp.write_text(PREFIX+'namespace amity::consortium {\n'+actual+'\n}\n'+SUITE)

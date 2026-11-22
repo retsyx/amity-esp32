@@ -24,7 +24,8 @@ bool membership(const Json &v) {
 }
 bool payload(Kind kind,const Json &v) {
     switch(kind) {
-    case Kind::log_request:case Kind::log_result:return valid_log_payload(kind,v);
+    case Kind::log_request:return valid_log_request(v);
+    case Kind::log_result:return false; // Log bytes travel only as binary chunks.
     case Kind::settings_read:case Kind::settings_write:case Kind::settings_result:return valid_settings_payload(kind,v);
     case Kind::device_status:{
         // A hostname, a Wi-Fi signal, or both.
@@ -45,6 +46,7 @@ bool payload(Kind kind,const Json &v) {
 }
 }
 bool valid_envelope_payload(Kind kind,const Json& value){return payload(kind,value);}
+bool is_bulk_kind(Kind kind){return is_update_kind(kind)||kind==Kind::log_result;}
 std::string wifi_signal_json(const WifiSignalReport& signal){
     const int negated=-static_cast<int>(signal.rssi);
     return "{\"wifi_rssi_negated\":"+std::to_string(std::clamp(negated,0,127))+",\"wifi_channel\":"+std::to_string(signal.channel)+"}";
@@ -81,6 +83,7 @@ K(update_begin);K(update_chunk);K(update_install);K(update_abort);K(update_resul
 bool decimal(const Json *v,uint64_t &out) {if(!v||v->type!=Json::Type::string)return false;const auto parsed=model::parse_uint64(v->string);if(!parsed)return false;out=*parsed;return true;}
 Error parse_envelope(std::string_view body,Envelope &out,JsonError *detail) {
     if(body.substr(0,4)=="AFU1")return parse_update_chunk_envelope(body,out);
+    if(body.substr(0,4)=="ALG1")return parse_log_chunk_envelope(body,out);
     Json v;JsonError e;if(!parse_json(body,v,e,max_frame_bytes,2048)){if(detail)*detail=e;return Error::invalid_message;}
     if(!closed(v,{"config_revision","kind","ttl_ms","payload"}))return Error::invalid_message;
     uint64_t ttl=0;Envelope x;

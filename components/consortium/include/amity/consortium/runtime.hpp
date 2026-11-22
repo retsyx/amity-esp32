@@ -116,8 +116,9 @@ struct RuntimeLogHooks {
     std::function<LogSnapshot()> snapshot;
 };
 void runtime_log_hooks(RuntimeLogHooks);
-// One bounded pull at a time, on the existing authenticated member connection.
-// The consumer receives at most log_chunk_bytes and may stop by returning false.
+// One bounded pull at a time, on the existing authenticated member connection;
+// the member streams its whole log at once. The consumer receives at most
+// log_chunk_bytes per call and may stop by returning false.
 // Previously consumed bytes remain useful on timeout or loss of the member.
 esp_err_t runtime_pull_logs(model::OctopusId,const std::function<bool(std::string_view)>& consume);
 std::string runtime_device_settings(model::OctopusId owner);

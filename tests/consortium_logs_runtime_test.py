@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise actual bounded member log dispatch/pulls with real wire/session code."""
+"""Exercise actual streamed member logs and bounded pulls with real wire/session code."""
 from pathlib import Path
 import os
 import shlex
@@ -19,7 +19,7 @@ PREFIX = r'''
 #include <memory>
 #include <mutex>
 #include <vector>
-#define EXT_RAM_BSS_ATTR
+#include <new>
 namespace amity::consortium {
 using namespace platform;
 uint64_t clock_ms=100;uint64_t now_ms(){return clock_ms;}
@@ -38,8 +38,8 @@ std::vector<std::shared_ptr<Active>> links;
 void wake(Active&){}
 bool current_peer_credential(const Active& active,const Group& current){for(const auto& peer:current.peers)if(peer.id==active.peer&&peer.id==active.tls->authenticated&&peer.active)return true;return false;}
 bool settings_enrolled(model::OctopusId owner){for(const auto& peer:group.peers)if(peer.id==owner&&peer.active)return true;return false;}
-std::vector<Json> sent;bool send_success=true;
-bool send(Active&,Kind kind,std::string_view payload,uint32_t ttl){Json parsed;JsonError detail;assert(kind==Kind::log_result&&ttl==2000&&parse_json(payload,parsed,detail)&&valid_log_payload(kind,parsed));sent.push_back(std::move(parsed));return send_success;}
+std::vector<LogChunk> sent;bool send_success=true;
+bool send(Active&,Kind kind,std::string_view payload,uint32_t ttl){LogChunk chunk;assert(kind==Kind::log_result&&ttl==2000&&decode_log_chunk(payload,chunk));sent.push_back(std::move(chunk));return send_success;}
 unsigned pdMS_TO_TICKS(unsigned ms){return ms;}
 std::function<void()> tick;
 void vTaskDelay(unsigned ms){clock_ms+=ms;if(tick)tick();}
@@ -48,9 +48,14 @@ void vTaskDelay(unsigned ms){clock_ms+=ms;if(tick)tick();}
 SUITE = r'''
 namespace amity::consortium {
 Json parsed(std::string_view body){Json value;JsonError error;assert(parse_json(body,value,error));return value;}
-Envelope message(const std::shared_ptr<Active>& active,Kind kind,std::string_view payload){
- const auto& s=active->session.scope();Envelope e;e.config_revision=s.config_revision;e.kind=kind;e.ttl_ms=2000;e.payload=parsed(payload);assert(valid_log_payload(kind,e.payload));return e;
+Envelope request_message(const std::shared_ptr<Active>& active,model::MessageId transfer){
+ Envelope e;e.config_revision=active->session.scope().config_revision;e.kind=Kind::log_request;e.ttl_ms=2000;e.payload=parsed(log_request_json(transfer));assert(valid_envelope_payload(e.kind,e.payload));return e;
 }
+Envelope chunk_message(const std::shared_ptr<Active>& active,const LogChunk& chunk){
+ Envelope e;e.config_revision=active->session.scope().config_revision;e.kind=Kind::log_result;e.ttl_ms=2000;
+ Envelope decoded;assert(parse_envelope(log_chunk_envelope(e,encode_log_chunk(chunk)),decoded)==Error::none);return decoded;
+}
+LogChunk chunk(model::MessageId transfer,size_t offset,size_t total,std::string bytes,bool unavailable=false){LogChunk value;value.transfer=transfer;value.offset=uint32_t(offset);value.total=uint32_t(total);value.unavailable=unavailable;value.bytes=std::move(bytes);return value;}
 bool dispatch(const std::shared_ptr<Active>& active,const Envelope& e){return active->session.admit(e,clock_ms,clock_ms)==Error::none&&log_dispatch(active,e,clock_ms);}
 std::shared_ptr<Active> setup(bool main=true){
  clock_ms=100;links.clear();sent.clear();send_success=true;tick={};log_hooks={};log_pull={};group={};identity={};status={};
@@ -70,98 +75,107 @@ std::shared_ptr<Active> add_member(unsigned number){
  assert(a->session.hello(h)==Error::none&&a->session.synchronized(7,true,true)==Error::none);
  a->status.id=a->peer;a->status.boot_id=scope.peer_boot_id;a->status.config_revision=7;links.push_back(a);return a;
 }
-std::string decode(const Json& value){const auto& hex=value.get("data")->string;std::string result;for(size_t i=0;i<hex.size();i+=2){auto n=[](char c){return c<='9'?c-'0':c-'a'+10;};result+=char((n(hex[i])<<4)|n(hex[i+1]));}return result;}
 std::string content(size_t size){std::string value;for(size_t i=0;i<size;++i)value+=char(i%256);return value;}
+// The member's link loop sends one chunk per pass until its stream ends.
+std::string stream(const std::shared_ptr<Active>& a,size_t& chunks){
+ std::string received;chunks=0;
+ while(a->log_transfer){const auto before=sent.size();assert(send_log_chunk(*a)&&sent.size()==before+1);received+=sent.back().bytes;++chunks;}
+ return received;
+}
 void receiver_snapshot_lifecycle(){
- auto a=setup(false);auto transfer=ident<model::MessageId>(10);std::string live=content(log_capacity);const auto expected=live;unsigned snapshots=0,released=0;
+ auto a=setup(false);const auto transfer=ident<model::MessageId>(10);std::string live=content(log_capacity);const auto expected=live;unsigned snapshots=0,released=0;
  log_hooks.snapshot=[&]{++snapshots;auto* data=new char[std::max<size_t>(live.size(),1)];std::copy(live.begin(),live.end(),data);return LogSnapshot{std::shared_ptr<const char>(data,[&](const char* bytes){++released;delete[] bytes;}),live.size()};};
- std::string received;
- for(size_t offset=0;offset<expected.size();offset+=log_chunk_bytes){
-  assert(dispatch(a,message(a,Kind::log_request,log_request_json(transfer,offset))));
-  assert(sent.back().get("error")->string.empty());received+=decode(sent.back());live.assign(log_capacity,'X');
-  assert(snapshots==1&&released==(offset+log_chunk_bytes==expected.size()?1u:0u));
+ assert(dispatch(a,request_message(a,transfer))&&sent.empty()&&snapshots==1);
+ live.assign(log_capacity,'X');size_t chunks=0;
+ assert(stream(a,chunks)==expected&&chunks==log_capacity/log_chunk_bytes&&released==1&&!a->log_snapshot&&!a->log_transfer&&!a->cancelled&&a->tls->healthy);
+ for(size_t n=0;n<sent.size();++n)assert(sent[n].transfer==transfer&&sent[n].offset==n*log_chunk_bytes&&sent[n].total==log_capacity&&!sent[n].unavailable);
+ // A new request replaces an unfinished stream and releases its snapshot.
+ const auto next=ident<model::MessageId>(11);assert(dispatch(a,request_message(a,next))&&send_log_chunk(*a)&&a->log_transfer==next&&a->log_next==log_chunk_bytes);
+ assert(dispatch(a,request_message(a,transfer))&&released==2&&snapshots==3&&a->log_transfer==transfer&&!a->log_next);
+ sent.clear();assert(stream(a,chunks).size()==log_capacity&&sent.front().transfer==transfer&&released==3);
+ // Empty logs are one successful, empty final chunk with immediate release.
+ live.clear();sent.clear();assert(dispatch(a,request_message(a,next)));stream(a,chunks);
+ assert(chunks==1&&sent.back().total==0&&sent.back().bytes.empty()&&!sent.back().unavailable&&released==4);
+ std::cout<<"PASS actual member: one request streams a stable 24KiB snapshot in ordered chunks while the ring changes; replacement and empty logs release it\n";
+}
+void receiver_errors(){
+ auto a=setup(false);size_t chunks=0;
+ assert(dispatch(a,request_message(a,ident<model::MessageId>(21))));stream(a,chunks);
+ assert(chunks==1&&sent.back().unavailable&&!sent.back().total&&!a->log_transfer&&!a->cancelled&&a->tls->healthy);
+ send_success=false;assert(dispatch(a,request_message(a,ident<model::MessageId>(22)))&&!send_log_chunk(*a)&&!a->log_transfer);send_success=true;
+ assert(!dispatch(a,chunk_message(a,chunk(ident<model::MessageId>(21),0,0,{}))));
+ std::cout<<"PASS member reports an unavailable log once without replacing TLS; a failed send ends its stream; role direction rejects\n";
+}
+using Responder=std::function<void(const std::shared_ptr<Active>&,model::MessageId)>;
+void stream_source(const std::shared_ptr<Active>& a,model::MessageId transfer,const std::string& source){
+ for(size_t offset=0;;offset+=log_chunk_bytes){
+  const auto size=std::min(log_chunk_bytes,source.size()-offset);
+  assert(dispatch(a,chunk_message(a,chunk(transfer,offset,source.size(),source.substr(offset,size)))));
+  if(offset+size==source.size())break;
  }
- assert(received==expected&&sent.size()==24&&!a->log_snapshot&&!a->log_transfer&&!a->cancelled&&a->tls->healthy);
- // The next download gets a fresh snapshot and cancellation releases it.
- const auto next=ident<model::MessageId>(11);assert(dispatch(a,message(a,Kind::log_request,log_request_json(next,0))));assert(snapshots==2&&released==1);
- assert(dispatch(a,message(a,Kind::log_request,log_request_json(transfer,0,true)))&&a->log_snapshot);
- assert(dispatch(a,message(a,Kind::log_request,log_request_json(next,0,true)))&&!a->log_snapshot&&released==2);
- // Empty logs are a successful, empty final chunk with immediate release.
- live.clear();assert(dispatch(a,message(a,Kind::log_request,log_request_json(transfer,0))));assert(sent.back().get("total")->integer==0&&decode(sent.back()).empty()&&released==3);
- std::cout<<"PASS actual secondary: stable 24KiB snapshot while ring changes, exact binary chunks, final/cancel/empty release and healthy TLS\n";
-}
-void receiver_errors_and_expiry(){
- auto a=setup(false);auto first=ident<model::MessageId>(20),second=ident<model::MessageId>(21);unsigned releases=0;
- const auto body=content(2048);log_hooks.snapshot=[&]{auto* data=new char[body.size()];std::copy(body.begin(),body.end(),data);return LogSnapshot{std::shared_ptr<const char>(data,[&](const char* bytes){++releases;delete[] bytes;}),body.size()};};
- assert(dispatch(a,message(a,Kind::log_request,log_request_json(first,0)))&&a->log_snapshot);
- assert(dispatch(a,message(a,Kind::log_request,log_request_json(second,0)))&&sent.back().get("error")->string=="busy"&&a->log_transfer==first);
- assert(dispatch(a,message(a,Kind::log_request,log_request_json(first,17)))&&sent.back().get("error")->string=="expired"&&a->log_next==1024);
- clock_ms+=15000;assert(dispatch(a,message(a,Kind::log_request,log_request_json(first,1024)))&&sent.back().get("error")->string=="expired"&&!a->log_snapshot&&releases==1);
- log_hooks={};assert(dispatch(a,message(a,Kind::log_request,log_request_json(second,0)))&&sent.back().get("error")->string=="unavailable"&&!a->log_snapshot);
- assert(!a->cancelled&&a->tls->healthy);
- auto wrong=message(a,Kind::log_result,log_result_json(second,0,0,{}));assert(!dispatch(a,wrong));
- std::cout<<"PASS secondary busy/offset/expiry/unavailable return bounded errors without replacing TLS; role direction rejects\n";
-}
-using Responder=std::function<void(const std::shared_ptr<Active>&,const Json&)>;
-void respond(const std::shared_ptr<Active>& a,const Json& request,const std::string& source,std::string_view error=""){
- auto transfer=*model::MessageId::parse(request.get("transfer_id")->string);const auto offset=static_cast<size_t>(request.get("offset")->integer);
- assert(offset<=source.size()||!error.empty());const auto data=error.empty()?std::string_view(source).substr(offset,std::min(log_chunk_bytes,source.size()-offset)):std::string_view{};
- assert(dispatch(a,message(a,Kind::log_result,log_result_json(transfer,offset,error.empty()?source.size():0,data,error))));
 }
 void pump(const std::shared_ptr<Active>& a,const Responder& response){
  if(a->queue.empty())return;
- const auto queued=std::move(a->queue.front());a->queue.pop_front();assert(queued.kind==Kind::log_request&&queued.ttl&&queued.ttl<=2000&&queued.revision==7);
- const auto request=parsed(queued.payload);assert(valid_log_payload(queued.kind,request));if(!request.get("close")->boolean)response(a,request);
+ const auto queued=std::move(a->queue.front());a->queue.pop_front();assert(queued.kind==Kind::log_request&&queued.ttl==2000&&queued.revision==7);
+ const auto request=parsed(queued.payload);assert(valid_envelope_payload(queued.kind,request));response(a,*model::MessageId::parse(request.get("transfer_id")->string));
 }
 void sender_exact_and_bounded(){
- auto a=setup();const auto transport=a->tls;const auto original=a->session.scope();const auto source=content(log_capacity);size_t calls=0;std::string received;
- tick=[&]{pump(a,[&](const auto& peer,const auto& request){++calls;respond(peer,request,source);});};
- assert(pull_logs(a->peer,[&](std::string_view bytes){assert(bytes.size()<=1024&&bytes.data()==log_chunk.data());received+=bytes;
+ auto a=setup();const auto transport=a->tls;const auto original=a->session.scope();const auto source=content(log_capacity);size_t requests=0,calls=0;std::string received;
+ tick=[&]{pump(a,[&](const auto& peer,auto transfer){++requests;stream_source(peer,transfer,source);});};
+ assert(pull_logs(a->peer,[&](std::string_view bytes){assert(bytes.size()<=log_chunk_bytes);++calls;received+=bytes;
   assert(pull_logs(a->peer,[](auto){assert(false);return true;})==ESP_ERR_INVALID_STATE);return true;})==ESP_OK);
- assert(received==source&&calls==24&&!log_pull.busy&&a->queue.size()==1&&parsed(a->queue.back().payload).get("close")->boolean);
+ assert(received==source&&requests==1&&calls==log_capacity/log_chunk_bytes&&!log_pull.busy&&!log_pull.bytes&&a->queue.empty());
  assert(a->tls==transport&&a->session.scope()==original&&!a->cancelled&&a->tls->healthy);
- // Three authenticated owners share the same single chunk storage on one main.
+ // Three authenticated owners, one a management-ready member running other firmware.
  a=setup();auto second=add_member(30),third=add_member(31);second->ready=false;second->management_ready=true;second->session.restrict_management();
- tick=[&]{for(const auto& peer:links)pump(peer,[&](const auto& recipient,const auto& request){respond(recipient,request,source);});};
+ tick=[&]{for(const auto& peer:links)pump(peer,[&](const auto& recipient,auto transfer){stream_source(recipient,transfer,source);});};
  for(const auto& owner:{a,second,third}){
-  received.clear();assert(pull_logs(owner->peer,[&](auto chunk){assert(chunk.data()==log_chunk.data());received+=chunk;return true;})==ESP_OK);
-  assert(received==source&&sizeof(log_chunk)==1024&&!log_pull.busy&&links.size()==3);
-  for(const auto& peer:links)assert(peer->queue.size()<=1&&!peer->log_snapshot&&!peer->cancelled&&peer->tls->healthy);
+  received.clear();assert(pull_logs(owner->peer,[&](auto bytes){received+=bytes;return true;})==ESP_OK);
+  assert(received==source&&!log_pull.busy&&links.size()==3);
+  for(const auto& peer:links)assert(peer->queue.empty()&&!peer->cancelled&&peer->tls->healthy);
  }
- a=setup();tick=[&]{pump(a,[](const auto& peer,const auto& request){respond(peer,request,{});});};unsigned chunks=0;
+ a=setup();tick=[&]{pump(a,[](const auto& peer,auto transfer){stream_source(peer,transfer,{});});};unsigned chunks=0;
  assert(pull_logs(a->peer,[&](auto){++chunks;return true;})==ESP_OK&&chunks==0);
- std::cout<<"PASS actual main: exact 24KiB/empty pulls, one fixed 1KiB consumer buffer, serialized collectors and management-ready TLS\n";
+ std::cout<<"PASS actual main: one request per pull, exact 24KiB/empty logs, serialized collectors and management-ready TLS\n";
 }
 void sender_failures_and_cancellation(){
- auto a=setup();const auto body=content(4096);size_t chunks=0;
- tick=[&]{pump(a,[&](const auto& peer,const auto& request){respond(peer,request,body);});};
- assert(pull_logs(a->peer,[&](auto){++chunks;return false;})==ESP_FAIL&&chunks==1&&!log_pull.busy&&a->queue.size()==1&&parsed(a->queue.back().payload).get("close")->boolean);
- a=setup();clock_ms=500;assert(pull_logs(a->peer,[](auto){assert(false);return true;})==ESP_ERR_TIMEOUT&&clock_ms==2500&&!log_pull.busy&&a->queue.size()==1&&!a->cancelled&&a->tls->healthy);
+ auto a=setup();const auto body=content(2*log_chunk_bytes);size_t chunks=0;
+ tick=[&]{pump(a,[&](const auto& peer,auto transfer){stream_source(peer,transfer,body);});};
+ assert(pull_logs(a->peer,[&](auto){++chunks;return false;})==ESP_FAIL&&chunks==1&&!log_pull.busy&&a->queue.empty());
+ // Without an answer the pull waits two seconds and withdraws its request.
+ a=setup();clock_ms=500;assert(pull_logs(a->peer,[](auto){assert(false);return true;})==ESP_ERR_TIMEOUT&&clock_ms==2500&&!log_pull.busy&&a->queue.empty()&&!a->cancelled&&a->tls->healthy);
  a=setup();tick=[&]{a->cancelled=true;};assert(pull_logs(a->peer,[](auto){assert(false);return true;})==ESP_ERR_INVALID_STATE&&!log_pull.busy&&a->queue.empty());
- for(const auto* error:{"busy","unavailable","expired"}){a=setup();tick=[&]{pump(a,[&](const auto& peer,const auto& request){respond(peer,request,{},error);});};const auto expected=std::string_view(error)=="expired"?ESP_ERR_TIMEOUT:ESP_ERR_INVALID_STATE;
-  assert(pull_logs(a->peer,[](auto){assert(false);return true;})==expected&&!log_pull.busy&&!a->cancelled&&a->tls->healthy);}
- // Fixed overall deadline stops a slowly advancing transfer, preserving prior bytes.
- a=setup();chunks=0;tick=[&]{pump(a,[&](const auto& peer,const auto& request){respond(peer,request,content(log_capacity));});};
- assert(pull_logs(a->peer,[&](auto){++chunks;clock_ms+=1000;return true;})==ESP_ERR_TIMEOUT&&chunks==15&&!log_pull.busy&&!a->cancelled);
- std::cout<<"PASS main consumer abort/cancel, fixed per-chunk/overall deadlines, disconnect, partial data and secondary errors preserve healthy streams\n";
+ a=setup();tick=[&]{pump(a,[&](const auto& peer,auto transfer){assert(dispatch(peer,chunk_message(peer,chunk(transfer,0,0,{},true))));});};
+ assert(pull_logs(a->peer,[](auto){assert(false);return true;})==ESP_ERR_NO_MEM&&!log_pull.busy&&!a->cancelled&&a->tls->healthy);
+ // The overall deadline stops a slowly advancing stream, preserving prior bytes.
+ a=setup();chunks=0;const auto source=content(log_capacity);model::MessageId slow;size_t offset=0;
+ tick=[&]{pump(a,[&](const auto&,auto transfer){slow=transfer;});
+  if(slow&&offset<source.size()){assert(dispatch(a,chunk_message(a,chunk(slow,offset,source.size(),source.substr(offset,log_chunk_bytes)))));offset+=log_chunk_bytes;}};
+ assert(pull_logs(a->peer,[&](auto){++chunks;clock_ms+=3000;return true;})==ESP_ERR_TIMEOUT&&chunks==5&&!log_pull.busy&&!a->cancelled);
+ std::cout<<"PASS main consumer abort/cancel, progress and overall deadlines, disconnect, partial data and unavailable logs preserve healthy streams\n";
 }
-void sender_identity_and_late_result_fences(){
- auto a=setup();const auto source=content(2048);unsigned requests=0;std::string received;
- tick=[&]{pump(a,[&](const auto& peer,const auto& request){++requests;const auto id=*model::MessageId::parse(request.get("transfer_id")->string);const auto offset=request.get("offset")->integer;
-  assert(dispatch(peer,message(peer,Kind::log_result,log_result_json(ident<model::MessageId>(99),offset,source.size(),std::string_view(source).substr(offset,1024)))));
-  assert(!log_pull.received);
-  if(!offset){assert(dispatch(peer,message(peer,Kind::log_result,log_result_json(id,1024,source.size(),std::string_view(source).substr(1024)))));assert(!log_pull.received);}
-  respond(peer,request,source);
- });};assert(pull_logs(a->peer,[&](auto bytes){received+=bytes;return true;})==ESP_OK&&received==source&&requests==2);
- a=setup();requests=0;tick=[&]{pump(a,[&](const auto& peer,const auto& request){++requests;respond(peer,request,content(requests==1?2048:3072));});};
- received.clear();assert(pull_logs(a->peer,[&](auto bytes){received+=bytes;return true;})==ESP_FAIL&&received.size()==1024&&!a->cancelled&&!log_pull.busy);
+void sender_identity_and_late_chunk_fences(){
+ auto a=setup();const auto source=content(2*log_chunk_bytes);std::string received;
+ tick=[&]{pump(a,[&](const auto& peer,auto transfer){
+  assert(dispatch(peer,chunk_message(peer,chunk(ident<model::MessageId>(99),0,source.size(),source.substr(0,log_chunk_bytes))))&&!log_pull.received);
+  stream_source(peer,transfer,source);
+ });};assert(pull_logs(a->peer,[&](auto bytes){received+=bytes;return true;})==ESP_OK&&received==source);
+ // A changed total or an offset gap ends the pull after the bytes received so far.
+ a=setup();tick=[&]{pump(a,[&](const auto& peer,auto transfer){
+  assert(dispatch(peer,chunk_message(peer,chunk(transfer,0,2*log_chunk_bytes,source.substr(0,log_chunk_bytes)))));
+  assert(dispatch(peer,chunk_message(peer,chunk(transfer,log_chunk_bytes,3*log_chunk_bytes,source.substr(0,log_chunk_bytes)))));
+ });};
+ received.clear();assert(pull_logs(a->peer,[&](auto bytes){received+=bytes;return true;})==ESP_FAIL&&received.size()==log_chunk_bytes&&!a->cancelled&&!log_pull.busy);
+ a=setup();tick=[&]{pump(a,[&](const auto& peer,auto transfer){assert(dispatch(peer,chunk_message(peer,chunk(transfer,log_chunk_bytes,2*log_chunk_bytes,source.substr(0,log_chunk_bytes)))));});};
+ assert(pull_logs(a->peer,[](auto){assert(false);return true;})==ESP_FAIL&&!log_pull.busy);
+ assert(dispatch(a,chunk_message(a,chunk(ident<model::MessageId>(98),0,1,"x")))&&!log_pull.busy); // A late chunk belongs to no pull.
  a=setup();group.peers.clear();assert(pull_logs(a->peer,[](auto){return true;})==ESP_ERR_INVALID_STATE&&a->queue.empty());
  a=setup(false);assert(pull_logs(a->peer,[](auto){return true;})==ESP_ERR_INVALID_STATE&&a->queue.empty());
  a=setup();status.authority_ready=false;assert(pull_logs(a->peer,[](auto){return true;})==ESP_ERR_INVALID_STATE&&a->queue.empty());
- std::cout<<"PASS exact peer/transfer/offset/boot fences, stable total, current-roster/main authorization and late-result isolation\n";
+ std::cout<<"PASS exact peer/transfer/offset fences, stable total, current-roster/main authorization and late-chunk isolation\n";
 }
 }
-int main(){using namespace amity::consortium;receiver_snapshot_lifecycle();receiver_errors_and_expiry();sender_exact_and_bounded();sender_failures_and_cancellation();sender_identity_and_late_result_fences();}
+int main(){using namespace amity::consortium;receiver_snapshot_lifecycle();receiver_errors();sender_exact_and_bounded();sender_failures_and_cancellation();sender_identity_and_late_chunk_fences();}
 '''
 
 def main():

@@ -22,6 +22,12 @@ struct UpdateChunk {
     uint64_t offset = 0;
     std::string bytes;
 };
+struct LogChunk {
+    model::MessageId transfer;
+    uint32_t offset = 0, total = 0;
+    bool unavailable = false;
+    std::string bytes;
+};
 struct AdapterSettingChange {uint8_t tentacle_id=0;std::string default_front_physical_address;};
 struct DeviceSettingsWrite {model::BootId expected_boot;uint64_t expected_revision=0,expected_hostname_revision=0;std::vector<AdapterSettingChange> changes;std::optional<std::string> hostname;};
 // The authenticated connection identifies both Amities and boots; a frame
@@ -35,7 +41,10 @@ struct Envelope {
     std::optional<model::OwnedIntent> intent;
     std::optional<DeviceSettingsWrite> settings_write;
     std::optional<UpdateChunk> update_chunk;
+    std::optional<LogChunk> log_chunk;
 };
+// Firmware and log bytes travel as bulk frames, with longer transfer budgets.
+bool is_bulk_kind(Kind);
 // Supported kinds all have closed payload validators.
 Error parse_envelope(std::string_view body, Envelope &out, JsonError *detail = nullptr);
 bool valid_envelope_payload(Kind, const Json&);

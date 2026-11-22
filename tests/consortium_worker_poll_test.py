@@ -251,7 +251,7 @@ def main():
     recovery_end=source.index('\n    }',recovery_start)
     restart_start=source.index('        if(active->restart_requested){',source.index('void active_loop_work('))
     restart_end=source.index('\n',restart_start)
-    class_start=source.index('        if(active->tls->received_bulk()!=is_update_kind(envelope.kind))')
+    class_start=source.index('        if(active->tls->received_bulk()!=is_bulk_kind(envelope.kind))')
     class_end=source.index('\n',class_start)
     parse_end=source.index('\n',receive_end)
     update_dispatch=function(source,'        if(is_update_kind(envelope.kind)) {')
