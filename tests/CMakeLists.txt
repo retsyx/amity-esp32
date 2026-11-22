@@ -67,7 +67,9 @@ set(AMITY_TEST_LABEL standalone)
 function(amity_test name)
     cmake_parse_arguments(PARSE_ARGV 1 A "PTHREAD" "" "SOURCES;INCLUDES;LIBS;DEFINES;ARGS;SCENARIOS;FIXTURES")
     add_executable(${name} ${A_SOURCES})
-    target_include_directories(${name} PRIVATE ${A_INCLUDES})
+    # tests/fakes holds the fake headers shared by several tests; each test's
+    # own fake directories come first.
+    target_include_directories(${name} PRIVATE ${A_INCLUDES} "${T}/fakes")
     target_compile_definitions(${name} PRIVATE ${A_DEFINES})
     target_link_libraries(${name} PRIVATE ${A_LIBS} strict)
     if(A_PTHREAD)
@@ -161,7 +163,7 @@ if(AMITY_HOST_TESTS MATCHES "^(all|standalone)$")
     # Storage and device settings
     amity_test(config_store_test
         SOURCES "${C}/config_store/config_store.cpp" "${T}/config_store_test.cpp"
-        INCLUDES "${T}/config_store_fakes" "${T}/reset_fakes" "${C}/config_store/include")
+        INCLUDES "${T}/reset_fakes" "${C}/config_store/include")
     amity_test(identity_journal_test
         SOURCES "${T}/identity_journal_test.cpp"
         INCLUDES "${C}/config_store/include" "${C}/amity_system/include")
@@ -386,7 +388,7 @@ if(AMITY_HOST_TESTS MATCHES "^(all|sdk)$")
     # Rename only this translation unit's digest entry point; the test wrapper
     # calls the real SHA256 whenever the selected failure is not reached.
     add_library(configuration_failure_storage OBJECT "${C}/config_store/system_configuration.cpp")
-    target_include_directories(configuration_failure_storage PRIVATE ${configuration_includes})
+    target_include_directories(configuration_failure_storage PRIVATE ${configuration_includes} "${T}/fakes")
     target_compile_definitions(configuration_failure_storage PRIVATE SHA256=amity_failure_sha256)
     target_link_libraries(configuration_failure_storage PRIVATE strict OpenSSL::Crypto)
     amity_test(configuration_failure_test

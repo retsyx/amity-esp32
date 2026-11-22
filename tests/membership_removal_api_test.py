@@ -174,7 +174,7 @@ int main(){return removal_fixture::run();}
         subprocess.run(['cc', '-g', '-Wno-deprecated-declarations', '-fsanitize=address,undefined', '-I'+str(json_dir), '-c', str(json_dir/'cJSON.c'), '-o', str(temp/'json.o')], check=True)
         includes = ['tests', 'tests/system_sync_fakes', 'tests/cec_hub_fakes', 'tests/reset_fakes',
                     'components/config_store/include', 'components/amity_system/include',
-                    'components/system_sync/include', 'components/consortium/include']
+                    'components/system_sync/include', 'components/consortium/include', 'tests/fakes']
         sources = ['components/amity_system/model.cpp', 'components/config_store/system_configuration.cpp',
                    'components/config_store/configuration_journal.cpp', 'components/config_store/configuration_replacement.cpp',
                    'components/consortium/json.cpp', 'components/consortium/wire.cpp',

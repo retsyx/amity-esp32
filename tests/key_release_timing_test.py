@@ -203,7 +203,7 @@ with tempfile.TemporaryDirectory(prefix="amity-release-timing-") as directory:
     binary = root / "test"
     includes = ["tests", "tests/cec_hub_fakes", "components/amity_system/include",
                 "components/config_store/include", "components/cec/include",
-                "components/amity_hub/include", "components/amity_hub"]
+                "components/amity_hub/include", "components/amity_hub", "tests/fakes"]
     subprocess.run([os.environ.get("CXX", "c++"), "-std=c++17", "-Wall", "-Wextra", "-Werror",
                     "-g", "-fsanitize=address,undefined",
                     *["-I" + str(ROOT / path) for path in includes], str(cpp),

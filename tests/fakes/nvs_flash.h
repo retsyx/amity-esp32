@@ -7,5 +7,8 @@
  */
 
 #pragma once
-#include "esp_err.h"
+#include "nvs.h"
+esp_err_t nvs_flash_init();
+esp_err_t nvs_flash_deinit();
+esp_err_t nvs_flash_erase();
 esp_err_t nvs_flash_init_partition(const char *);
