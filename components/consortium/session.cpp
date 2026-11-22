@@ -3,15 +3,7 @@
 #include "amity/consortium/update.hpp"
 #include "amity/consortium/settings.hpp"
 #include "amity/consortium/logs.hpp"
-#include "amity/consortium/owned_intent.hpp"
 namespace amity::consortium {
-namespace {
-bool valid_payload(const Envelope& envelope){
-    return envelope.kind==Kind::update_chunk?
-        envelope.update_chunk&&valid_update_chunk(*envelope.update_chunk):
-        valid_envelope_payload(envelope.kind,envelope.payload);
-}
-}
 Error Session::authenticate(const LinkScope &scope,model::OctopusId peer,PeerRole role,bool active) {
     disconnect();
     if(!scope.link_id||!scope.consortium_id||!scope.local_id||!scope.peer_id||!scope.local_boot_id||!scope.coordinator_id||peer!=scope.peer_id)return Error::identity_conflict;
@@ -91,29 +83,25 @@ Error Session::typed(const Envelope& e)const{
         if(begin&&target<scope_.config_revision)return Error::stale_config;
     }
     if((e.kind==Kind::membership_event||e.kind==Kind::membership_result)&&e.ttl_ms>2000)return Error::unsupported_kind;
+    // Payloads were validated when parsed; only scope-dependent rules remain.
     if(e.kind==Kind::scoped_intent){
-        model::OwnedIntent intent;
-        if(parse_owned_intent(e.payload,intent)!=Error::none)return Error::unsupported_kind;
+        if(!e.intent)return Error::invalid_message;
+        const auto& intent=*e.intent;
         if(intent.kind!=model::OwnedIntentKind::key_edges&&(intent.target.port.consortium_id!=scope_.consortium_id||intent.target.port.octopus_id!=scope_.local_id))return Error::target_not_local;
     }
-    if(is_log_kind(e.kind)&&!valid_log_payload(e.kind,e.payload))return Error::invalid_message;
-    if(e.kind==Kind::update_chunk&&!valid_payload(e))return Error::invalid_message;
+    if(e.kind==Kind::update_chunk&&!e.update_chunk)return Error::invalid_message;
     return Error::none;
 }
 Error Session::discard_stale(const Envelope& e,uint64_t received,uint64_t now){
     if(state_!=ConnectionState::ready||!active_||role_==PeerRole::provisional_candidate)return Error::not_ready;
-    auto error=common(e,received,now,true);if(error!=Error::none)return error;
-    if(!valid_payload(e))return Error::invalid_message;
-    error=typed(e);if(error!=Error::none)return error;
-    return Error::none;
+    const auto error=common(e,received,now,true);if(error!=Error::none)return error;
+    return typed(e);
 }
 Error Session::discard_synchronization_frame(const Envelope& e,uint64_t received,uint64_t now){
     if(state_!=ConnectionState::synchronizing||!active_||role_==PeerRole::provisional_candidate)return Error::not_ready;
     if(e.kind==Kind::synchronization)return Error::unsupported_kind; // The runtime must correlate control rounds explicitly.
-    auto error=common(e,received,now,false,true);if(error!=Error::none)return error;
-    if(!valid_payload(e))return Error::invalid_message;
-    error=typed(e);if(error!=Error::none)return error;
-    return Error::none;
+    const auto error=common(e,received,now,false,true);if(error!=Error::none)return error;
+    return typed(e);
 }
 Error Session::discard_lifecycle_frame(const Envelope& e,uint64_t received,uint64_t now){
     if(state_!=ConnectionState::restricted||management_||!active_||role_==PeerRole::provisional_candidate)return Error::not_ready;
@@ -122,8 +110,7 @@ Error Session::discard_lifecycle_frame(const Envelope& e,uint64_t received,uint6
     case Kind::settings_result:case Kind::update_result:case Kind::log_result:break;
     default:return Error::unsupported_kind;
     }
-    auto error=common(e,received,now,false,true);if(error!=Error::none)return error;
-    if(!valid_payload(e))return Error::invalid_message;
+    const auto error=common(e,received,now,false,true);if(error!=Error::none)return error;
     return typed(e);
 }
 } // namespace amity::consortium

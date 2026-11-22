@@ -94,7 +94,8 @@ Error parse_envelope(std::string_view body,Envelope &out,JsonError *detail) {
     bool recognized=false;for(auto kind:{Kind::enrollment_control,Kind::membership_event,Kind::membership_result,Kind::snapshot_request,Kind::snapshot_chunk,Kind::update_begin,Kind::update_chunk,Kind::update_install,Kind::update_status,Kind::update_abort,Kind::update_result,Kind::device_status,Kind::settings_read,Kind::settings_write,Kind::settings_result,Kind::scoped_intent,Kind::scoped_result,Kind::synchronization,Kind::log_request,Kind::log_result})if(text_is(v.get("kind"),{kind_name(kind)})){x.kind=kind;recognized=true;break;}
     if(!recognized)return Error::unsupported_kind;
     if((x.kind==Kind::membership_event||x.kind==Kind::membership_result)&&ttl>2000)return Error::invalid_message;
-    if(!payload(x.kind,*v.get("payload")))return Error::invalid_message;
+    if(x.kind==Kind::scoped_intent){model::OwnedIntent intent;if(parse_owned_intent(*v.get("payload"),intent)!=Error::none)return Error::invalid_message;x.intent=std::move(intent);}
+    else if(!payload(x.kind,*v.get("payload")))return Error::invalid_message;
     x.ttl_ms=ttl;x.payload=std::move(*v.get("payload"));
     out=std::move(x);return Error::none;
 }

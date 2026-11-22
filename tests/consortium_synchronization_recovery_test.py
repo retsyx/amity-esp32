@@ -317,7 +317,7 @@ void logical_recovery_keeps_security_and_transport_fences(){
   trace=LinkTrace{};trace.fail("control_dispatch",error);assert(!application_failure_recoverable(*active,trace));
  }
  active->restart_requested=true;
- for(const auto* reason:{"control_admit","envelope_parse","membership_revoked","retirement","owned_intent_parse"}){
+ for(const auto* reason:{"control_admit","envelope_parse","membership_revoked","retirement"}){
   trace=LinkTrace{};trace.fail(reason);assert(!application_failure_recoverable(*active,trace));
  }
  trace=LinkTrace{};trace.fail("causal_expired");active->tls->healthy=false;assert(!application_failure_recoverable(*active,trace));

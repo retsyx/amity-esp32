@@ -117,14 +117,13 @@ c::Error receive(const c::LinkScope& scope,const c::Envelope& envelope,uint64_t 
         const auto* snapshot=envelope.payload.get("snapshot");s::OwnedAdapterSnapshot report;
         return snapshot&&c::closed(envelope.payload,{"snapshot"})&&c::parse_owned_snapshot(*snapshot,report)&&accept_report(sender,report)?c::Error::none:c::Error::invalid_message;
     }
-    if(envelope.kind!=c::Kind::scoped_intent||!c::runtime_status().member)return c::Error::unauthorized_role;
-    s::OwnedIntent intent;
-    if(c::parse_owned_intent(envelope.payload,intent)!=c::Error::none)return c::Error::invalid_message;
+    if(envelope.kind!=c::Kind::scoped_intent||!envelope.intent||!c::runtime_status().member)return c::Error::unauthorized_role;
+    // The session admitted this frame: its intent is parsed and targets this Amity.
+    const auto& intent=*envelope.intent;
     s::AdmissionResult admitted;
     if(intent.kind==s::OwnedIntentKind::key_edges){
         admitted=state.control->submit_key_edges(intent.edges,intent.edge_count,intent.generation,link,deadline);
     }else{
-        if(intent.target.port.octopus_id!=state.control->octopus_id()||intent.target.port.consortium_id!=state.control->consortium_id())return c::Error::target_not_local;
         s::OwnedAuthorization auth{sender,scope.peer_boot_id,scope.local_boot_id,link,envelope.config_revision,deadline};
         admitted=state.control->submit_owned(intent,auth);
     }

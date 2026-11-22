@@ -75,7 +75,7 @@ s::OwnedIntent down(const amity::SystemControl& owner){
 }
 c::Envelope envelope(const amity::SystemControl&,s::OctopusId,const s::OwnedIntent& intent){
     c::Envelope value;value.kind=c::Kind::scoped_intent;value.config_revision=23;
-    value.payload=json(c::owned_intent_json(intent));return value;
+    value.payload=json(c::owned_intent_json(intent));value.intent=intent;return value;
 }
 c::Envelope report_envelope(const s::OwnedAdapterSnapshot& value){
     c::Envelope result;result.kind=c::Kind::scoped_result;result.payload=json("{\"snapshot\":"+c::owned_snapshot_json(value)+"}");return result;
@@ -206,10 +206,7 @@ void intent_delivery_preserves_authorization(){
     auth_allowed=false;assert(deliver(original,powered,deadline,link)==c::Error::unauthorized_role&&authorization_checks==2);auth_allowed=true;
     for(const auto& test:std::vector<std::pair<s::AdmissionCode,c::Error>>{{s::AdmissionCode::overloaded,c::Error::queue_full},{s::AdmissionCode::expired,c::Error::expired},{s::AdmissionCode::stale,c::Error::stale_boot},{s::AdmissionCode::invalid,c::Error::invalid_message}}){member.admission=test.first;assert(deliver(original,received,deadline,link)==test.second);}member.admission=s::AdmissionCode::accepted;
     assert(authorization_checks==2);
-    const auto calls=member.key_deliveries.size(),owned_calls=member.submitted.size();auto wrong_target=power;wrong_target.target.port.octopus_id=id<s::OctopusId>(99);auto target=envelope(member,original,wrong_target);
-    assert(deliver(original,target,deadline,link)==c::Error::target_not_local&&member.key_deliveries.size()==calls);
-    wrong_target=power;wrong_target.kind=s::OwnedIntentKind::discover;wrong_target.target.port.consortium_id=id<s::ConsortiumId>(99);target=envelope(member,original,wrong_target);
-    assert(deliver(original,target,deadline,link)==c::Error::target_not_local&&member.key_deliveries.size()==calls);
+    const auto calls=member.key_deliveries.size(),owned_calls=member.submitted.size();
     for(auto kind:{c::Kind::membership_event,c::Kind::update_begin,c::Kind::settings_write,c::Kind::log_request,c::Kind::synchronization}){received.kind=kind;assert(deliver(original,received,deadline,link)==c::Error::unauthorized_role&&member.key_deliveries.size()==calls);}
     received.kind=c::Kind::scoped_result;assert(deliver(original,received,deadline,link)==c::Error::unauthorized_role);
     role.member=false;role.coordinator=true;received.kind=c::Kind::scoped_intent;

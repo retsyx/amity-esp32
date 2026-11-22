@@ -418,11 +418,11 @@ void codec_and_session(){
  input.edges[1].key=0x42;assert(parse_json(owned_intent_json(input),bad,error)&&parse_owned_intent(bad,parsed)==Error::invalid_message);input=down();
  LinkScope scope{ident<model::LinkId>(7),ident<model::ConsortiumId>(1),ident<model::OctopusId>(3),ident<model::OctopusId>(2),ident<model::OctopusId>(2),ident<model::BootId>(8),ident<model::BootId>(4),1};
  Session session;assert(session.authenticate(scope,scope.peer_id,PeerRole::coordinator,true)==Error::none);HelloFrame h;h.consortium_id=scope.consortium_id;h.octopus_id=scope.peer_id;h.boot_id=scope.peer_boot_id;assert(session.hello(h)==Error::none&&session.synchronized(1,true,true)==Error::none);
- Envelope e;e.config_revision=1;e.kind=Kind::scoped_intent;e.ttl_ms=500;e.payload=value;
+ Envelope e;e.config_revision=1;e.kind=Kind::scoped_intent;e.ttl_ms=500;e.payload=value;e.intent=input;
  assert(session.admit(e,100,100)==Error::none);
- input=down();text=owned_intent_json(input);assert(parse_json(text,e.payload,error)&&session.admit(e,60000,60000)==Error::none); // Fresh input after long idle needs no grant.
+ input=down();text=owned_intent_json(input);e.intent=input;assert(parse_json(text,e.payload,error)&&session.admit(e,60000,60000)==Error::none); // Fresh input after long idle needs no grant.
  assert(session.admit(e,60000,60500)==Error::invalid_message); // Its original 500 ms TTL still expires.
- input=down();input.edges[0].down=false;text=owned_intent_json(input);assert(parse_json(text,e.payload,error));assert(parse_owned_intent(e.payload,parsed)==Error::none&&!e.payload.get("arguments")->get("press_sequence"));
+ input=down();input.edges[0].down=false;text=owned_intent_json(input);e.intent=input;assert(parse_json(text,e.payload,error));assert(parse_owned_intent(e.payload,parsed)==Error::none&&!e.payload.get("arguments")->get("press_sequence"));
  assert(session.admit(e,60600,60600)==Error::none); // Ordered Up carries button state only, without another permission.
 
  for(auto kind:{model::OwnedIntentKind::activity,model::OwnedIntentKind::context,model::OwnedIntentKind::discover}){

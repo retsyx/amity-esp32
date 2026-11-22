@@ -2,6 +2,7 @@
 #pragma once
 #include "amity/consortium/json.hpp"
 #include "amity/system/model.hpp"
+#include "amity/system/owned_intent.hpp"
 #include <optional>
 
 namespace amity::consortium {
@@ -28,6 +29,8 @@ struct Envelope {
     Kind kind = Kind::device_status;
     uint32_t ttl_ms = 0;
     Json payload;
+    // A scoped_intent payload, decoded once when the frame is parsed.
+    std::optional<model::OwnedIntent> intent;
     std::optional<UpdateChunk> update_chunk;
 };
 // Supported kinds all have closed payload validators.

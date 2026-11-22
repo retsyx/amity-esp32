@@ -51,6 +51,7 @@ void frame_tests(std::string_view body){
 
 LinkScope scope(){return {ident<m::LinkId>(1),ident<m::ConsortiumId>(2),ident<m::OctopusId>(3),ident<m::OctopusId>(4),ident<m::OctopusId>(4),ident<m::BootId>(5),ident<m::BootId>(6),7};}
 HelloFrame hello(const LinkScope& s){HelloFrame h;h.consortium_id=s.consortium_id;h.octopus_id=s.peer_id;h.boot_id=s.peer_boot_id;h.config_revision=s.config_revision;return h;}
+bool with_intent(Envelope& e,const m::OwnedIntent& intent){JsonError error;e.intent=intent;return parse_json(owned_intent_json(intent),e.payload,error);}
 Envelope envelope(const LinkScope& s){Envelope e;e.config_revision=s.config_revision;e.ttl_ms=10000;e.kind=Kind::device_status;JsonError detail;assert(parse_json("{\"hostname\":\"member\"}",e.payload,detail));return e;}
 std::string packet(const LinkScope&,Kind kind,const std::string& payload){return std::string("{\"config_revision\":\"7\",\"kind\":\"")+kind_name(kind)+"\",\"ttl_ms\":1000,\"payload\":"+payload+"}";}
 m::OwnedIntent action(const LinkScope& s){m::OwnedIntent x;x.kind=m::OwnedIntentKind::activity;x.target={{s.consortium_id,s.local_id,0,m::Side::back},"Player"};x.generation=1;x.selected=true;x.source=x.target;return x;}
@@ -85,7 +86,7 @@ void envelope_tests(const std::string& body){
     assert(parse_envelope(replace(body,"\"ttl_ms\":1000","\"ttl_ms\":1000,\"ttl_ms\":10"),out)==Error::invalid_message);
 }
 void session_tests(){
-    const auto s=scope();auto h=hello(s);Session session;auto e=envelope(s);e.kind=Kind::scoped_intent;auto intent=action(s);JsonError detail;assert(parse_json(owned_intent_json(intent),e.payload,detail));
+    const auto s=scope();auto h=hello(s);Session session;auto e=envelope(s);e.kind=Kind::scoped_intent;auto intent=action(s);assert(with_intent(e,intent));
     assert(session.authenticate(s,ident<m::OctopusId>(99),PeerRole::coordinator,true)==Error::identity_conflict);assert(session.authenticate(s,s.peer_id,PeerRole::coordinator,true)==Error::none);assert(session.admit(e,0,0)==Error::not_ready);
     assert(session.hello(h)==Error::none);assert(session.synchronized(7,true,false)==Error::not_ready);assert(session.synchronized(8,true,true)==Error::stale_config);assert(session.synchronized(7,true,true)==Error::none);
     assert(session.admit(e,100,101)==Error::none);assert(session.admit(e,100,102)==Error::none);
@@ -94,9 +95,9 @@ void session_tests(){
     assert(session.admit(e,5100,5100)==Error::none);
     assert(session.admit(e,5100,5000)==Error::invalid_message&&session.admit(e,5100,15100)==Error::invalid_message);
     for(unsigned n=0;n<1;++n){auto bad=e;switch(n){case 0:bad.config_revision=8;break;}assert(session.admit(bad,5200,5200)!=Error::none);}
-    intent.kind=m::OwnedIntentKind::key_edges;intent.edge_count=1;intent.edges[0]={4,true};assert(parse_json(owned_intent_json(intent),e.payload,detail));assert(session.admit(e,5200,5200)==Error::none);
+    intent.kind=m::OwnedIntentKind::key_edges;intent.edge_count=1;intent.edges[0]={4,true};assert(with_intent(e,intent));assert(session.admit(e,5200,5200)==Error::none);
     assert(session.admit(e,5200,15200)==Error::invalid_message);
-    intent.edges[0].down=false;assert(parse_json(owned_intent_json(intent),e.payload,detail));assert(session.admit(e,5700,5700)==Error::none);
+    intent.edges[0].down=false;assert(with_intent(e,intent));assert(session.admit(e,5700,5700)==Error::none);
     session.disconnect();assert(session.admit(e,6000,6000)==Error::not_ready);
     assert(session.authenticate(s,s.peer_id,PeerRole::coordinator,false)==Error::none&&session.hello(h)==Error::none);assert(session.admit(e,0,0)==Error::unauthorized_role);
     auto unknown=s;unknown.peer_boot_id={};assert(session.authenticate(unknown,s.peer_id,PeerRole::coordinator,true)==Error::none&&session.hello(h)==Error::none&&session.scope().peer_boot_id==s.peer_boot_id);
@@ -172,7 +173,7 @@ void synchronization_tests(){
     assert(member.begin_synchronization(7)==Error::stale_config&&member.begin_synchronization(0)==Error::stale_config&&member.scope()==expected);
     assert(member.admit(begin,100,101)==Error::none);
     auto stale_work=envelope(original);stale_work.kind=Kind::scoped_intent;
-    assert(parse_json(owned_intent_json(action(original)),stale_work.payload,detail));
+    assert(with_intent(stale_work,action(original)));
     assert(member.admit(stale_work,100,101)==Error::stale_config);
     assert(member.discard_synchronization_frame(stale_work,100,101)==Error::none&&member.discard_synchronization_frame(stale_work,100,101)==Error::none);
     assert(member.state()==ConnectionState::synchronizing&&member.scope()==expected);
@@ -183,9 +184,8 @@ void synchronization_tests(){
     assert(member.discard_synchronization_frame(begin,100,101)==Error::unsupported_kind);
     assert(member.discard_synchronization_frame(stale_work,100,99)==Error::invalid_message&&member.discard_synchronization_frame(stale_work,100,10100)==Error::invalid_message);
     for(const auto revision:{0u,9u}){auto invalid=stale_work;invalid.config_revision=revision;assert(member.discard_synchronization_frame(invalid,100,101)==Error::stale_config);}
-    auto malformed=stale_work;malformed.payload.object.emplace_back("extra",Json{});assert(member.discard_synchronization_frame(malformed,100,101)==Error::invalid_message);
     auto rollback=begin;assert(parse_json(payload("begin",7),rollback.payload,detail));assert(member.admit(rollback,100,101)==Error::stale_config);
-    auto positive=envelope(expected);positive.kind=Kind::scoped_intent;assert(parse_json(owned_intent_json(action(expected)),positive.payload,detail));
+    auto positive=envelope(expected);positive.kind=Kind::scoped_intent;assert(with_intent(positive,action(expected)));
     assert(member.admit(positive,100,101)==Error::unauthorized_role);
     auto status=envelope(expected);assert(member.admit(status,100,101)==Error::none);
     assert(member.synchronized(7,true,true)==Error::stale_config&&member.synchronized(8,true,true)==Error::none);
@@ -206,7 +206,7 @@ void synchronization_tests(){
     Session negotiating;assert(negotiating.authenticate(original,original.peer_id,PeerRole::coordinator,true)==Error::none&&negotiating.begin_synchronization(8)==Error::not_ready);
 }
 void logical_session_restart_tests(){
-    const auto original=scope();Session session;JsonError detail;
+    const auto original=scope();Session session;
     assert(session.authenticate(original,original.peer_id,PeerRole::coordinator,true)==Error::none);
     assert(session.hello(hello(original))==Error::none&&session.synchronized(7,true,true)==Error::none);
     auto remembered=envelope(original);
@@ -217,7 +217,7 @@ void logical_session_restart_tests(){
     assert(session.scope()==expected&&session.state()==ConnectionState::synchronizing);
     assert(session.admit(remembered,100,101)==Error::none); // Hostname metadata remains admissible during synchronization.
     auto positive=envelope(expected);positive.kind=Kind::scoped_intent;
-    assert(parse_json(owned_intent_json(action(expected)),positive.payload,detail));
+    assert(with_intent(positive,action(expected)));
     assert(session.admit(positive,100,101)==Error::unauthorized_role);
     assert(session.synchronized(7,true,true)==Error::none&&session.admit(positive,100,101)==Error::none);
     auto foreign=positive;foreign.config_revision=6;assert(session.admit(foreign,100,102)==Error::stale_config);
@@ -244,9 +244,9 @@ void live_configuration_tests(){
     assert(session.discard_stale(status,100,101)==Error::none); // Obsolete observations are discarded without executing them.
     status.config_revision=8;assert(session.admit(status,100,101)==Error::none);
     auto intent=envelope(current);intent.kind=Kind::scoped_intent;
-    assert(parse_json(owned_intent_json(action(current)),intent.payload,detail));
+    assert(with_intent(intent,action(current)));
     assert(session.admit(intent,101,101)==Error::none); // Current synchronized authority is sufficient.
-    assert(parse_json(owned_intent_json(action(current)),intent.payload,detail));assert(session.admit(intent,101,102)==Error::none);
+    assert(with_intent(intent,action(current)));assert(session.admit(intent,101,102)==Error::none);
     auto stale=envelope(old);stale.payload=status.payload;
     assert(session.admit(stale,100,102)==Error::stale_config);
     assert(session.discard_stale(stale,100,102)==Error::none&&session.discard_stale(stale,100,102)==Error::none);
@@ -260,10 +260,9 @@ void live_configuration_tests(){
         case 1:bad.ttl_ms=10001;break;
     }assert(session.discard_stale(bad,100,103)!=Error::none);}
     assert(session.discard_stale(stale,100,99)==Error::invalid_message&&session.discard_stale(stale,100,10100)==Error::invalid_message);
-    auto malformed=stale;malformed.payload.object.emplace_back("unknown",Json{});assert(session.discard_stale(malformed,100,103)==Error::invalid_message);
     auto foreign=envelope(old);foreign.kind=Kind::scoped_intent;auto target=action(old);target.target.port.octopus_id=old.peer_id;
-    assert(parse_json(owned_intent_json(target),foreign.payload,detail));assert(session.discard_stale(foreign,100,103)==Error::target_not_local);
-    target=action(old);assert(parse_json(owned_intent_json(target),foreign.payload,detail));
+    assert(with_intent(foreign,target));assert(session.discard_stale(foreign,100,103)==Error::target_not_local);
+    target=action(old);assert(with_intent(foreign,target));
     assert(session.discard_stale(foreign,100,103)==Error::none); // Discarding obsolete work grants no execution authority.
     auto snapshot=envelope(current);snapshot.kind=Kind::snapshot_request;
     assert(session.admit(snapshot,100,104)==Error::none);snapshot.kind=Kind::snapshot_chunk;assert(session.admit(snapshot,100,104)==Error::none);

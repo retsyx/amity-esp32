@@ -528,7 +528,7 @@ bool application_failure_recoverable(const Active& active,const LinkTrace& trace
     // lost ordinary application work. Keep their existing terminal fences.
     for(const auto* terminal:{"socket_select","envelope_parse","synchronization_control_admit","synchronization_control_parse","stale_frame",
         "live_configuration_role","live_configuration_admit","live_configuration_manifest","membership_revoked","retirement","retirement_admit",
-        "update_admit","update_authority","control_admit","owned_intent_parse","settings_admit","settings_boot","settings_authority"})
+        "update_admit","update_authority","control_admit","settings_admit","settings_boot","settings_authority"})
         if(!strcmp(trace.reason,terminal))return false;
     if(active.restart_requested)return true;
     for(const auto* recoverable:{"application_restart_requested","causal_expired","cleanup_queue_full","causal_result_fence","context_recapture_failed",
@@ -1096,19 +1096,18 @@ void active_loop_work(void *arg){
             if(active->restart_requested){trace.fail("application_restart_requested");break;}
             RuntimeControlHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=controls;}
             uint64_t deadline=0;bool key_cleanup=false;
-            if(envelope.kind==Kind::scoped_intent){
-                model::OwnedIntent intent;
-                if(parse_owned_intent(envelope.payload,intent)!=Error::none){trace.fail("owned_intent_parse");break;}
-                key_cleanup=pure_key_release(intent);
+            const bool intent=envelope.kind==Kind::scoped_intent;
+            const bool selection=intent&&(envelope.intent->kind==model::OwnedIntentKind::context||envelope.intent->kind==model::OwnedIntentKind::activity);
+            if(intent){
+                key_cleanup=pure_key_release(*envelope.intent);
                 if(received>UINT64_MAX-envelope.ttl_ms)continue;
                 deadline=received+envelope.ttl_ms;
-
             }
             if(hooks.control){
                 const auto result=hooks.control(active->session.scope(),envelope,deadline);
                 if(active->restart_requested){trace.fail("application_restart_requested");break;}
-                if(!server&&result==Error::none&&envelope.kind==Kind::scoped_intent&&(envelope.payload.get("action")->string=="context"||envelope.payload.get("action")->string=="activity")){active->context_ready=true;active->refreshing=false;}
-                if(result!=Error::none&&(envelope.kind==Kind::scoped_result||(envelope.kind==Kind::scoped_intent&&(key_cleanup||envelope.payload.get("action")->string=="activity"||envelope.payload.get("action")->string=="context")))){trace.fail("control_dispatch",result);break;}
+                if(!server&&result==Error::none&&selection){active->context_ready=true;active->refreshing=false;}
+                if(result!=Error::none&&(envelope.kind==Kind::scoped_result||key_cleanup||selection)){trace.fail("control_dispatch",result);break;}
             }else if(envelope.kind==Kind::scoped_result||envelope.kind==Kind::scoped_intent){
                 trace.fail("control_dispatch",Error::not_ready);break;
             }
