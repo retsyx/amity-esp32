@@ -44,10 +44,10 @@ int httpd_resp_send_err(httpd_req_t*,int status,const char*){return status;}
 SUITE=r'''
 int main(int argc,char**argv){assert(argc==2);const std::string mode=argv[1];amity::SystemControl control;httpd_req_t request;
  if(mode=="member"||mode=="prepared")amity::consortium::role.member=true;
- else if(mode=="retired"||mode=="recovery_required")amity::consortium::role.phase=mode;
+ else if(mode=="recovery_required")amity::consortium::role.phase=mode;
  else if(mode=="awaiting_setup"){amity::consortium::role.coordinator=amity::consortium::role.authority_ready=false;amity::consortium::role.phase=mode;}
  else if(mode=="unclaimed"){amity::consortium::role.coordinator=false;amity::consortium::role.authority_ready=false;}
- if(mode=="member"||mode=="prepared"||mode=="retired"||mode=="recovery_required"||mode=="unclaimed"||mode=="awaiting_setup"){
+ if(mode=="member"||mode=="prepared"||mode=="recovery_required"||mode=="unclaimed"||mode=="awaiting_setup"){
   assert(start(control,"test","private")==ESP_ERR_INVALID_STATE&&starts==0&&!server&&!ui_enabled);
   assert(api(&request)==ESP_FAIL&&request.status==403&&asset(&request)==ESP_FAIL&&request.status==403&&effects==0);
  }else if(mode=="stop-before-start"){
@@ -87,7 +87,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='amity-controller-web-') as directory:
         cpp=Path(directory)/'test.cpp';binary=Path(directory)/'test';cpp.write_text(PREFIX+''.join(guards)+actual+SUITE)
         subprocess.run(shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-Wall','-Wextra','-Werror','-g','-fsanitize=address,undefined',str(cpp),'-o',str(binary)],check=True)
-        for mode in ('member','prepared','retired','recovery_required','unclaimed','awaiting_setup','stop-before-start','live-stop','stop-error',
+        for mode in ('member','prepared','recovery_required','unclaimed','awaiting_setup','stop-before-start','live-stop','stop-error',
                    'redirect-error','redirect-stop-error'):
             subprocess.run([str(binary),mode],check=True)
 

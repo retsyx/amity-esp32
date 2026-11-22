@@ -13,7 +13,7 @@ def main():
     names = ['static bool queued_firmware_stream(', 'static bool queued_expired(',
              'static bool pure_key_release(', 'static bool queued_cleanup(', 'static bool queued_causal(',
              'void request_session_restart(', 'Error remember_hostname(', 'void remember_live_hostname(',
-             'std::string retirement_hash(', 'esp_err_t runtime_remove_octopus(',
+             'esp_err_t runtime_remove_octopus(',
              'esp_err_t runtime_forget_removed_octopus(', 'RuntimeStatus runtime_status(',
              'static esp_err_t queue_update(', 'esp_err_t runtime_send_update(', 'static esp_err_t queue_control(',
              'void runtime_fence_owned_link(', 'esp_err_t runtime_send_owned(']

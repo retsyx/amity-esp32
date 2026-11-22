@@ -21,7 +21,7 @@ bool enrollment(const Json &v) {
     return text_is(v.get("phase"),{"commit","ack"})&&closed(v,{"phase","join_id","join_digest","membership_revision"})&&decimal_field(v,"membership_revision");
 }
 bool membership(const Json &v) {
-    return closed(v,{"mutation_id","proposal_digest","phase","membership_revision","expected_boot_id"},{"result"})&&generic_id(v.get("expected_boot_id"))&&generic_id(v.get("mutation_id"))&&hex(v.get("proposal_digest"),64)&&decimal_field(v,"membership_revision")&&text_is(v.get("phase"),{"factory_reset"})&&(!v.get("result")||text_is(v.get("result"),{"reset_scheduled","rejected","unknown"}));
+    return closed(v,{"phase"},{"result"})&&text_is(v.get("phase"),{"factory_reset"})&&(!v.get("result")||text_is(v.get("result"),{"reset_scheduled"}));
 }
 bool payload(Kind kind,const Json &v) {
     switch(kind) {

@@ -347,7 +347,7 @@ esp_err_t start(amity::SystemControl &service,const char *hostname,const char *i
     std::lock_guard<std::mutex> guard(server_mutex);
     if(ui_revoked.load() || server) return ESP_ERR_INVALID_STATE;
     const auto role=amity::consortium::runtime_status();
-    if(!role.coordinator || !role.authority_ready || role.member || role.phase=="retired" || role.phase=="recovery_required") return ESP_ERR_INVALID_STATE;
+    if(!role.coordinator || !role.authority_ready || role.member || role.phase=="recovery_required") return ESP_ERR_INVALID_STATE;
     hub=&service;auto e=web::start(server,std::string(hostname)+".local",initial_auth);if(e!=ESP_OK)return e;
     for(auto *path:{"/","/app.js","/system.js","/style.css","/favicon.svg"}) {e=web::route(server,path,HTTP_GET,asset);if(e!=ESP_OK)return e;}
     e=web::route(server,"/api/*",HTTP_GET,api);if(e!=ESP_OK)return e;

@@ -6,14 +6,9 @@ struct RemovalOperation {
     std::string reset="pending";bool complete=false;
     // The already-admitted reset keeps its original authenticated scope while
     // this same Remove transaction publishes the saved-configuration deletion.
-    std::optional<LinkScope> scope={};uint64_t membership_revision=0;
+    std::optional<LinkScope> scope={};
 };
 std::vector<RemovalOperation> removal_operations;
-struct RemovalAuthorization {
-    model::OctopusId issuer;model::MutationId mutation;std::string digest;
-    model::BootId issuer_boot,target_boot;uint64_t revision=0,config=0,until=0;
-    Active* active=nullptr;
-} removal_authorization;
 void removal_expire(uint64_t now){
     for(auto& operation:removal_operations)if(!operation.complete&&now>=operation.until){operation.complete=true;operation.reset="unconfirmed";}
     while(std::count_if(removal_operations.begin(),removal_operations.end(),[](const auto& value){return value.complete;})>8){
@@ -27,12 +22,4 @@ void removal_finish(model::OctopusId owner,model::MessageId id,bool acknowledged
         operation.complete=true;operation.reset=acknowledged?"scheduled":"unconfirmed";break;
     }
     removal_expire(now_ms());
-}
-bool removal_authorized_locked(model::OctopusId issuer){
-    const auto& permit=removal_authorization;
-    return issuer&&issuer!=identity.id&&permit.issuer==issuer&&permit.active&&
-        !permit.active->cancelled&&permit.active->tls->authenticated==issuer&&
-        now_ms()<permit.until&&permit.config==configuration&&permit.target_boot==boot&&
-        group.role==Group::retired&&group.authority==issuer&&group.epoch==1&&
-        group.revision==permit.revision&&group.mutation_id==permit.mutation&&group.mutation_digest==permit.digest;
 }

@@ -52,7 +52,7 @@ int main(){
  assert(runtime_original_setup_eligible());
  assert(runtime_claim_original_controller()==ESP_OK&&writes==1&&group.role==Group::coordinator&&durable.authority==identity.id&&durable.epoch==1&&status.authority_ready&&status.coordinator&&!status.member);
  assert(runtime_claim_original_controller()==ESP_OK&&writes==1);
- for(auto role:{Group::member,Group::prepared,Group::retired,Group::coordinator}){reset();group.role=role;group.authority=id<model::OctopusId>(3);group.epoch=1;assert(runtime_claim_original_controller()==ESP_ERR_INVALID_STATE&&!writes&&!status.authority_ready);}
+ for(auto role:{Group::member,Group::prepared,Group::coordinator}){reset();group.role=role;group.authority=id<model::OctopusId>(3);group.epoch=1;assert(runtime_claim_original_controller()==ESP_ERR_INVALID_STATE&&!writes&&!status.authority_ready);}
  reset();group.role=Group::prepared;group.join_id=id<model::JoinId>(5);candidate_passive=true;assert(runtime_claim_original_controller()==ESP_ERR_INVALID_STATE&&!writes); // Durable member preparation wins a late Matter completion.
  reset();candidate_passive=true;assert(runtime_claim_original_controller()==ESP_ERR_INVALID_STATE&&!writes);
  reset();group.join_id=id<model::JoinId>(5);assert(runtime_claim_original_controller()==ESP_ERR_INVALID_STATE&&!writes);
@@ -62,7 +62,7 @@ int main(){
  for(unsigned cut:{1u,2u}){reset();fault=cut;assert(runtime_claim_original_controller()==ESP_FAIL&&!status.authority_ready&&group.role==Group::unclaimed);assert((durable.role==Group::coordinator)==(cut==2));assert(candidate_passive&&!runtime_original_setup_eligible()&&runtime_claim_original_controller()==ESP_ERR_INVALID_STATE);group=durable;candidate_passive=false;fault=0;assert(runtime_claim_original_controller()==ESP_OK);if(cut==1)assert(status.authority_ready);} // Only a reboot/reload can resolve uncertain durable outcome.
  for(unsigned unavailable=0;unavailable<2;++unavailable){reset();if(!unavailable)status.initialized=false;else status.credential_ready=false;assert(runtime_claim_original_controller()==ESP_ERR_INVALID_STATE&&!writes);}
  claim_and_open_are_ordered();
- std::cout<<"PASS actual original claim: no implicit singleton authority, durable epoch1 identity, idempotence, member/retired rejection, late Matter race, before/after-commit failure and concurrent Open ordered behind blocked flash\n";
+ std::cout<<"PASS actual original claim: no implicit singleton authority, durable epoch1 identity, idempotence, member rejection, late Matter race, before/after-commit failure and concurrent Open ordered behind blocked flash\n";
 }
 '''
 

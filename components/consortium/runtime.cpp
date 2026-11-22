@@ -119,7 +119,7 @@ struct Active {
     std::atomic_bool restart_requested{false};
     model::LinkId cleaned_link;
     bool lifecycle_only=false;
-    std::string retirement_payload,endpoint_hint;
+    std::string endpoint_hint;
     model::MessageId removal_request;uint64_t removal_until=0;
     model::MessageId update_begin_id;
     RuntimePeerStatus status;
@@ -700,68 +700,42 @@ bool establish(Active &active,bool server,LinkTrace* diagnostic=nullptr){
     active.execution_supported=matching_firmware&&execution_profile_supported(peer,active.tls->extended_profile(),active.tls->hardware_profile(),profile_count,profile_mask);
     return timing.done(true);
 }
-std::string retirement_hash(const LinkScope &scope,model::MutationId mutation,uint64_t revision){
-    const bool source=scope.local_id==scope.coordinator_id;
-    return sha256("{\"consortium_id\":\""+scope.consortium_id.str()+"\",\"coordinator_id\":\""+scope.coordinator_id.str()+"\",\"coordinator_boot_id\":\""+(source?scope.local_boot_id:scope.peer_boot_id).str()+"\",\"member_id\":\""+(source?scope.peer_id:scope.local_id).str()+"\",\"member_boot_id\":\""+(source?scope.peer_boot_id:scope.local_boot_id).str()+"\",\"link_id\":\""+scope.link_id.str()+"\",\"epoch\":\""+std::to_string(scope.epoch)+"\",\"config_revision\":\""+std::to_string(scope.config_revision)+"\",\"membership_revision\":\""+std::to_string(revision)+"\",\"mutation_id\":\""+mutation.str()+"\"}");
-}
 bool finish_retirement(Active &active){
-    bool acknowledged=false;model::MessageId request;uint64_t until=0;std::string payload;
-    {std::lock_guard<std::mutex> guard(active.mutex);request=active.removal_request;until=active.removal_until;payload=active.retirement_payload;active.ready=false;active.management_ready=false;active.status.ready=false;active.status.management_ready=false;active.queue.clear();}
+    bool acknowledged=false;model::MessageId request;uint64_t until=0;
+    {std::lock_guard<std::mutex> guard(active.mutex);request=active.removal_request;until=active.removal_until;active.ready=false;active.management_ready=false;active.status.ready=false;active.status.management_ready=false;active.queue.clear();}
     struct Result{Active& active;model::MessageId request;bool& acknowledged;~Result(){removal_finish(active.peer,request,acknowledged);}} result{active,request,acknowledged};
     active.session.restrict_lifecycle();
-    const auto now=now_ms();if(!request||payload.empty()||now>=until||until-now>2000||active.cancelled)return false;
-    LinkScope scope;uint64_t revision=0;
+    const auto now=now_ms();if(!request||now>=until||until-now>2000||active.cancelled)return false;
     {
         std::lock_guard<std::mutex> guard(lock);
         const auto issued=std::find_if(removal_operations.begin(),removal_operations.end(),[&](const auto& operation){return operation.owner==active.peer&&operation.id==request&&!operation.complete;});
         if(issued==removal_operations.end()||!issued->scope||issued->until!=until)return false;
-        scope=*issued->scope;revision=issued->membership_revision;
-        // Admission required the then-current revision. Its terminal reset is
-        // bound to that exact link/boot/scope, even after this Remove commits a
-        // newer local configuration. Never advance or restamp the old request.
+        // The reset belongs to the exact reviewed link and boot that Remove
+        // admitted, even after it commits newer local configuration.
+        const auto& scope=*issued->scope;
         if(!(active.session.scope()==scope)||!active.retiring||!active.tls->server||active.tls->authenticated!=scope.peer_id||active.peer!=scope.peer_id||
-           !original_controller(group,identity.id)||!status.authority_ready||identity.id!=scope.local_id||boot!=scope.local_boot_id||
-           group.consortium!=scope.consortium_id||group.authority!=scope.coordinator_id||group.epoch!=scope.epoch||group.revision<revision||
-           configuration<scope.config_revision||std::any_of(group.peers.begin(),group.peers.end(),[&](const auto& peer){return peer.id==scope.peer_id;}))return false;
+           !original_controller(group,identity.id)||!status.authority_ready||std::any_of(group.peers.begin(),group.peers.end(),[&](const auto& peer){return peer.id==scope.peer_id;}))return false;
     }
-    Json checked;JsonError detail;model::MutationId mutation;uint64_t requested_revision=0;model::BootId target;
-    if(!parse_json(payload,checked,detail)||!closed(checked,{"mutation_id","proposal_digest","phase","membership_revision","expected_boot_id"})||
-       !id(checked.get("mutation_id"),mutation)||mutation.str()!=request.str()||!decimal(checked.get("membership_revision"),requested_revision)||requested_revision!=revision||
-       !id(checked.get("expected_boot_id"),target)||target!=scope.peer_boot_id||!checked.get("phase")||checked.get("phase")->type!=Json::Type::string||checked.get("phase")->string!="factory_reset"||
-       !checked.get("proposal_digest")||checked.get("proposal_digest")->type!=Json::Type::string||checked.get("proposal_digest")->string!=retirement_hash(scope,mutation,revision))return false;
     const auto sending=now_ms();if(sending>=until)return false;
-    if(!send(active,Kind::membership_event,payload,static_cast<uint32_t>(until-sending)))return false;
+    if(!send(active,Kind::membership_event,"{\"phase\":\"factory_reset\"}",static_cast<uint32_t>(until-sending)))return false;
     const auto sent=now_ms();if(sent>=until)return false;
     Envelope response;if(!lifecycle_receive(active,response,static_cast<uint32_t>(until-sent))||response.kind!=Kind::membership_result)return false;
-    Json requested;JsonError error;if(!parse_json(payload,requested,error))return false;
-    for(const auto key:{"mutation_id","proposal_digest","membership_revision","expected_boot_id"})if(response.payload.get(key)->string!=requested.get(key)->string)return false;
-    acknowledged=response.payload.get("phase")->string=="factory_reset"&&response.payload.get("result")->string=="reset_scheduled";
-    return acknowledged;
+    acknowledged=true;return acknowledged;
 }
-bool retire_member(Active &active,const Envelope &envelope,uint64_t received){
-    if(envelope.payload.get("phase")->string!="factory_reset"||envelope.ttl_ms>2000||!active.tls||active.tls->server||active.cancelled)return false;
-    model::MutationId mutation;model::BootId target_boot;uint64_t revision=0;std::string digest;
-    if(!id(envelope.payload.get("mutation_id"),mutation)||!id(envelope.payload.get("expected_boot_id"),target_boot)||target_boot!=boot||!decimal(envelope.payload.get("membership_revision"),revision)||!json_string(envelope.payload.get("proposal_digest"),digest,64,64)||digest!=retirement_hash(active.session.scope(),mutation,revision))return false;
-    if(received>UINT64_MAX-envelope.ttl_ms)return false;
-    const auto until=received+envelope.ttl_ms;
+bool retire_member(Active &active,const Envelope &envelope){
+    if(envelope.ttl_ms>2000||!active.tls||active.tls->server||active.cancelled)return false;
     RuntimeLifecycleHooks hooks;
-    {std::lock_guard<std::mutex> persistence(persistence_lock);std::unique_lock<std::mutex> guard(lock);
-        if(group.role!=Group::member||group.authority!=active.peer||identity.id==active.peer||group.epoch!=1||configuration!=envelope.config_revision||revision<=group.revision||!current_peer_credential(active,group)||!lifecycle.retire||!lifecycle.factory_reset||!lifecycle.after_factory_reset)return false;
-        auto next=group;next.role=Group::retired;next.revision=revision;next.mutation_id=mutation;next.mutation_digest=digest;next.peers.clear();next.authority_host.clear();next.join_id={};next.joining_id={};next.join_digest.clear();next.join_hostname.clear();next.join_revision=0;
-        if(without_runtime_lock(guard,[&]{return save_group(next);})!=ESP_OK)return false;
-        group=std::move(next);status.member=false;status.authority_ready=false;status.synchronized=false;status.membership_revision=revision;status.phase="removed_reset_pending";hooks=lifecycle;
+    {std::lock_guard<std::mutex> guard(lock);
+        if(group.role!=Group::member||!status.member||group.authority!=active.peer||identity.id==active.peer||!current_peer_credential(active,group)||!lifecycle.retire||!lifecycle.factory_reset||!lifecycle.after_factory_reset)return false;
+        status.member=false;status.authority_ready=false;status.synchronized=false;status.phase="removed_reset_pending";hooks=lifecycle;
         for(auto &other:links)if(other.get()!=&active){other->cancelled=true;::shutdown(other->tls->socket,SHUT_RDWR);}
     }
     active.session.restrict_lifecycle();
     {std::lock_guard<std::mutex> guard(active.mutex);active.ready=false;active.management_ready=false;active.status.ready=false;active.status.management_ready=false;active.queue.clear();}
-    if(hooks.retire()!=ESP_OK)return false;
-    {std::lock_guard<std::mutex> guard(lock);removal_authorization={active.peer,mutation,digest,envelope.origin_boot_id,target_boot,revision,envelope.config_revision,until,&active};}
-    struct Clear{~Clear(){std::lock_guard<std::mutex> guard(lock);removal_authorization={};}} clear;
-    if(!runtime_removed_device_reset_authorized(active.peer)||hooks.factory_reset(active.peer)!=ESP_OK)return false;
+    if(hooks.retire()!=ESP_OK||hooks.factory_reset(active.peer)!=ESP_OK)return false;
     // Explicit Remove authorized the reset. A lost ACK cannot strand a durable
     // reset marker; restart only after the response transmission attempt ends.
-    const std::string response="{\"mutation_id\":\""+mutation.str()+"\",\"proposal_digest\":\""+digest+"\",\"phase\":\"factory_reset\",\"membership_revision\":\""+std::to_string(revision)+"\",\"expected_boot_id\":\""+target_boot.str()+"\",\"result\":\"reset_scheduled\"}";
-    const bool sent=send(active,Kind::membership_result,response,2000);hooks.after_factory_reset();return sent;
+    const bool sent=send(active,Kind::membership_result,"{\"phase\":\"factory_reset\",\"result\":\"reset_scheduled\"}",2000);hooks.after_factory_reset();return sent;
 }
 auto context_capture_completed(const LinkScope&,model::OwnedContextResult) -> void;
 bool initialize_context(Active& active){
@@ -1072,7 +1046,7 @@ void active_loop_work(void *arg){
             continue;
         }
         if(server){bool enrolled=false;{std::lock_guard<std::mutex> guard(lock);for(const auto &peer:group.peers)if(peer.id==active->peer&&peer.active)enrolled=true;}if(!enrolled){if(active->retiring){retirement_attempted=true;finish_retirement(*active);trace.reason="retired";}else trace.fail("membership_revoked");break;}}
-        if(!server&&envelope.kind==Kind::membership_event){const auto admitted=active->session.admit(envelope,received,received);if(admitted!=Error::none){trace.fail("retirement_admit",admitted);break;}trace.phase="retirement";if(!retire_member(*active,envelope,received))trace.fail("retirement");else trace.reason="retired";break;}
+        if(!server&&envelope.kind==Kind::membership_event){const auto admitted=active->session.admit(envelope,received,received);if(admitted!=Error::none){trace.fail("retirement_admit",admitted);break;}trace.phase="retirement";if(!retire_member(*active,envelope))trace.fail("retirement");else trace.reason="retired";break;}
 
         if(envelope.kind==Kind::device_status){
             if(!receive_live_device_status(*active,envelope,received)){trace.fail("device_status_admission");break;}
@@ -1472,7 +1446,6 @@ esp_err_t runtime_start(model::ConsortiumId consortium,model::OctopusId octopus,
     // delay boot or prevent the independent Matter setup from choosing a main.
     status.initialized=status.credential_ready=true;status.authority_ready=original_controller(group,identity.id);status.coordinator=group.role==Group::coordinator&&status.authority_ready;status.member=group.role==Group::member||group.role==Group::prepared;candidate_passive=status.member;status.epoch=group.epoch;status.membership_revision=group.revision;status.leaf_spki_sha256=identity.spki;status.phase=group.role==Group::prepared?"finishing_enrollment":(group.role==Group::unclaimed?"awaiting_setup":"idle");
     if(startup.passive()){status.authority_ready=false;status.coordinator=false;status.member=true;}
-    if(group.role==Group::retired){status.member=false;status.phase="retired";}
     if(startup.passive()&&ble_remote_set_controller_enabled(false)!=ESP_OK)return recovery_required(octopus,ESP_FAIL,"Remote control could not be stopped; factory reset required");
     if(xTaskCreateWithCaps(network_loop,"group_net",6144,nullptr,2,nullptr,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS)return ESP_ERR_NO_MEM;
     timing.done(true);return ESP_OK;
@@ -1632,15 +1605,12 @@ esp_err_t runtime_remove_octopus(model::OctopusId id,model::MessageId request,ui
                target->refreshing||configuration!=target_scope->config_revision)target.reset();
         }
         group=std::move(next);status.membership_revision=group.revision;hooks=lifecycle;
-        removal_operations.push_back({id,request,now+2000,target?"pending":had_target?"unconfirmed":"offline",!target,target?target_scope:std::nullopt,group.revision});
-        const auto mutation=*model::MutationId::parse(request.str());
+        removal_operations.push_back({id,request,now+2000,target?"pending":had_target?"unconfirmed":"offline",!target,target?target_scope:std::nullopt});
         for(auto& active:links){
             if(active->peer!=id)continue;
             if(active==target){
-                const auto scope=active->session.scope();const auto digest=retirement_hash(scope,mutation,group.revision);
                 std::lock_guard<std::mutex> queue_guard(active->mutex);active->queue.clear();active->ready=false;active->management_ready=false;active->status.ready=false;active->status.management_ready=false;
-                active->removal_request=request;active->removal_until=now+2000;
-                active->retirement_payload="{\"mutation_id\":\""+mutation.str()+"\",\"proposal_digest\":\""+digest+"\",\"phase\":\"factory_reset\",\"membership_revision\":\""+std::to_string(group.revision)+"\",\"expected_boot_id\":\""+scope.peer_boot_id.str()+"\"}";active->retiring=true;
+                active->removal_request=request;active->removal_until=now+2000;active->retiring=true;
             }else{active->cancelled=true;::shutdown(active->tls->socket,SHUT_RDWR);}
         }
         if(joining){status.phase="enrollment_revoked";status.last_error="Enrollment cancelled. Physically factory reset the removed Amity before adding it again.";}
@@ -1657,7 +1627,6 @@ std::string runtime_removal_operation(model::OctopusId owner,model::MessageId re
     }
     return "{\"stage\":\"complete\",\"reset\":\"unconfirmed\",\"message\":\"The removal result is no longer available. Physically factory reset the removed Amity before adding it again.\"}";
 }
-bool runtime_removed_device_reset_authorized(model::OctopusId issuer){std::lock_guard<std::mutex> guard(lock);return removal_authorized_locked(issuer);}
 esp_err_t runtime_forget_removed_octopus(model::OctopusId owner){
     if(!owner)return ESP_ERR_INVALID_ARG;
     RuntimeLifecycleHooks hooks;

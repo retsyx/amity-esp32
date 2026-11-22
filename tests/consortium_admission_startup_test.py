@@ -134,16 +134,16 @@ void startup_tests(){
    check(status.initialized&&status.credential_ready&&created_tasks==1,"startup lost operational readiness");
    check(status.authority_ready==(role==Group::coordinator)&&status.coordinator==(role==Group::coordinator)&&!status.member,"main/unclaimed authority changed");check_phases();
   }
-  for(auto role:{Group::prepared,Group::member,Group::retired}){
+  for(auto role:{Group::prepared,Group::member}){
    reset();seed_role(role);
    check(start_runtime()==ESP_OK,"headless operational boot failed");
    check(group_reads==1&&identity_loads==1&&identity.key_der=="private-key-1","headless startup repeated credential work");
    check(status.initialized&&status.credential_ready&&!status.authority_ready&&!status.coordinator&&created_tasks==1&&remote_shutdowns==1,"headless startup changed authority/passivity");
-   check(status.member==(role!=Group::retired)&&candidate_passive==(role!=Group::retired),"stored headless role changed");check_phases();
+   check(status.member&&candidate_passive,"stored headless role changed");check_phases();
   }
  }
  // Failure before operational readiness remains fail closed for every role.
- for(auto role:{Group::unclaimed,Group::coordinator,Group::prepared,Group::member,Group::retired}){
+ for(auto role:{Group::unclaimed,Group::coordinator,Group::prepared,Group::member}){
   for(unsigned failure=0;failure<4;++failure){
    reset();seed_role(role);
    if(failure==0)psa_ok=false;

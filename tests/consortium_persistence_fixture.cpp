@@ -27,7 +27,7 @@ struct Active {
     Session session;model::OctopusId peer;std::shared_ptr<FakeTls> tls=std::make_shared<FakeTls>();
     std::mutex mutex;std::deque<Queued> queue;bool cancelled=false,retiring=false,ready=true,management_ready=false,refreshing=false,context_ready=true,context_requested=false;
     std::atomic_bool restart_requested{false},execution_fenced{false};RuntimePeerStatus status;
-    model::MessageId removal_request;uint64_t removal_until=0;std::string retirement_payload;
+    model::MessageId removal_request;uint64_t removal_until=0;
 };
 std::mutex lock,persistence_lock;
 Group group,durable_group;Identity identity;RuntimeStatus status;RuntimeLifecycleHooks lifecycle;RuntimeControlHooks controls;

@@ -14,10 +14,10 @@ struct RuntimeStatus {
     std::string phase,last_error,leaf_spki_sha256;
 };
 struct RuntimeStartup {
-    enum Role {unclaimed,coordinator,member,prepared,retired,recovery_required};
+    enum Role {unclaimed,coordinator,member,prepared,recovery_required};
     Role role=unclaimed;model::ConsortiumId consortium_id;model::OctopusId authority_id;
     uint64_t epoch=0,membership_revision=0;
-    bool passive()const{return role==member||role==prepared||role==retired||role==recovery_required;}
+    bool passive()const{return role==member||role==prepared||role==recovery_required;}
 };
 // NVS-only startup read before CEC/config; never generates keys or membership.
 esp_err_t runtime_read_startup(model::OctopusId,RuntimeStartup &);
@@ -58,7 +58,6 @@ esp_err_t runtime_add_octopus(model::MessageId scan_id,const std::string &candid
 esp_err_t runtime_remove_octopus(model::OctopusId,model::MessageId request_id,uint64_t expected_membership_revision,std::optional<model::BootId> expected_target_boot);
 // Complete means local roster removal. scheduled confirms only a durable reset marker.
 std::string runtime_removal_operation(model::OctopusId,model::MessageId request_id);
-bool runtime_removed_device_reset_authorized(model::OctopusId authenticated_coordinator);
 // Finish successful saved-configuration deletion. This erases public metadata,
 // never an enrolled identity or the exact transient reset/replay transaction.
 esp_err_t runtime_forget_removed_octopus(model::OctopusId);

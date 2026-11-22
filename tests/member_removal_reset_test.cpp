@@ -10,13 +10,12 @@
 namespace m=amity::system;
 namespace {
 template<class T>T id(unsigned n){char bytes[33];snprintf(bytes,sizeof(bytes),"%032x",n);return *T::parse(bytes);}
-bool permit=false,broker_available=true,on_flash_stack=false;
+bool broker_available=true,on_flash_stack=false;
 unsigned retired=0,broker_calls=0,open_handles=0,opens=0,commits=0,reboots=0;
 unsigned fail_at=0,flash_step=0;bool marker=false;
 std::vector<std::string> events;
 bool failure(){return ++flash_step==fail_at;}
 }
-namespace amity::consortium {bool runtime_removed_device_reset_authorized(m::OctopusId source){return permit&&source==id<m::OctopusId>(1);}}
 namespace config_store {
 bool with_internal_flash_stack(std::function<void()> callback){++broker_calls;if(!broker_available)return false;assert(!on_flash_stack);on_flash_stack=true;callback();on_flash_stack=false;return true;}
 }
@@ -39,45 +38,36 @@ esp_err_t nvs_flash_init(){assert(false);return ESP_FAIL;}
 esp_err_t nvs_flash_deinit(){assert(false);return ESP_FAIL;}
 esp_err_t nvs_flash_erase(){assert(false);return ESP_FAIL;}
 int main(){
+    using system_services::prepare_removed_device_reset;
     const auto main=id<m::OctopusId>(1),member=id<m::OctopusId>(2);
     amity::SystemControl owner;owner.local=member;owner.configuration=amity::RemovalConfiguration{main};
-    owner.retire=[&]{++retired;events.push_back("native_retirement_drained");return ESP_OK;};
+    owner.retire=[&]{++retired;return ESP_OK;};
     system_services::removed_device_reset_response_attempted();assert(!reboots);
-    // No unauthenticated, generic-retirement, other-controller or self/main path
-    // can create a reset decision. No new UI is opened by retirement either.
-    assert(system_services::prepare_removed_device_reset(owner,main)==ESP_ERR_INVALID_STATE);
-    permit=true;assert(system_services::prepare_removed_device_reset(owner,{})==ESP_ERR_INVALID_STATE);
-    assert(system_services::prepare_removed_device_reset(owner,id<m::OctopusId>(3))==ESP_ERR_INVALID_STATE);
-    owner.local=main;assert(system_services::prepare_removed_device_reset(owner,main)==ESP_ERR_INVALID_STATE);owner.local=member;
+    // No other-controller or self/main path can create a reset decision.
+    assert(prepare_removed_device_reset(owner,{})==ESP_ERR_INVALID_STATE);
+    assert(prepare_removed_device_reset(owner,id<m::OctopusId>(3))==ESP_ERR_INVALID_STATE);
+    owner.local=main;assert(prepare_removed_device_reset(owner,main)==ESP_ERR_INVALID_STATE);owner.local=member;
     owner.configuration=amity::RemovalConfiguration{id<m::OctopusId>(3)};
-    assert(system_services::prepare_removed_device_reset(owner,main)==ESP_ERR_INVALID_STATE);
-    owner.configuration=amity::RemovalConfiguration{};assert(system_services::prepare_removed_device_reset(owner,main)==ESP_ERR_INVALID_STATE);
-    assert(!retired&&!broker_calls&&!opens&&!marker);
-    owner.configuration=amity::RemovalConfiguration{main};owner.retire=[&]{++retired;return esp_err_t(42);};
-    assert(system_services::prepare_removed_device_reset(owner,main)==42&&!broker_calls&&!marker);
-    system_services::removed_device_reset_response_attempted();assert(!reboots);
-    owner.retire=[&]{++retired;events.push_back("native_retirement_drained");return ESP_OK;};
-    broker_available=false;assert(system_services::prepare_removed_device_reset(owner,main)==ESP_FAIL&&!opens&&!marker);broker_available=true;
-    // Revocation while waiting for native drain must fail at the flash gate.
-    owner.retire=[&]{++retired;permit=false;return ESP_OK;};
-    assert(system_services::prepare_removed_device_reset(owner,main)==ESP_ERR_INVALID_STATE&&!opens&&!marker);permit=true;
-    owner.retire=[&]{++retired;events.push_back("native_retirement_drained");return ESP_OK;};
+    assert(prepare_removed_device_reset(owner,main)==ESP_ERR_INVALID_STATE);
+    owner.configuration=amity::RemovalConfiguration{};assert(prepare_removed_device_reset(owner,main)==ESP_ERR_INVALID_STATE);
+    assert(!broker_calls&&!opens&&!marker);
+    owner.configuration=amity::RemovalConfiguration{main};
+    broker_available=false;assert(prepare_removed_device_reset(owner,main)==ESP_FAIL&&!opens&&!marker);broker_available=true;
     for(unsigned step=1;step<=3;++step){fail_at=step;flash_step=0;
-        assert(system_services::prepare_removed_device_reset(owner,main)==ESP_FAIL&&!open_handles&&!marker&&!device_settings::reset_pending());
+        assert(prepare_removed_device_reset(owner,main)==ESP_FAIL&&!open_handles&&!marker&&!device_settings::reset_pending());
         system_services::removed_device_reset_response_attempted();assert(!reboots);
     }
     fail_at=0;flash_step=0;events.clear();
-    // A committed management-only member may lack executable config. The exact
-    // authenticated removal permit, not a route graph, justifies its reset.
+    // A committed management-only member may lack executable configuration.
     owner.configuration.reset();
-    assert(system_services::prepare_removed_device_reset(owner,main)==ESP_OK&&marker&&device_settings::reset_pending()&&!open_handles&&!reboots);
-    assert((events==std::vector<std::string>{"native_retirement_drained","reset_marker_committed"}));
-    const auto old_opens=opens,old_commits=commits,old_retired=retired;
-    assert(system_services::prepare_removed_device_reset(owner,main)==ESP_OK&&opens==old_opens&&commits==old_commits&&retired==old_retired);
+    assert(prepare_removed_device_reset(owner,main)==ESP_OK&&marker&&device_settings::reset_pending()&&!open_handles&&!reboots);
+    // The runtime's lifecycle retire hook fences the board before this call.
+    assert((events==std::vector<std::string>{"reset_marker_committed"})&&!retired);
+    const auto old_opens=opens,old_commits=commits;
+    assert(prepare_removed_device_reset(owner,main)==ESP_OK&&opens==old_opens&&commits==old_commits);
     // The transmission may fail, but the deliberate durable reset is never
     // stranded. Repeated replies cannot schedule duplicate restart tasks.
     events.push_back("reply_transmission_attempt_failed");system_services::removed_device_reset_response_attempted();system_services::removed_device_reset_response_attempted();
     assert(reboots==1&&events.back()=="restart_after_reply_attempt");
-    permit=false;assert(system_services::prepare_removed_device_reset(owner,main)==ESP_ERR_INVALID_STATE&&reboots==1);
-    std::cout<<"PASS actual removed-device reset service/journal: exact member permit, main/unauthenticated rejection, management-only member, actual native drain, broker lifetime, storage failures, durable marker before reply attempt, lost-reply restart and duplicate suppression\n";
+    std::cout<<"PASS actual removed-device reset service/journal: main/other-controller rejection, management-only member, broker lifetime, storage failures, durable marker before reply attempt, lost-reply restart and duplicate suppression\n";
 }

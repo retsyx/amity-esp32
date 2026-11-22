@@ -67,9 +67,9 @@ namespace amity::consortium {
 struct Role {static int instances;bool initialized=true,member=false,coordinator=false,authority_ready=false;std::string phase="awaiting_setup";
 Role(){++instances;}Role(const Role&r):initialized(r.initialized),member(r.member),coordinator(r.coordinator),authority_ready(r.authority_ready),phase(r.phase){++instances;}~Role(){--instances;}};
 int Role::instances=0;Role role;using RuntimeStatus=Role;
-struct RuntimeStartup{enum{unclaimed,coordinator,member,retired};int role=unclaimed;};
+struct RuntimeStartup{enum{unclaimed,coordinator,member};int role=unclaimed;};
 Role runtime_status(){return role;}
-bool runtime_original_setup_eligible(){return role.initialized&&!role.member&&!role.coordinator&&!active_candidate&&role.phase!="retired"&&role.phase!="recovery_required";}
+bool runtime_original_setup_eligible(){return role.initialized&&!role.member&&!role.coordinator&&!active_candidate&&role.phase!="recovery_required";}
 int runtime_open_enrollment(uint64_t generation){assert(generation==77);++enrollment_windows;events.push_back("enroll");return enrollment_result;}
 int runtime_claim_original_controller(){++claims;events.push_back("claim");if(claim_member_wins){role.member=true;role.phase="member";return ESP_ERR_INVALID_STATE;}if(active_candidate)return ESP_ERR_INVALID_STATE;role.coordinator=true;role.phase="coordinator";return ESP_OK;}
 void runtime_configuration_changed(uint64_t,const std::string&){events.push_back("publish-config");}
@@ -182,7 +182,6 @@ int main(){using namespace amity::consortium;
  reset();role.member=true;role.phase="member";address_available=enrolled=true;await_original_task(nullptr);assert(!claims&&events.empty()&&!remote_workers&&!original_interfaces_enabled&&delete_calls==1);
  reset();address_available=enrolled=true;claim_member_wins=true;await_original_task(nullptr);assert(claims==1&&role.member&&!original_interfaces_enabled&&remote_workers==0&&events==std::vector<std::string>{"claim"});
  reset();active_candidate=true;address_available=enrolled=true;role.phase="prepared";on_delay=[](){role.member=true;role.phase="member";};await_original_task(nullptr);assert(claims==1&&!original_interfaces_enabled&&remote_workers==0);
- reset();role.phase="retired";await_original_task(nullptr);assert(!claims&&!original_interfaces_enabled);
  reset();role.phase="recovery_required";await_original_task(nullptr);assert(!claims&&!original_interfaces_enabled);
  reset();role.coordinator=role.authority_ready=true;role.phase="coordinator";RuntimeStartup stored;stored.role=RuntimeStartup::coordinator;retained_startup(stored,ESP_OK);assert(matter_fabrics==0&&remote_workers==1&&!getter_calls);
  reset();role.coordinator=role.authority_ready=true;retained_startup(stored,ESP_OK,ESP_ERR_INVALID_STATE);assert(!original_interfaces_enabled&&events.empty());

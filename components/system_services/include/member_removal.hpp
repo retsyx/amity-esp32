@@ -4,10 +4,9 @@
 #include "esp_err.h"
 namespace amity { class SystemControl; }
 namespace system_services {
-// Authenticated explicit removal only, after the runtime has checked the exact
-// current membership transaction. Generic retirement never invokes this path.
-// Returns only after native retirement drains and the existing reset journal
-// marker is committed on the internal flash stack. The main is never eligible.
+// Authenticated explicit removal only, after the runtime's lifecycle retire
+// hook has fenced the board. Returns once the factory reset marker is
+// committed on the internal flash stack. The main is never eligible.
 esp_err_t prepare_removed_device_reset(amity::SystemControl&,
     amity::system::OctopusId authenticated_coordinator);
 // A durable reset is not canceled by a lost reply. Invoke after attempting its

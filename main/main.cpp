@@ -475,7 +475,7 @@ bool station_has_address() {
 void await_original_work() {
     for(;;){
         const auto role=amity::consortium::runtime_status();
-        if(role.member||role.phase=="retired"||role.phase=="recovery_required")return;
+        if(role.member||role.phase=="recovery_required")return;
         if(station_has_address()&&amity_matter_controller_enrollment_complete()){
             const auto claimed=amity::consortium::runtime_claim_original_controller();
             if(claimed==ESP_OK){
@@ -575,7 +575,6 @@ extern "C" void app_main() {
         ESP_ERROR_CHECK(hub.retire_membership());
         ESP_ERROR_CHECK(web_admin::load(hub,true));
     }
-    if(membership.role==amity::consortium::RuntimeStartup::retired)ESP_ERROR_CHECK(hub.retire_membership());
     amity::consortium::runtime_lifecycle_hooks({retire_original_interfaces,[](amity::system::OctopusId owner){amity::forget_owner(owner);},
     [](amity::system::OctopusId coordinator){return system_services::prepare_removed_device_reset(hub,coordinator);},
     system_services::removed_device_reset_response_attempted});
