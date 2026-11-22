@@ -1135,14 +1135,16 @@ struct HubService::Impl : Adapter {
         xSemaphoreGive(lock);
         if(changed)apply_emergency_release();
     }
-    bool admit_input(system::LinkId link,uint64_t deadline,uint32_t& generation){
+    enum class InputAdmission:uint8_t {current,unbound,expired};
+    InputAdmission admit_input(system::LinkId link,uint64_t deadline,uint32_t& generation){
         // The transport already authenticated this connection. Only a current
         // activity/context can make its button edges eligible for execution.
         xSemaphoreTake(lock,portMAX_DELAY);
         generation=key_generation.load();
-        const bool current=input_context_valid&&link==input_link;
+        const bool bound=input_context_valid&&link==input_link;
         xSemaphoreGive(lock);
-        return current&&(!deadline||uint64_t(esp_timer_get_time())/1000<deadline);
+        if(!bound)return InputAdmission::unbound;
+        return !deadline||uint64_t(esp_timer_get_time())/1000<deadline?InputAdmission::current:InputAdmission::expired;
     }
     bool accepted_activity_authorized(const system::OwnedAuthorization& auth)const{
         return !maintenance.load()&&!retiring.load()&&!authority_transition.load()&&
@@ -2083,7 +2085,14 @@ system::AdmissionResult HubService::submit_key_edges(const std::array<system::Ke
     if(!count||count>2||!activity_generation||(count==2&&(edges[0].key!=edges[1].key||!edges[0].down||edges[1].down)))
         return {system::AdmissionCode::invalid,"Invalid button edges"};
     uint32_t generation=0;
-    if(!impl_->admit_input(link,deadline,generation))return {system::AdmissionCode::stale,"Original input context is unavailable"};
+    const auto admission=impl_->admit_input(link,deadline,generation);
+    // Whatever ends a link's input binding stops its holds first, so a lone
+    // release arriving without a binding has nothing left to release.
+    if(admission==Impl::InputAdmission::unbound&&count==1&&!edges[0].down){
+        ESP_LOGI(TAG,"Key release ignored: no input context for this link key=%u generation=%llu",static_cast<unsigned>(edges[0].key),static_cast<unsigned long long>(activity_generation));
+        return {system::AdmissionCode::accepted,{}};
+    }
+    if(admission!=Impl::InputAdmission::current)return {system::AdmissionCode::stale,"Original input context is unavailable"};
     auto* c=new(std::nothrow)Impl::InputCommand(edges,count,activity_generation);if(!c)return {system::AdmissionCode::overloaded,"Owner input allocation failed"};
     // Retain the epoch captured before allocation: a concurrent connection
     // fence also invalidates edges which reach the owner queue afterward.

@@ -803,6 +803,63 @@ static void raw_keys_resolve_current_role_on_sparse_adapter(){
     assert(edge(4,false)&&count(8,0x45)==before_audio_up+1);
     fixture_complete_all();fixture_async_autocomplete=true;run_idle(4);fixture_peer_address={};fixture_tick=100000;
 }
+// A lone key-up on a link without an input binding has nothing to release,
+// because whatever ends a binding stops that link's holds first. The member
+// accepts it as a no-op, with no owner IPC or frame, instead of rejecting it
+// as stale, which closes the link. Presses and taps stay rejected.
+static void release_without_binding_is_noop(){
+    fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
+    const auto other_link=*m::LinkId::parse(std::string(32,'7'));
+    const auto renewed_boot=*m::BootId::parse(std::string(32,'8'));
+    const auto other_controller=*m::OctopusId::parse(std::string(32,'9'));
+    const auto edges=[](HubService& hub,std::initializer_list<m::KeyEdge> list,m::LinkId on){
+        std::array<m::KeyEdge,2> edge{};std::copy(list.begin(),list.end(),edge.begin());
+        return hub.submit_key_edges(edge,static_cast<uint8_t>(list.size()),1,on,0);
+    };
+    const auto count=[](std::initializer_list<uint8_t> data){return std::count_if(fixture_sent.begin(),fixture_sent.end(),[&](const auto& tx){
+        return tx.gpio==2&&tx.frame.size==data.size()+1&&std::equal(data.begin(),data.end(),tx.frame.data+1);});};
+    {
+        // A fresh link before any selection or context.
+        HubService hub;hub.set_system_identity(group,member);hub.set_boot_identity(boot);hub.set_coordinator_authority(false);
+        assert(fixture_start(hub,1,2)==ESP_OK&&hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
+        fixture_tick=0;fixture_sent.clear();
+        request_allocations=0;measure_request_allocations=true;
+        const auto release=edges(hub,{{0x41,false}},link);
+        measure_request_allocations=false;
+        const auto press=edges(hub,{{0x41,true}},link),tap=edges(hub,{{0x41,true},{0x41,false}},link);
+        std::printf("unbound link: release=%d press=%d tap=%d owner_allocations=%zu\n",static_cast<int>(release.code),static_cast<int>(press.code),static_cast<int>(tap.code),request_allocations);
+        assert(release.code==m::AdmissionCode::accepted&&request_allocations==0);
+        assert(press.code==m::AdmissionCode::stale&&tap.code==m::AdmissionCode::stale);
+        run_idle(4);assert(fixture_sent.empty());
+        fixture_tick=100000;
+    }
+    // A link fence, a new controller boot and a controller change each end
+    // the binding of a link that holds a key, and stop that hold.
+    for(int ending=0;ending<3;++ending){
+        HubService hub;hub.set_system_identity(group,member);hub.set_boot_identity(boot);hub.set_coordinator_authority(false);
+        assert(fixture_start(hub,1,2)==ESP_OK&&hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
+        m::OwnedAuthorization auth{controller,controller_boot,boot,link,1,0};
+        m::OwnedIntent context;context.kind=m::OwnedIntentKind::context;context.target.port={group,member,0,m::Side::front};context.generation=1;context.config_revision=1;
+        context.selected=true;context.source=context.audio=named(member,m::Side::back,"Source");assert(hub.submit_owned(context,auth));
+        fixture_tick=0;fixture_async_autocomplete=false;fixture_sent.clear();
+        assert(edges(hub,{{0x41,true}},link)&&count({0x44,0x41})==1);
+        if(ending==0)assert(hub.fence_owned(controller,link));
+        else if(ending==1){auto renewed=auth;renewed.controller_boot=renewed_boot;renewed.link_id=other_link;assert(hub.submit_owned(context,renewed));}
+        else assert(hub.bind_owned_controller(other_controller,1)==ESP_OK);
+        for(unsigned pass=0;pass<4;++pass){fixture_complete_all();run_idle(2);}
+        // The hold has stopped: completed presses are not repeated.
+        const auto presses=count({0x44,0x41}),releases=count({0x45});
+        fixture_time+=1000000;for(unsigned pass=0;pass<4;++pass){fixture_complete_all();run_idle(2);}
+        assert(count({0x44,0x41})==presses&&count({0x45})==releases);
+        // The held key's release arrives late on the ended link.
+        const auto late=edges(hub,{{0x41,false}},link);
+        for(unsigned pass=0;pass<4;++pass){fixture_complete_all();run_idle(2);}
+        std::printf("ending=%d late_release=%d presses=%td releases=%td after=%td/%td\n",ending,static_cast<int>(late.code),presses,releases,count({0x44,0x41}),count({0x45}));
+        assert(late.code==m::AdmissionCode::accepted&&count({0x44,0x41})==presses&&count({0x45})==releases);
+        assert(edges(hub,{{0x41,true}},link).code==m::AdmissionCode::stale);
+        fixture_async_autocomplete=true;run_idle(2);fixture_tick=100000;
+    }
+}
 static void independent_release_and_link_fencing(){
     fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
     HubService hub;hub.set_system_identity(group,member);hub.set_boot_identity(boot);hub.set_coordinator_authority(false);assert(fixture_start(hub,1,2)==ESP_OK&&hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
@@ -819,7 +876,9 @@ static void independent_release_and_link_fencing(){
     assert(hub.fence_owned(controller,link)&&hub.input_epoch()!=epoch);
     fixture_complete_all();run_idle(4);assert(volume()==2&&authorizations==checked);
     assert(std::count_if(fixture_completed.begin(),fixture_completed.end(),[](const auto& frame){return frame.size==3&&frame.data[1]==0x44&&frame.data[2]==0x41;})==1);
-    assert(!edge(0x41,true)&&!edge(0x41,false)&&volume()==2);
+    // The fence ended the binding and its holds: a late press is rejected and
+    // a late release has nothing to release.
+    assert(!edge(0x41,true)&&edge(0x41,false)&&volume()==2);
     fixture_complete_all();fixture_async_autocomplete=true;run_idle(4);fixture_tick=100000;
 }
 static void link_fence_during_key_admission(bool stale_down){
@@ -997,4 +1056,4 @@ static void distinct_activity_ids_with_identical_equipment(bool remote){
     if(other)assert(delivered_generations.back()!=second_wire_generation);
     assert(primary.request_activity(-1)==ESP_OK);finish(-1);latest_task=primary_task;fixture_peer_address={};fixture_tick=100000;
 }
-int main(){compact_keys_and_quiet_publication();member_selection_refreshes_projection_without_discovery();scoped_audio_fallback_chooses_display_owner();for(bool remote_owner:{false,true})audio_keys_use_audio_or_display(remote_owner);accepted_reports_count_before_the_owner_merges_them();removed_owner_snapshots_release_capacity();replaced_key_owners_reuse_slots();cold_audio_lookup_precedes_finite_switch_transmission();source_theft_switch_repair_preserves_audio_hold();member_maintenance_finishes_key_cleanup();raw_keys_resolve_current_role_on_sparse_adapter();independent_release_and_link_fencing();for(bool down:{false,true})link_fence_during_key_admission(down);link_fence_discards_pending_key_lookup();pending_new_boot_context_blocks_old_routing();for(bool remote:{false,true})distinct_activity_ids_with_identical_equipment(remote);cold_lookup_waiters_resume_in_arrival_order();transmission_only_rx_does_not_block_a_ready_lookup();local_activity_frames();first_matching_osd();startup_discards_keys();observation_pressure();owner_keys();cec_ack_controls_hold();queued_request_lifetime();every_adapter();remote_receiver_parity();configuration_preserves_discovery();activity_commits_after_source_tx_without_peer_status();for(int next:{-1,0,1})cold_lookup_blocks_following_activity(next);std::puts("FIFO cold-lookup resumption with responsive cached keys/RX, explicit owner start/standby frames, queued request lifetime, CEC ACK-based hold lifecycle, first OSD match, startup taps, observation pressure, removed-owner snapshot cleanup/capacity reuse, independent owner keys, authorization, and all-adapter discovery passed");}
+int main(){compact_keys_and_quiet_publication();member_selection_refreshes_projection_without_discovery();scoped_audio_fallback_chooses_display_owner();for(bool remote_owner:{false,true})audio_keys_use_audio_or_display(remote_owner);accepted_reports_count_before_the_owner_merges_them();removed_owner_snapshots_release_capacity();replaced_key_owners_reuse_slots();cold_audio_lookup_precedes_finite_switch_transmission();source_theft_switch_repair_preserves_audio_hold();member_maintenance_finishes_key_cleanup();raw_keys_resolve_current_role_on_sparse_adapter();release_without_binding_is_noop();independent_release_and_link_fencing();for(bool down:{false,true})link_fence_during_key_admission(down);link_fence_discards_pending_key_lookup();pending_new_boot_context_blocks_old_routing();for(bool remote:{false,true})distinct_activity_ids_with_identical_equipment(remote);cold_lookup_waiters_resume_in_arrival_order();transmission_only_rx_does_not_block_a_ready_lookup();local_activity_frames();first_matching_osd();startup_discards_keys();observation_pressure();owner_keys();cec_ack_controls_hold();queued_request_lifetime();every_adapter();remote_receiver_parity();configuration_preserves_discovery();activity_commits_after_source_tx_without_peer_status();for(int next:{-1,0,1})cold_lookup_blocks_following_activity(next);std::puts("FIFO cold-lookup resumption with responsive cached keys/RX, explicit owner start/standby frames, queued request lifetime, CEC ACK-based hold lifecycle, first OSD match, startup taps, observation pressure, removed-owner snapshot cleanup/capacity reuse, independent owner keys, authorization, and all-adapter discovery passed");}
