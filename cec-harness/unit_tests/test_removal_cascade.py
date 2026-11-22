@@ -130,9 +130,6 @@ class CascadeFixture(membership_fixture.Fixture):
             self.calls.append((path, None))
             self.missing_operation_reads -= 1
             raise AmityHTTPError(404, "Unknown operation")
-        if data is None and path == "/api/backup":
-            self.calls.append((path, None))
-            return deepcopy(self.config)
         if data is None and path == "/api/activity-editor":
             self.calls.append((path, None))
             return self.editor()

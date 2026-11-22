@@ -206,7 +206,7 @@ class RemovalReview:
 
     def _snapshot(self, *, removed=False):
         system = self.member._system()
-        config = self._request("/api/backup")
+        config = self._request("/api/config")
         editor = self.member._observe_http("/api/activity-editor", self.main.get_configuration)
         state = self.member._observe_http("/api/activity-editor/status", self.main.get_state)
         if (not isinstance(config, dict) or config.get("controller_octopus_id") != self.main.identity.device_id

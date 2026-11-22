@@ -81,7 +81,7 @@ class ReplacementReview:
 
     def _snapshot(self):
         system = self.previous._system()
-        config = self._request("/api/backup")
+        config = self._request("/api/config")
         editor = self.previous._observe_http("/api/activity-editor", self.main.get_configuration)
         state = self.previous._observe_http("/api/activity-editor/status", self.main.get_state)
         if (config.get("controller_octopus_id") != self.main.identity.device_id
