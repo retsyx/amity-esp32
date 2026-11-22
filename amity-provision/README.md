@@ -24,7 +24,7 @@ On Windows, run in PowerShell:
 ```
 
 Options go before the firmware path. The tool generates a random Matter setup
-PIN, discriminator and SPAKE2+ salt. The same printed Matter code can authenticate Add on builds configured to require it; ordinary Add needs only the physical setup window. No separate Add secret or verifier is generated. This does not change Matter/admin provisioning or perform Matter commissioning for an added member.
+PIN, discriminator and SPAKE2+ salt. Add needs only the physical setup window. No separate Add secret or verifier is generated. This does not change Matter/admin provisioning or perform Matter commissioning for an added member.
 
 The tool prints the manual pairing code and writes:
 
