@@ -110,22 +110,22 @@ missing metadata defer until the relevant discovery completes; known-device
 operations continue. Command admission is separate from successful CEC queue
 admission or transmission.
 
-Outgoing frames live solely in CEC's per-wire FIFO: eight queued-plus-active
+Outgoing frames live solely in CEC's per-wire FIFO: 24 queued-plus-active
 slots shared by all supplied frames, including releases. Every
 key-press frame gets one wire attempt. A failed admission or TX ends only its
 key's hold and makes one final-cleanup decision; unchanged down reports cannot
 restart it. A later physical up does not duplicate cleanup. Final release and
 ordinary commands use up to three wire attempts. A finite key recipe submits
 its press first, then attempts final release immediately only if the press was
-admitted and no other key keeps the recipient stream open. At seven occupied
-slots the press enters slot eight and release drops; at eight the press drops
+admitted and no other key keeps the recipient stream open. At 23 occupied
+slots the press enters slot 24 and release drops; at 24 the press drops
 and no release is attempted. Its release does not wait for completion or first
 edge. Release admission is immediate:
-a release submitted at eight is dropped, logged and consumed. Every TX dropped
+a release submitted at 24 is dropped, logged and consumed. Every TX dropped
 because the FIFO is full must be logged.
 No later tick or capacity change retries that admission, including power
 and switch-key cleanup. CEC applies supplied attempt budgets and the same
-eight-message admission limit without interpreting button policy.
+24-message admission limit without interpreting button policy.
 
 Matter Speaker support adds Give Audio Status (`71`) and handles Report
 Audio Status (`7a`) from the current audio device. Absolute volume/mute are

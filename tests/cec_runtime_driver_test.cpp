@@ -13,6 +13,9 @@
 #include <cstdarg>
 #include <string>
 
+// Each wire's transmit FIFO holds this many queued+active frames.
+constexpr unsigned fifo_capacity = 24;
+constexpr unsigned fifo_drain_passes = 500 * fifo_capacity;
 struct Object { virtual ~Object() = default; };
 struct Queue : Object { size_t capacity, item_size; std::deque<std::vector<uint8_t>> items; };
 struct Semaphore : Object { unsigned available = 0; bool mutex = false; };
@@ -171,10 +174,10 @@ static void caller_attempt_tests() {
         assert(!bus.send_guarded(press,fence,0)&&!bus.send_async_guarded(press,fence,outcome,0));
         pump();assert(pin_edges[30]==edges); // Invalid zero budget never becomes a send.
         const auto errors=bus.statistics().tx_errors;
-        for(unsigned queued=0;queued<8;++queued)assert(bus.send_guarded(press,{}));
-        assert(!bus.send_guarded(press,{})); // The TX FIFO holds at most eight messages.
-        for(unsigned pass=0;pass<4000;++pass)pump();
-        assert(bus.statistics().tx_errors==errors+8&&bus.statistics().tx_queue_high_water==8);
+        for(unsigned queued=0;queued<fifo_capacity;++queued)assert(bus.send_guarded(press,{}));
+        assert(!bus.send_guarded(press,{})); // The TX FIFO holds at most fifo_capacity messages.
+        for(unsigned pass=0;pass<fifo_drain_passes;++pass)pump();
+        assert(bus.statistics().tx_errors==errors+fifo_capacity&&bus.statistics().tx_queue_high_water==fifo_capacity);
     }
     {
         cec::Bus bus;assert(bus.start(31)==ESP_OK);
@@ -334,7 +337,7 @@ static void async_completion_contract_tests() {
     const cec::Frame broadcast{{0x4f,0x99},2}, press{{0x40,0x44,0x41},3};
     {
         cec::Bus bus;assert(bus.start(28)==ESP_OK);
-        std::array<cec::TxCompletion,8> complete;
+        std::array<cec::TxCompletion,fifo_capacity> complete;
         const auto admitted_at=now;
         for(auto& tracked:complete) {
             tracked.result.store(cec::TxResult::Success);
@@ -357,9 +360,9 @@ static void async_completion_contract_tests() {
             assert(bus.send_async_guarded(broadcast,{},rejected));
             assert(rejected.result.load()==cec::TxResult::Pending&&now==refilled_at);
         };
-        for(unsigned pass=0;pass<4000;++pass)pump();
+        for(unsigned pass=0;pass<fifo_drain_passes;++pass)pump();
         before_tick={};
-        assert(refilled&&bus.idle()&&bus.statistics().transmitted==9);
+        assert(refilled&&bus.idle()&&bus.statistics().transmitted==fifo_capacity+1);
         for(auto& tracked:complete)assert(tracked.result.load(std::memory_order_acquire)==cec::TxResult::Success);
         assert(rejected.result.load(std::memory_order_acquire)==cec::TxResult::Success);
         assert(!bus.send_async_guarded({}, {}, rejected)&&!bus.send_async_guarded(press,{},rejected,0));
@@ -439,9 +442,9 @@ static void full_fifo_tests() {
     const cec::Frame ordinary{{0x4f, 0x44, 1}, 3}, release{{0x4f, 0x45}, 2};
     {
         cec::Bus bus; assert(bus.start(34) == ESP_OK);
-        const auto drain = [&] { for (unsigned pass = 0; pass < 4000; ++pass) pump(); };
+        const auto drain = [&] { for (unsigned pass = 0; pass < fifo_drain_passes; ++pass) pump(); };
         const auto before = bus.statistics().transmitted;
-        for (unsigned i = 0; i < 8; ++i) assert(bus.send_guarded(ordinary, {}, 1));
+        for (unsigned i = 0; i < fifo_capacity; ++i) assert(bus.send_guarded(ordinary, {}, 1));
         const auto full_at = now; const auto logged = warning_logs.size();
         assert(!bus.send_guarded(release,{}));
         assert(!bus.send_guarded(ordinary, {}, 1));
@@ -452,20 +455,20 @@ static void full_fifo_tests() {
         assert(warning_logs[logged] == "TX dropped: FIFO full (GPIO 34, 2 bytes: 4f 45)");
         assert(warning_logs[logged+1] == "TX dropped: FIFO full (GPIO 34, 3 bytes: 4f 44 01)");
         drain();
-        assert(bus.statistics().transmitted == before + 8);
-        assert(bus.statistics().tx_queue_high_water == 8);
-        drain(); assert(bus.statistics().transmitted == before + 8); // No retry or backlog.
+        assert(bus.statistics().transmitted == before + fifo_capacity);
+        assert(bus.statistics().tx_queue_high_water == fifo_capacity);
+        drain(); assert(bus.statistics().transmitted == before + fifo_capacity); // No retry or backlog.
 
         // Independently admitted presses and release share the exact FIFO.
         // The last slot can hold either frame; there is no second backlog.
         cec::TxCompletion press_done, release_done;
-        for (unsigned i = 0; i < 6; ++i) assert(bus.send_guarded(ordinary, {}, 1));
+        for (unsigned i = 0; i < fifo_capacity - 2; ++i) assert(bus.send_guarded(ordinary, {}, 1));
         assert(bus.send_async_guarded(ordinary, {}, press_done, 1));
         assert(bus.send_async_guarded(release, {}, release_done, 1));
         assert(!bus.send_guarded(release,{}));
         finish(press_done); assert(release_done.result.load() == cec::TxResult::Pending);
         finish(release_done); assert(release_done.result.load() == cec::TxResult::Success);
-        for (unsigned i = 0; i < 7; ++i) assert(bus.send_guarded(ordinary, {}, 1));
+        for (unsigned i = 0; i < fifo_capacity - 1; ++i) assert(bus.send_guarded(ordinary, {}, 1));
         assert(bus.send_async_guarded(ordinary, {}, press_done, 1));
         const auto release_logged = warning_logs.size();
         assert(!bus.send_async_guarded(release, {}, release_done, 1));
@@ -476,7 +479,7 @@ static void full_fifo_tests() {
         // The full sixteen-byte frame is present in its drop log.
         cec::Frame longest{}; longest.size = 16;
         for (unsigned i = 0; i < 16; ++i) longest.data[i] = i;
-        for (unsigned i = 0; i < 8; ++i) assert(bus.send_guarded(ordinary, {}, 1));
+        for (unsigned i = 0; i < fifo_capacity; ++i) assert(bus.send_guarded(ordinary, {}, 1));
         assert(!bus.send_guarded(longest,{}));
         assert(warning_logs.back() == "TX dropped: FIFO full (GPIO 34, 16 bytes: 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f)");
         drain();
@@ -486,12 +489,12 @@ static void full_fifo_tests() {
     cec::Bus active; assert(active.start(35) == ESP_OK);
     external_low |= uint64_t{1} << 35; gpio_set_level(35, 1); step();
     assert(active.send_guarded(ordinary, {}, 1)); pump();
-    for (unsigned i = 0; i < 7; ++i) assert(active.send_guarded(ordinary, {}, 1));
+    for (unsigned i = 0; i < fifo_capacity - 1; ++i) assert(active.send_guarded(ordinary, {}, 1));
     const auto full_at = now;
     assert(!active.send_guarded(ordinary, {}, 1) && !active.send_guarded(release, {}, 1));
     assert(now == full_at && warning_logs.back() == "TX dropped: FIFO full (GPIO 35, 2 bytes: 4f 45)");
     external_low &= ~(uint64_t{1} << 35); gpio_set_level(35, 1);
-    for (unsigned pass = 0; pass < 4000; ++pass) pump();
+    for (unsigned pass = 0; pass < fifo_drain_passes; ++pass) pump();
     assert(active.idle()); active.stop(); assert(!timer && tasks.empty() && !output_low);
 }
 
@@ -645,11 +648,11 @@ int main() {
         assert(completed[0].result.load() != cec::TxResult::Pending && completed[0].result.load() != cec::TxResult::Success);
         lines[0].stop(); external_low = 0; gpio_set_level(10, 1);
         assert(tasks.size() == 1 && cec::Bus::runtime_statistics().active_ports == amity::max_cec_ports - 1);
-        std::array<cec::TxCompletion, 8> pending;
+        std::array<cec::TxCompletion, fifo_capacity> pending;
         for (auto& item : pending) assert(lines.back().send_async_guarded(f, {}, item, 1));
         cec::TxCompletion rejected;
         assert(!lines.back().send_async_guarded(f, {}, rejected, 1));
-        for (unsigned pass = 0; pass < 1600; ++pass) pump();
+        for (unsigned pass = 0; pass < 200 * fifo_capacity; ++pass) pump();
         for (const auto& item : pending) assert(item.result.load() == cec::TxResult::Success);
     }
     assert(!timer && tasks.empty() && !output_low && cec::Bus::runtime_statistics().active_ports == 0);

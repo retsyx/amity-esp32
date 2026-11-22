@@ -297,7 +297,7 @@ int main() {
         fixture_async_autocomplete = true; fixture_present = false;
     }
     { // Every caller supplies one UCP attempt, including power-on commands and
-      // switch selection. Releases use the same eight-slot FIFO.
+      // switch selection. Releases use the same 24-slot FIFO.
         fixture_present=true;LocalHubService hub;assert(fixture_start(hub,1,2)==ESP_OK);
         assert(fixture_configure(hub,{{"Switch","TV","","Source","Source",2}}));run_one_command(); fixture_finish_discovery(hub);
         fixture_sent.clear();assert(fixture_select(hub,0));run_one_command();finish_activity(hub,0);assert(hub.standby());run_one_command();
@@ -308,13 +308,13 @@ int main() {
         }
         assert(power&&input);fixture_present=false;
     }
-    { // With eight ordinary frames already buffered in the driver, denied
+    { // With 24 ordinary frames already buffered in the driver, denied
       // finite UCPs cannot emit an unpaired release.
         fixture_present=true;LocalHubService hub;assert(fixture_start(hub,1,2)==ESP_OK);
         assert(fixture_configure(hub,{{"Switch","TV","","Source","Source",2}}));run_one_command(); fixture_finish_discovery(hub);
-        unsigned occupied=8,presses=0,releases=0;
-        fixture_admission=[&](int,const cec::Frame& frame){if(frame.size>1&&frame.data[1]==0x44){++presses;return false;}if(frame.size>1&&frame.data[1]==0x45){++releases;return occupied++<8;}return true;};
-        assert(fixture_select(hub,0));run_one_command();finish_activity(hub,0);assert(presses>=2&&releases==0&&occupied==8);
+        unsigned occupied=24,presses=0,releases=0;
+        fixture_admission=[&](int,const cec::Frame& frame){if(frame.size>1&&frame.data[1]==0x44){++presses;return false;}if(frame.size>1&&frame.data[1]==0x45){++releases;return occupied++<24;}return true;};
+        assert(fixture_select(hub,0));run_one_command();finish_activity(hub,0);assert(presses>=2&&releases==0&&occupied==24);
         fixture_admission={};fixture_present=false;
     }
     { // A finite key uses the last free slot for its press; a full-FIFO
@@ -322,20 +322,20 @@ int main() {
         fixture_present=true;LocalHubService hub;assert(fixture_start(hub,1,2)==ESP_OK);
         assert(fixture_configure(hub,{{"Watch","TV","Source","Source","",0}}));run_one_command();fixture_finish_discovery(hub);assert(fixture_select(hub,0));run_one_command();finish_activity(hub,0);
         fixture_sent.clear();
-        unsigned occupied=7,presses=0,releases=0;
+        unsigned occupied=23,presses=0,releases=0;
         fixture_admission=[&](int,const cec::Frame& frame){
-            if(frame.size>1&&frame.data[1]==0x44){++presses;if(occupied==8)return false;++occupied;}
-            if(frame.size>1&&frame.data[1]==0x45){++releases;return occupied<8;}
+            if(frame.size>1&&frame.data[1]==0x44){++presses;if(occupied==24)return false;++occupied;}
+            if(frame.size>1&&frame.data[1]==0x45){++releases;return occupied<24;}
             return true;
         };
-        assert(hub.press_key(0x41));run_one_command();assert(presses==1&&releases==1&&occupied==8);
+        assert(hub.press_key(0x41));run_one_command();assert(presses==1&&releases==1&&occupied==24);
         assert(hub.press_key(0x41));run_one_command();assert(presses==2&&releases==1);
         fixture_admission={};run_idle(5);assert(presses==2&&releases==1);
         assert(std::count_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size>1&&sent.frame.data[1]==0x44;})==2);
         assert(std::count_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size>1&&sent.frame.data[1]==0x45;})==1);
         fixture_present=false;
     }
-    { // A full eight-slot FIFO consumes final release; the owner retains no TX
+    { // A full 24-slot FIFO consumes final release; the owner retains no TX
       // retry and later up cannot regenerate the dropped release.
         fixture_present=true;LocalHubService hub;assert(fixture_start(hub,1,2)==ESP_OK);
         assert(fixture_configure(hub,{{"Watch","TV","Source","Source","",0}}));run_one_command(); fixture_finish_discovery(hub);assert(fixture_select(hub,0));run_one_command();finish_activity(hub,0);

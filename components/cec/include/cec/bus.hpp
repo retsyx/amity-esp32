@@ -33,7 +33,7 @@ public:
     void set_address(uint8_t address);
     bool install_receive_policy(ReceivePolicy policy);
     // Admission never waits for FIFO capacity or wire acknowledgement. One
-    // FIFO per wire holds eight queued+active messages, including releases.
+    // FIFO per wire holds 24 queued+active messages, including releases.
     // Rejection drops the submission without retaining it; FIFO-full drops log.
     bool send_guarded(const Frame &frame, ExecutionFence fence, unsigned attempts = 3);
     // Caller-owned tracking for the same sole FIFO. Rejection
