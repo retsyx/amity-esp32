@@ -46,7 +46,6 @@ public:
     std::function<bool(const system::OwnedIntent&)> sender;
     std::function<void(const system::OwnedAdapterSnapshot&)> observer;
     std::function<bool(const system::OwnedAuthorization&)> authorizer;
-    std::function<uint64_t(const system::OwnedAuthorization&)> deadline;
 
     system::ConsortiumId consortium_id() const { return configuration.consortium_id; }
     system::OctopusId octopus_id() const { return identity; }
@@ -56,7 +55,6 @@ public:
     void set_owned_sender(std::function<bool(const system::OwnedIntent&)> fn) { sender=std::move(fn); }
     void set_owned_observer(std::function<void(const system::OwnedAdapterSnapshot&)> fn) { observer=std::move(fn); }
     void set_owned_authorizer(std::function<bool(const system::OwnedAuthorization&)> fn) { authorizer=std::move(fn); }
-    void set_owned_deadline(std::function<uint64_t(const system::OwnedAuthorization&)> fn) { deadline=std::move(fn); }
     system::ExecutionSnapshot execution_snapshot() const { ++execution_reads;return applied; }
     struct AppliedConfiguration {uint64_t config_revision,presentation_revision;std::string policy_hash;};
     AppliedConfiguration applied_configuration()const{++configuration_reads;return {applied.applied_config_revision,applied.applied_presentation_revision,applied.applied_policy_hash};}

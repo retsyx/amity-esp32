@@ -64,15 +64,15 @@ esp_err_t write_record(const char*,const char* key,std::string_view bytes){retur
 std::shared_ptr<Active> connection(unsigned number){
     auto active=std::make_shared<Active>();active->peer=ident<model::OctopusId>(number);active->tls->authenticated=active->peer;
     Peer peer{active->peer,"leaf-"+std::to_string(number),"pin-"+std::to_string(number),true};group.peers.push_back(peer);active->tls->allowed={peer};
-    LinkScope scope{ident<model::LinkId>(100+number),group.consortium,identity.id,active->peer,identity.id,boot,ident<model::BootId>(200+number),1,1};
+    LinkScope scope{ident<model::LinkId>(100+number),group.consortium,identity.id,active->peer,identity.id,boot,ident<model::BootId>(200+number),1};
     assert(active->session.authenticate(scope,scope.peer_id,PeerRole::actuator,true)==Error::none);
-    HelloFrame hello;hello.consortium_id=scope.consortium_id;hello.octopus_id=scope.peer_id;hello.boot_id=scope.peer_boot_id;hello.coordinator_epoch=1;hello.config_revision=1;
+    HelloFrame hello;hello.consortium_id=scope.consortium_id;hello.octopus_id=scope.peer_id;hello.boot_id=scope.peer_boot_id;hello.config_revision=1;
     assert(active->session.hello(hello)==Error::none&&active->session.synchronized(1,true,true)==Error::none);
     active->status.id=active->peer;active->status.boot_id=scope.peer_boot_id;active->status.config_revision=1;active->status.ready=true;links.push_back(active);return active;
 }
 void reset(){
     group={};hostnames={};links.clear();removal_operations.clear();settings_caches.clear();settings_operations.clear();settings_authorization={};
-    identity.id=ident<model::OctopusId>(1);boot=ident<model::BootId>(9);group.role=Group::coordinator;group.consortium=ident<model::ConsortiumId>(10);group.authority=identity.id;group.epoch=group.revision=1;
+    identity.id=ident<model::OctopusId>(1);boot=ident<model::BootId>(9);group.role=Group::coordinator;group.consortium=ident<model::ConsortiumId>(10);group.authority=identity.id;group.revision=1;
     status={};status.initialized=status.credential_ready=status.authority_ready=true;configuration=1;controls={};lifecycle={};storage.records.clear();storage.fail=false;storage.writes=storage.maximum=0;storage.blocked=storage.entered=storage.released=false;
 }
 template<class Future>void ready(Future& future){assert(future.wait_for(2s)==std::future_status::ready);}

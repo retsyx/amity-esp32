@@ -97,11 +97,11 @@ esp_err_t runtime_send_update(m::OctopusId to,Kind kind,std::string body,uint32_
     assert(kind==Kind::update_begin||kind==Kind::update_chunk||kind==Kind::update_install||kind==Kind::update_status||kind==Kind::update_abort);
     const auto old=destination;destination=to;
     Envelope envelope;envelope.kind=kind;envelope.payload=value;envelope.origin_octopus_id=local;envelope.destination_octopus_id=to;
-    envelope.origin_boot_id=nodes[local].boot;envelope.destination_boot_id=nodes[to].boot;envelope.config_revision=7;envelope.coordinator_epoch=1;
+    envelope.origin_boot_id=nodes[local].boot;envelope.destination_boot_id=nodes[to].boot;envelope.config_revision=7;
     envelope.consortium_id=identity<m::ConsortiumId>(100);envelope.ttl_ms=5000;
     if(kind==Kind::update_chunk){
         const auto frame=update_chunk_envelope(envelope,body);
-        assert(frame.size()==128+chunk.bytes.size()&&parse_envelope(frame,envelope)==Error::none);
+        assert(frame.size()==120+chunk.bytes.size()&&parse_envelope(frame,envelope)==Error::none);
         assert(envelope.update_chunk&&envelope.update_chunk->bytes==chunk.bytes);
     }
     const bool interrupted=kind==Kind::update_chunk&&interrupt_next_chunk;

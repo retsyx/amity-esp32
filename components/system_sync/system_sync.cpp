@@ -89,9 +89,8 @@ void publish_configuration_revision(){
     {std::lock_guard<std::mutex> guard(state.mutex);if(state.published_revision==config->config_revision)return;}
     const auto applied=state.control->applied_configuration();
     if(applied.config_revision!=config->config_revision||applied.presentation_revision!=config->presentation_revision)return;
-    if(applied.policy_hash.size()!=64)return;
     {std::lock_guard<std::mutex> guard(state.mutex);if(state.published_revision==config->config_revision)return;state.published_revision=config->config_revision;}
-    c::runtime_configuration_changed(config->config_revision,applied.policy_hash);
+    c::runtime_configuration_changed(config->config_revision);
 }
 void flush_configuration(){
     if(state.configuration_pending.exchange(false))publish_configuration_revision();
@@ -211,10 +210,10 @@ esp_err_t start_configuration_synchronization(SystemControl& control){
     const auto created=xTaskCreate(worker,"system_sync",12288,nullptr,2,nullptr);
 #endif
     if(created!=pdPASS){
-        c::runtime_control_hooks({});control.set_owned_sender({});control.set_owned_observer({});control.set_owned_authorizer({});control.set_owned_deadline({});
+        c::runtime_control_hooks({});control.set_owned_sender({});control.set_owned_observer({});control.set_owned_authorizer({});
         std::lock_guard<std::mutex> guard(state.mutex);state.control=nullptr;return ESP_ERR_NO_MEM;
     }
-    control.set_owned_sender(send);control.set_owned_observer(observe);control.set_owned_authorizer(c::runtime_owned_authorized);control.set_owned_deadline(c::runtime_owned_deadline);
+    control.set_owned_sender(send);control.set_owned_observer(observe);control.set_owned_authorizer(c::runtime_owned_authorized);
     // The owner signals only after its cached applied revisions advance. Keep
     // publication off the owner task and coalesce changes until this worker runs.
     control.on_configuration_applied([]{state.configuration_pending.store(true);});

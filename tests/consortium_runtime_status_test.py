@@ -18,7 +18,7 @@ PREFIX=r'''
 #include <vector>
 struct RuntimeStatus{
     bool connected=false,synchronized=false,initialized=true,coordinator=true,member=false,authority_ready=true;
-    uint32_t active_peers=0;uint64_t epoch=9;
+    uint32_t active_peers=0;uint64_t membership_revision=9;
 };
 struct Tls{int authenticated=4;};
 struct Active{
@@ -35,7 +35,7 @@ void check(bool value,const char*message){if(!value)throw std::runtime_error(mes
 SUITE=r'''
 void expect(bool connected,bool synchronized,unsigned peers){
     const auto out=runtime_status();check(out.connected==connected&&out.synchronized==synchronized&&out.active_peers==peers,"incorrect current-link health aggregate");
-    check(out.initialized&&out.coordinator&&!out.member&&out.authority_ready&&out.epoch==9,"health snapshot changed membership authority fields");
+    check(out.initialized&&out.coordinator&&!out.member&&out.authority_ready&&out.membership_revision==9,"health snapshot changed membership authority fields");
 }
 int main(){try{
     auto healthy=std::make_shared<Active>();links={healthy};status.connected=status.synchronized=false;

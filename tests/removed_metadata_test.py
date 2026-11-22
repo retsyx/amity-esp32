@@ -36,7 +36,7 @@ esp_err_t write_record(const char* ns,const char* key,std::string_view bytes){
 }
 void reset(){
  group={};identity={};status={};hostnames={};settings_caches.clear();settings_operations.clear();settings_authorization={};
- identity.id=id<model::OctopusId>(1);group.role=Group::coordinator;group.authority=identity.id;group.epoch=1;status.authority_ready=true;
+ identity.id=id<model::OctopusId>(1);group.role=Group::coordinator;group.authority=identity.id;status.authority_ready=true;
  const auto remember=[](std::string_view bytes){stored=bytes;return true;};
  assert(hostnames.remember(id<model::OctopusId>(2),"removed",remember)==Error::none);
  assert(hostnames.remember(id<model::OctopusId>(3),"kept",remember)==Error::none);

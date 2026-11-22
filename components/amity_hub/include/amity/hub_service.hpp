@@ -32,7 +32,7 @@ public:
     // neither selects an activity nor arms its input release gate.
     bool activity_setup_in_progress()const;
     void set_system_identity(system::ConsortiumId,system::OctopusId);void set_boot_identity(system::BootId);
-    void set_coordinator_authority(bool,uint64_t);esp_err_t transition_coordinator_authority(bool,uint64_t);
+    void set_coordinator_authority(bool);esp_err_t transition_coordinator_authority(bool);
     esp_err_t retire_membership();esp_err_t begin_maintenance();void end_maintenance();bool maintenance_ready()const;
     using OwnedSender=ActivityHub::OwnedSender;
     esp_err_t configure_scoped(std::vector<Activity>,std::vector<system::ScopedSelector>,OwnedSender,
@@ -42,7 +42,6 @@ public:
         system::LinkId,uint64_t deadline_ms,uint32_t timeout_ms=1000);
     esp_err_t bind_owned_controller(system::OctopusId,uint64_t config_revision);
     void set_owned_authorizer(std::function<bool(const system::OwnedAuthorization&)>);
-    void set_owned_deadline(std::function<uint64_t(const system::OwnedAuthorization&)>);
     void set_owned_observer(std::function<void(const system::OwnedAdapterSnapshot&)>);
     bool update_owned_snapshot(system::OwnedAdapterSnapshot);
     void forget_owned_snapshots(system::OctopusId);

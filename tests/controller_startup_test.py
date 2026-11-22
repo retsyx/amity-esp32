@@ -21,7 +21,7 @@ main=source[source.index('extern "C" void app_main()'):]
 assert main.index('system_services::confirm_firmware()')<main.index('xTaskCreate(await_original_task,')
 assert 'const bool passive_startup=passive_member||awaiting_first_setup;' in main
 assert 'web_admin::load(hub,passive_startup)' in main
-assert main.index('hub.set_coordinator_authority(!passive_startup,')<main.index('amity_matter_start(&callbacks)')
+assert main.index('hub.set_coordinator_authority(!passive_startup)')<main.index('amity_matter_start(&callbacks)')
 assert source.count('web_admin::start(')==1 and source.count('amity_homekit::start(')==1
 assert source.count('xTaskCreate(input_task,')==1
 assert 'runtime_lifecycle_hooks({retire_original_interfaces,' in main
@@ -72,7 +72,7 @@ Role runtime_status(){return role;}
 bool runtime_original_setup_eligible(){return role.initialized&&!role.member&&!role.coordinator&&!active_candidate&&role.phase!="recovery_required";}
 int runtime_open_enrollment(uint64_t generation){assert(generation==77);++enrollment_windows;events.push_back("enroll");return enrollment_result;}
 int runtime_claim_original_controller(){++claims;events.push_back("claim");if(claim_member_wins){role.member=true;role.phase="member";return ESP_ERR_INVALID_STATE;}if(active_candidate)return ESP_ERR_INVALID_STATE;role.coordinator=true;role.phase="coordinator";return ESP_OK;}
-void runtime_configuration_changed(uint64_t,const std::string&){events.push_back("publish-config");}
+void runtime_configuration_changed(uint64_t){events.push_back("publish-config");}
 }
 namespace amity::radio{
 int reserve_consortium(bool inviter,uint64_t&g){assert(!inviter);++radio_reservations;events.push_back("reserve");g=reserve_result==ESP_OK?77:0;return reserve_result;}
@@ -86,7 +86,7 @@ std::shared_ptr<Config>active_configuration(){return config;}
 struct Prepared {Config configuration;std::string policy_hash="exact-policy";};
 std::shared_ptr<const Prepared>configuration_snapshot(){return config?std::make_shared<const Prepared>(Prepared{*config,"exact-policy"}):nullptr;}Snapshot snapshot(){return {};}
 int retire_membership(){assert(!original_interfaces_enabled);events.push_back("retire");return fence_result;}
-int transition_coordinator_authority(bool on,unsigned epoch){assert(on&&epoch==1&&amity::consortium::role.coordinator);events.push_back("promote");return 0;}}hub;
+int transition_coordinator_authority(bool on){assert(on&&amity::consortium::role.coordinator);events.push_back("promote");return 0;}}hub;
 namespace web_admin{int load(FakeHub&,bool member){assert(!member);events.push_back("load");hub.config=std::make_shared<Config>();return 0;}
 int finish_configuration_activation(){events.push_back("activate_configuration");return 0;}int start(FakeHub&,const char*,const char*){assert(original_interfaces_enabled);events.push_back("web");return 0;}
 int stop(){assert(!original_interfaces_enabled);events.push_back("web-stop");if(block_mdns_add){std::lock_guard<std::mutex>guard(interleave_mutex);retire_at_web=true;interleave.notify_all();}return web_result;}}

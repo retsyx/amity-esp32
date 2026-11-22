@@ -102,7 +102,7 @@ static void saved_edits_preserve_current(){
 static void owner_revision_preserves_admitted_press_and_hold(){
     const auto group=id<m::ConsortiumId>('1');const auto controller=id<m::OctopusId>('2'),member=id<m::OctopusId>('3');
     const auto boot=id<m::BootId>('4'),owner_boot=id<m::BootId>('5');const auto link=id<m::LinkId>('6');
-    fixture_present=true;HubService hub;hub.set_system_identity(group,member);hub.set_boot_identity(owner_boot);hub.set_coordinator_authority(false,1);assert(fixture_start(hub,1,2)==ESP_OK);
+    fixture_present=true;HubService hub;hub.set_system_identity(group,member);hub.set_boot_identity(owner_boot);hub.set_coordinator_authority(false);assert(fixture_start(hub,1,2)==ESP_OK);
     assert(hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
     uint64_t authorized_revision=1;unsigned refreshed_authorizations=0;
     const auto authorized=[&](const auto& authorization){
@@ -112,7 +112,6 @@ static void owner_revision_preserves_admitted_press_and_hold(){
         return current;
     };
     hub.set_owned_authorizer(authorized);
-    hub.set_owned_deadline([&](const auto& authorization){return authorized(authorization)?UINT64_MAX:uint64_t{0};});
     m::OwnedAuthorization auth{controller,boot,owner_boot,link,1,0};
     m::OwnedIntent context;context.kind=m::OwnedIntentKind::activity;context.target.port={group,member,0,m::Side::front};context.generation=7;context.selected=true;
     context.source=m::QualifiedDeviceName{{group,member,0,m::Side::back},"Source"};context.audio=context.source;
@@ -323,7 +322,7 @@ struct RecoveryOwners {
         fixture_sent.clear();fixture_completed.clear();fixture_incoming.clear();
         fixture_peer_address=[](int gpio)->uint8_t{return gpio%2?0:4;};
         main.set_system_identity(group,controller);main.set_boot_identity(controller_boot);assert(fixture_start(main,1,2)==ESP_OK);main_task=latest_task;
-        owner.set_system_identity(group,member);owner.set_boot_identity(member_boot);owner.set_coordinator_authority(false,1);
+        owner.set_system_identity(group,member);owner.set_boot_identity(member_boot);owner.set_coordinator_authority(false);
         assert(fixture_start(owner,3,4)==ESP_OK);owner_task=latest_task;
         assert(owner.bind_owned_controller(controller,revision)==ESP_OK);fixture_finish_discovery(owner);
         owner.set_owned_authorizer([&](const auto& auth){return auth.controller_id==controller&&auth.controller_boot==current_controller_boot&&

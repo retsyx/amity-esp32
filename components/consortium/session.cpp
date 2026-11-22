@@ -16,7 +16,6 @@ Error Session::authenticate(const LinkScope &scope,model::OctopusId peer,PeerRol
     disconnect();
     if(!scope.link_id||!scope.consortium_id||!scope.local_id||!scope.peer_id||!scope.local_boot_id||!scope.coordinator_id||peer!=scope.peer_id)return Error::identity_conflict;
     if(role==PeerRole::coordinator&&peer!=scope.coordinator_id)return Error::unauthorized_role;
-    if(scope.epoch!=1)return Error::stale_epoch;
     scope_=scope;role_=role;active_=active;state_=ConnectionState::negotiating;return Error::none;
 }
 Error Session::hello(const HelloFrame &h) {
@@ -26,7 +25,6 @@ Error Session::hello(const HelloFrame &h) {
     if(!h.boot_id)return Error::stale_boot;
     if(scope_.peer_boot_id&&h.boot_id!=scope_.peer_boot_id)return Error::stale_boot;
     scope_.peer_boot_id=h.boot_id;
-    if(h.coordinator_epoch!=scope_.epoch)return Error::stale_epoch;
     if(!h.supported_tentacles||h.supported_tentacles>amity::max_tentacles||h.configured_tentacles_mask>=(1u<<h.supported_tentacles))return Error::invalid_message;
     state_=active_?ConnectionState::synchronizing:ConnectionState::restricted;return Error::none;
 }
@@ -57,7 +55,6 @@ Error Session::common(const Envelope &e,uint64_t received,uint64_t now,bool stal
     if(e.origin_octopus_id!=scope_.peer_id)return Error::identity_conflict;
     if(e.destination_octopus_id!=scope_.local_id)return Error::target_not_local;
     if(e.origin_boot_id!=scope_.peer_boot_id||e.destination_boot_id!=scope_.local_boot_id)return Error::stale_boot;
-    if(e.coordinator_epoch!=scope_.epoch)return Error::stale_epoch;
     // Synchronization barriers reconcile only the current authenticated stream.
     // The runtime correlates their exact round/target; ordinary work retains
     // the exact configuration fence even if a previous exchange partly applied.

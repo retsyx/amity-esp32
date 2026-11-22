@@ -119,7 +119,6 @@ struct HubService::Impl : Adapter {
     using OwnedSender=ActivityHub::OwnedSender;
     using OwnedObserver=std::function<void(const system::OwnedAdapterSnapshot&)>;
     using OwnedAuthorizer=std::function<bool(const system::OwnedAuthorization&)>;
-    using OwnedDeadline=std::function<uint64_t(const system::OwnedAuthorization&)>;
     struct ManagementCommand;struct ConfigurationCommand;struct ActionCommand;struct ReceivedCommand;struct InputCommand;
     // The common IPC header carries admission and continuation state, not an
     // activity recipe or configuration. Ordinary button edges need only this.
@@ -211,7 +210,6 @@ struct HubService::Impl : Adapter {
     std::array<uint16_t,amity::max_tentacles> front_defaults=filled_tentacles(uint16_t{0x1000});
     system::ConsortiumId consortium;system::OctopusId octopus;system::BootId local_boot;
     std::atomic<bool> local_coordinator{true},authority_transition{false},maintenance{false},maintenance_applied{false},settings_gate{false},retiring{false};
-    uint64_t coordinator_epoch=1;
     std::shared_ptr<Reply> pending_settings;system::BootId settings_boot;std::vector<AdapterAddressChange> settings_adapters;
     uint64_t settings_deadline=0;std::function<esp_err_t()> settings_persist;bool settings_paused=false,owner_started=false,execution_enabled=false;
     std::atomic<bool> maintenance_started{false};
@@ -264,7 +262,6 @@ struct HubService::Impl : Adapter {
     std::vector<system::OctopusId> activity_owners;
     std::shared_ptr<const OwnedObserver> observer_slot;
     std::shared_ptr<const OwnedAuthorizer> authorizer_slot;
-    std::shared_ptr<const OwnedDeadline> deadline_slot;
 
     Impl():Adapter(*this,0){lock=xSemaphoreCreateMutex();configuration_gate=xSemaphoreCreateMutex();}
     Adapter* adapter(uint8_t id){return id==0?this:id<amity::max_tentacles?adapters[id-1].get():nullptr;}
@@ -1345,7 +1342,7 @@ struct HubService::Impl : Adapter {
             activity_hub.release_key();for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=adapter(id))engine->stop_holds();
             if(command.repeat)pressed_owner.assign(256,0xff);else pressed_owner.clear();
             key_owners.clear();
-            local_coordinator.store(command.repeat);coordinator_epoch=command.management().config_revision;authority_transition.store(false);
+            local_coordinator.store(command.repeat);authority_transition.store(false);
             finish(command.reply,{system::AdmissionCode::accepted,{}});return true;
         case K::Retire:
             cancel_owner_activity();accepted_selection.reset();accepted_controller_boot={};
@@ -1506,14 +1503,10 @@ bool HubService::Adapter::send(BusSide side, uint8_t destination, const uint8_t 
         }else if(executing_auth) {
             fence.secondary_generation=&owned_wire_generation;
             fence.expected_secondary_generation=owned_wire_generation.load();
-            uint64_t deadline=executing_auth->deadline_ms;
+            const uint64_t deadline=executing_auth->deadline_ms;
             const auto& root=owner;
-            auto current=std::atomic_load(&root.deadline_slot);
-            if(current){
-                const auto authority_deadline=(*current)(*executing_auth);
-                if(!authority_deadline)return false;
-                if(authority_deadline!=UINT64_MAX)deadline=deadline?std::min(deadline,authority_deadline):authority_deadline;
-            }
+            auto check=std::atomic_load(&root.authorizer_slot);
+            if(check&&!(*check)(*executing_auth))return false;
             if(deadline&&deadline!=UINT64_MAX&&data[0]!=0x45)fence.expires_at_us=deadline>UINT64_MAX/1000?UINT64_MAX:deadline*1000;
         }
         if(emitting_user_key){const auto& root=owner;fence.tertiary_generation=&root.key_generation;fence.expected_tertiary_generation=root.applied_key_generation;}
@@ -1990,14 +1983,14 @@ void HubService::set_system_identity(system::ConsortiumId consortium, system::Oc
     if (!impl_->task) { impl_->consortium = consortium; impl_->octopus = octopus; }
 }
 void HubService::set_boot_identity(system::BootId boot) { if (!impl_->task && boot) impl_->local_boot = boot; }
-void HubService::set_coordinator_authority(bool local, uint64_t epoch) {
-    if (!impl_->task) { impl_->local_coordinator.store(local); impl_->coordinator_epoch = epoch ? epoch : 1; }
+void HubService::set_coordinator_authority(bool local) {
+    if (!impl_->task) impl_->local_coordinator.store(local);
 }
-esp_err_t HubService::transition_coordinator_authority(bool local, uint64_t epoch) {
-    if (!epoch || impl_->maintenance.load() || impl_->authority_transition.exchange(true)) return ESP_ERR_INVALID_STATE;
+esp_err_t HubService::transition_coordinator_authority(bool local) {
+    if (impl_->maintenance.load() || impl_->authority_transition.exchange(true)) return ESP_ERR_INVALID_STATE;
     ++impl_->activity_instance;
     auto* command = new (std::nothrow) Impl::ManagementCommand{Impl::Kind::AuthorityTransition};
-    if (command) { command->repeat = local; command->management().config_revision = epoch; }
+    if (command) command->repeat = local;
     const auto result = impl_->request(command, 5000);
     if (!result) { if (result.code != system::AdmissionCode::expired) impl_->authority_transition.store(false); return ESP_ERR_INVALID_STATE; }
     return ESP_OK;
@@ -2090,9 +2083,6 @@ void HubService::set_owned_observer(std::function<void(const system::OwnedAdapte
 }
 void HubService::set_owned_authorizer(std::function<bool(const system::OwnedAuthorization&)> check){
     std::atomic_store(&impl_->authorizer_slot,check?std::make_shared<const Impl::OwnedAuthorizer>(std::move(check)):std::shared_ptr<const Impl::OwnedAuthorizer>{});
-}
-void HubService::set_owned_deadline(std::function<uint64_t(const system::OwnedAuthorization&)> deadline){
-    std::atomic_store(&impl_->deadline_slot,deadline?std::make_shared<const Impl::OwnedDeadline>(std::move(deadline)):std::shared_ptr<const Impl::OwnedDeadline>{});
 }
 bool HubService::update_owned_snapshot(system::OwnedAdapterSnapshot report){
     if(!report.owner||report.adapter>=amity::max_tentacles)return false;

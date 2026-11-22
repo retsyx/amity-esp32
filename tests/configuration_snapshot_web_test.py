@@ -68,8 +68,8 @@ public:
   assert(!authority);if(passive_error!=ESP_OK)return passive_error;
   assert(candidate==fixture::staged);published=std::move(candidate);fixture::events.push_back("passive");return ESP_OK;
  }
- esp_err_t transition_coordinator_authority(bool on,uint64_t epoch){
-  assert(epoch==1);if(authority_error!=ESP_OK)return authority_error;
+ esp_err_t transition_coordinator_authority(bool on){
+  if(authority_error!=ESP_OK)return authority_error;
   authority=on;fixture::events.push_back(on?"enable":"disable");return ESP_OK;
  }
 };
@@ -95,7 +95,6 @@ amity::SystemControl* control=nullptr;
 config_store::RevisionPair published_input_revisions;
 bool configuration_passive=false;
 config_store::ConfigurationSnapshot deferred_configuration;
-uint64_t deferred_epoch=1;
 esp_err_t error(httpd_req_t* req,const char*,const std::string& message,const char*){req->response=message;return ESP_FAIL;}
 '''
 
@@ -103,7 +102,7 @@ SUITE = r'''
 }
 using namespace web_admin;
 void reset(bool existing=true){
- control=nullptr;deferred_configuration.reset();configuration_passive=false;published_input_revisions={};deferred_epoch=1;
+ control=nullptr;deferred_configuration.reset();configuration_passive=false;published_input_revisions={};
  fixture::saved.reset();fixture::staged.reset();fixture::loaded.reset();fixture::journal.reset();fixture::memory=Memory{};
  fixture::journal=std::make_unique<ConfigurationStore>(fixture::memory);
  if(existing){std::string error;assert(fixture::journal->stage(direct_configuration(),{},error)==ConfigResult::ok);assert(fixture::journal->commit(fixture::saved,error)==ConfigResult::ok);}

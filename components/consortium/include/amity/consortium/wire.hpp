@@ -7,8 +7,8 @@
 namespace amity::consortium {
 namespace model = amity::system;
 enum class Error { none, invalid_message, unsupported_kind, protocol_mismatch, unauthorized_role,
-    wrong_consortium, stale_boot, stale_epoch, stale_config, expired, target_not_local, not_ready, queue_full, duplicate,
-    identity_conflict, unknown_outcome, storage_failure, transaction_conflict };
+    wrong_consortium, stale_boot, stale_config, expired, target_not_local, not_ready, queue_full, duplicate,
+    identity_conflict, storage_failure, transaction_conflict };
 const char *error_name(Error);
 enum class Kind { enrollment_control,
     membership_event, membership_result, snapshot_request, snapshot_chunk,
@@ -25,7 +25,7 @@ struct Envelope {
     model::ConsortiumId consortium_id;
     model::OctopusId origin_octopus_id, destination_octopus_id;
     model::BootId origin_boot_id, destination_boot_id;
-    uint64_t coordinator_epoch = 0, config_revision = 0;
+    uint64_t config_revision = 0;
     Kind kind = Kind::device_status;
     uint32_t ttl_ms = 0;
     Json payload;
@@ -50,10 +50,9 @@ struct HelloFrame {
     model::ConsortiumId consortium_id;
     model::OctopusId octopus_id;
     model::BootId boot_id;
-    uint64_t coordinator_epoch = 0, config_revision = 0;
-    std::string config_hash, firmware_identity;
+    uint64_t config_revision = 0;
+    std::string firmware_identity;
     std::optional<model::JoinId> pending_join_id;std::string join_digest;
-    uint32_t frame_cap = max_frame_bytes;
     // Assigned GPIO/profile availability, never proof of a plugged-in adapter.
     uint8_t supported_tentacles = 1, configured_tentacles_mask = 1;
 };

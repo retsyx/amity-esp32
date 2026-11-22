@@ -1,9 +1,9 @@
 #include "amity/system_control.hpp"
 namespace amity {
-esp_err_t SystemControl::transition_coordinator_authority(bool enabled,uint64_t epoch){
+esp_err_t SystemControl::transition_coordinator_authority(bool enabled){
     auto config=active_configuration();
-    if(enabled&&(epoch!=1||(config&&config->controller_octopus_id!=octopus_)))return ESP_ERR_INVALID_STATE;
-    auto result=local_.transition_coordinator_authority(enabled,epoch);
+    if(enabled&&config&&config->controller_octopus_id!=octopus_)return ESP_ERR_INVALID_STATE;
+    auto result=local_.transition_coordinator_authority(enabled);
     if(result==ESP_OK)local_coordinator_.store(enabled);
     return result;
 }

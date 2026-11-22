@@ -161,7 +161,6 @@ model::ConsortiumId singleton;
 model::BootId boot;
 uint64_t configuration=1;
 uint8_t hardware_tentacles=1,hardware_tentacles_mask=1;
-std::string configuration_hash;
 RuntimeStatus status;
 RuntimeRadioHooks radio;
 RuntimeNetworkHooks network;
@@ -194,7 +193,7 @@ bool candidate_passive=false;
 int listener=-1;
 void error(std::string value){std::lock_guard<std::mutex> guard(lock);status.last_error=std::move(value);}
 template<class T>T random_id(){auto value=T::parse(random_hex(16));return value?*value:T{};}
-Envelope outgoing(const Active &link,Kind kind,uint32_t ttl){auto s=link.session.scope();Envelope e;e.consortium_id=s.consortium_id;e.origin_octopus_id=s.local_id;e.origin_boot_id=s.local_boot_id;e.destination_octopus_id=s.peer_id;e.destination_boot_id=s.peer_boot_id;e.coordinator_epoch=s.epoch;e.config_revision=s.config_revision;e.kind=kind;e.ttl_ms=ttl;return e;}
+Envelope outgoing(const Active &link,Kind kind,uint32_t ttl){auto s=link.session.scope();Envelope e;e.consortium_id=s.consortium_id;e.origin_octopus_id=s.local_id;e.origin_boot_id=s.local_boot_id;e.destination_octopus_id=s.peer_id;e.destination_boot_id=s.peer_boot_id;e.config_revision=s.config_revision;e.kind=kind;e.ttl_ms=ttl;return e;}
 bool lifecycle_kind(Kind kind){return kind==Kind::membership_event||kind==Kind::membership_result;}
 bool current_peer_credential(const Active &link,const Group &current){
     for(const auto &peer:current.peers)if(peer.id==link.tls->authenticated)for(const auto &allowed:link.tls->allowed)if(allowed.id==peer.id&&allowed.der==peer.der&&allowed.pin==peer.pin)return true;
@@ -366,7 +365,7 @@ bool synchronization_current(const Active& active){
     std::lock_guard<std::mutex> guard(lock);
     const auto scope=active.session.scope();
     return !active.cancelled&&!active.retiring&&!active.lifecycle_only&&active.tls->usable()&&current_peer_credential(active,group)&&
-        group.consortium==scope.consortium_id&&group.authority==scope.coordinator_id&&group.epoch==scope.epoch&&
+        group.consortium==scope.consortium_id&&group.authority==scope.coordinator_id&&
         ((group.role==Group::coordinator&&group.authority==scope.local_id)||(group.role==Group::member&&group.authority==scope.peer_id));
 }
 bool synchronization_recoverable(const Active& active,const LinkTrace& trace){
@@ -374,7 +373,7 @@ bool synchronization_recoverable(const Active& active,const LinkTrace& trace){
     // Application delivery failure ends its logical execution scope. The
     // original action is never retried; only synchronization may start again.
     switch(trace.error){
-    case Error::wrong_consortium:case Error::stale_boot:case Error::stale_epoch:
+    case Error::wrong_consortium:case Error::stale_boot:
     case Error::identity_conflict:case Error::unauthorized_role:case Error::target_not_local:
     case Error::protocol_mismatch:case Error::unsupported_kind:return false;
     default:return true;
@@ -547,7 +546,7 @@ bool lifecycle_receive(Active &active,Envelope &envelope,uint32_t timeout=5000){
         if(admitted==Error::none)return true;
         // Valid observations/results can precede the reset ACK on the same
         // ordered stream. Drain them without executing work or granting
-        // management/readiness; their original peer/boot/epoch/type fences
+        // management/readiness; their original peer/boot/type fences
         // remain valid even when their configuration is already obsolete.
         if(active.session.discard_lifecycle_frame(envelope,now,now)!=Error::none)return false;
     }
@@ -657,10 +656,9 @@ void reap_closed_links(){
 bool establish(Active &active,bool server,LinkTrace* diagnostic=nullptr){
     BoundedSetupTimings<7> timing("establish",now_ms);timing.begin("total");
     LinkTrace fallback;auto& trace=diagnostic?*diagnostic:fallback;trace.phase="hello";
-    Group current;Identity local;uint64_t config;uint8_t profile_count,profile_mask;std::string policy_hash;
-    {std::lock_guard<std::mutex> guard(lock);current=group;local=identity;config=configuration;policy_hash=configuration_hash;profile_count=hardware_tentacles;profile_mask=hardware_tentacles_mask;}
-    if(!controller_membership_compatible(current))return trace.fail("controller_membership");
-    HelloFrame ours;ours.consortium_id=current.consortium;ours.octopus_id=local.id;ours.boot_id=boot;ours.coordinator_epoch=current.epoch;ours.config_revision=config;ours.config_hash=policy_hash.empty()?sha256(std::to_string(config)):policy_hash;
+    Group current;Identity local;uint64_t config;uint8_t profile_count,profile_mask;
+    {std::lock_guard<std::mutex> guard(lock);current=group;local=identity;config=configuration;profile_count=hardware_tentacles;profile_mask=hardware_tentacles_mask;}
+    HelloFrame ours;ours.consortium_id=current.consortium;ours.octopus_id=local.id;ours.boot_id=boot;ours.config_revision=config;
     const auto *application=esp_app_get_description();ours.firmware_identity=hex(std::string_view(reinterpret_cast<const char*>(application->app_elf_sha256),32));
     ours.supported_tentacles=profile_count;ours.configured_tentacles_mask=profile_mask;
     if(current.join_id&&((!server&&current.role==Group::prepared)||(server&&current.joining_id==active.tls->authenticated))){ours.pending_join_id=current.join_id;ours.join_digest=current.join_digest;}
@@ -669,9 +667,9 @@ bool establish(Active &active,bool server,LinkTrace* diagnostic=nullptr){
     if(active.tls->received_bulk())return trace.fail("hello_frame_class",Error::invalid_message);
     HelloFrame peer;const auto parsed=parse_hello(incoming,peer);if(parsed!=Error::none)return trace.fail("hello_parse",parsed);
     const bool matching_firmware=peer.firmware_identity==ours.firmware_identity;
-    if(peer.octopus_id!=active.tls->authenticated||peer.consortium_id!=current.consortium||peer.coordinator_epoch!=current.epoch)return trace.fail("hello_validation");
+    if(peer.octopus_id!=active.tls->authenticated||peer.consortium_id!=current.consortium)return trace.fail("hello_validation");
     timing.peer=peer.octopus_id;timing.finish(hello,true);const auto link_stage=timing.begin("link_id");
-    {std::lock_guard<std::mutex> guard(lock);if(group.consortium!=current.consortium||group.authority!=current.authority||group.epoch!=current.epoch||group.revision!=current.revision||!current_peer_credential(active,group))return trace.fail("hello_roster_changed");
+    {std::lock_guard<std::mutex> guard(lock);if(group.consortium!=current.consortium||group.authority!=current.authority||group.revision!=current.revision||!current_peer_credential(active,group))return trace.fail("hello_roster_changed");
     active.peer=peer.octopus_id;}model::LinkId link;trace.phase="link_id";
     if(server){link=random_id<model::LinkId>();if(!active.tls->send("{\"type\":\"link\",\"link_id\":\""+link.str()+"\"}"))return trace.fail("link_id_send");}
     else{Json j;JsonError error;if(!active.tls->receive(incoming)||active.tls->received_bulk()||!parse_json(incoming,j,error)||!closed(j,{"type","link_id"})||j.get("type")->type!=Json::Type::string||j.get("type")->string!="link"||!id(j.get("link_id"),link))return trace.fail("link_id_receive");}
@@ -679,7 +677,7 @@ bool establish(Active &active,bool server,LinkTrace* diagnostic=nullptr){
     if(peer.pending_join_id&&!server&&(!current.join_id||*peer.pending_join_id!=current.join_id||peer.join_digest!=current.join_digest))return trace.fail("join_scope");
     const bool pending_join=current.join_id&&((server&&current.joining_id==peer.octopus_id)||(!server&&peer.pending_join_id.has_value()));
     const bool provisional=current.role==Group::prepared||pending_join;
-    LinkScope scope{link,current.consortium,local.id,peer.octopus_id,current.authority,boot,peer.boot_id,current.epoch,server?ours.config_revision:peer.config_revision};
+    LinkScope scope{link,current.consortium,local.id,peer.octopus_id,current.authority,boot,peer.boot_id,server?ours.config_revision:peer.config_revision};
     const auto operational_role=server?PeerRole::actuator:PeerRole::coordinator;
     const auto role=provisional?PeerRole::provisional_candidate:operational_role;
     trace.phase="session_authentication";
@@ -886,7 +884,7 @@ struct DeferredLinkTrace {
 void context_capture_completed(const LinkScope& scope,model::OwnedContextResult result){
     if(result==model::OwnedContextResult::stale)return;
     DeferredLinkTrace diagnostics;std::lock_guard<std::mutex> guard(lock);
-    if(!original_controller(group,identity.id)||!status.authority_ready||group.consortium!=scope.consortium_id||group.epoch!=scope.epoch)return;
+    if(!original_controller(group,identity.id)||!status.authority_ready||group.consortium!=scope.consortium_id)return;
     for(auto& active:links)if(!active->cancelled&&!active->retiring&&!active->restart_requested&&!active->execution_fenced&&active->ready){
         std::lock_guard<std::mutex> queue(active->mutex);
         if(!(active->session.scope()==scope))continue;
@@ -1080,7 +1078,7 @@ void active_loop_work(void *arg){
             RuntimeUpdateHooks hooks; bool allowed=false;
             {std::lock_guard<std::mutex> guard(lock);hooks=updates;
                 allowed=envelope.kind==Kind::update_result ? (server&&group.role==Group::coordinator&&status.authority_ready) :
-                    (!server&&group.role==Group::member&&group.authority==active->peer&&group.epoch==envelope.coordinator_epoch);}
+                    (!server&&group.role==Group::member&&group.authority==active->peer);}
             if(!allowed){trace.fail("update_authority",Error::unauthorized_role);break;}
             if(envelope.kind==Kind::update_result) {if(hooks.result) hooks.result(active->peer,envelope.payload);}
             else {
@@ -1175,12 +1173,12 @@ constexpr const char *group_service="_amity-group";
 void advertise_group_hint(const Group &current){
     static std::string advertised;
     if(current.role!=Group::coordinator){if(!advertised.empty()){mdns_service_remove(group_service,"_tcp");advertised.clear();}return;}
-    const auto key=current.consortium.str()+current.authority.str()+std::to_string(current.epoch);if(key==advertised)return;
-    const auto group_id=current.consortium.str(),coordinator=current.authority.str(),epoch=std::to_string(current.epoch);
-    mdns_txt_item_t items[]={{"group",group_id.c_str()},{"coordinator",coordinator.c_str()},{"epoch",epoch.c_str()}};
+    const auto key=current.consortium.str()+current.authority.str();if(key==advertised)return;
+    const auto group_id=current.consortium.str(),coordinator=current.authority.str();
+    mdns_txt_item_t items[]={{"group",group_id.c_str()},{"coordinator",coordinator.c_str()}};
     const auto instance="Amity System "+coordinator.substr(24);
     if(!advertised.empty())mdns_service_remove(group_service,"_tcp");
-    if(mdns_service_add(instance.c_str(),group_service,"_tcp",7443,items,3)==ESP_OK)advertised=key;else advertised.clear();
+    if(mdns_service_add(instance.c_str(),group_service,"_tcp",7443,items,2)==ESP_OK)advertised=key;else advertised.clear();
 }
 std::vector<std::string> discover_group_hints(const Group &current){
     std::vector<std::string> hints;mdns_result_t *results=nullptr;
@@ -1188,10 +1186,9 @@ std::vector<std::string> discover_group_hints(const Group &current){
     size_t visited=0;
     for(auto *entry=results;entry&&visited++<8;entry=entry->next){
         if(entry->port!=7443||entry->txt_count>8||!entry->txt||!entry->txt_value_len)continue;
-        std::string group_id,coordinator,epoch;bool duplicate=false;
-        for(size_t i=0;i<entry->txt_count;++i){const auto &item=entry->txt[i];if(!item.key||!item.value||entry->txt_value_len[i]>64){duplicate=true;break;}std::string *target=nullptr;if(!strcmp(item.key,"group"))target=&group_id;else if(!strcmp(item.key,"coordinator"))target=&coordinator;else if(!strcmp(item.key,"epoch"))target=&epoch;if(target){if(!target->empty()){duplicate=true;break;}target->assign(item.value,entry->txt_value_len[i]);}}
-        const auto authority_epoch=model::parse_uint64(epoch);
-        if(duplicate||group_id!=current.consortium.str()||coordinator!=current.authority.str()||!authority_epoch||*authority_epoch!=current.epoch)continue;
+        std::string group_id,coordinator;bool duplicate=false;
+        for(size_t i=0;i<entry->txt_count;++i){const auto &item=entry->txt[i];if(!item.key||!item.value||entry->txt_value_len[i]>64){duplicate=true;break;}std::string *target=nullptr;if(!strcmp(item.key,"group"))target=&group_id;else if(!strcmp(item.key,"coordinator"))target=&coordinator;if(target){if(!target->empty()){duplicate=true;break;}target->assign(item.value,entry->txt_value_len[i]);}}
+        if(duplicate||group_id!=current.consortium.str()||coordinator!=current.authority.str())continue;
         size_t addresses=0;for(auto *address=entry->addr;address&&addresses++<8&&hints.size()<2;address=address->next){if(address->addr.type!=ESP_IPADDR_TYPE_V4||!address->addr.u_addr.ip4.addr)continue;char text[16];snprintf(text,sizeof(text),IPSTR,IP2STR(&address->addr.u_addr.ip4));if(std::find(hints.begin(),hints.end(),text)==hints.end())hints.emplace_back(text);}
     }
     mdns_query_results_free(results);return hints;
@@ -1243,11 +1240,11 @@ void network_loop(void*){
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
-std::string proposal_json(model::JoinId join,model::ConsortiumId consortium,const Identity& coordinator,const Peer& candidate,uint64_t epoch,uint64_t revision,const std::string &host,const std::string &hostname){
+std::string proposal_json(model::JoinId join,model::ConsortiumId consortium,const Identity& coordinator,const Peer& candidate,uint64_t revision,const std::string &host,const std::string &hostname){
     // The boot identity and this transaction's just-verified candidate already
     // contain their derived pins. Copy those exact records, without repeating
     // signatures or trusting pins supplied by an unauthenticated document.
-    JoinProposal p;p.join_id=join;p.consortium_id=consortium;p.coordinator_id=coordinator.id;p.candidate_id=candidate.id;p.epoch=epoch;p.revision=revision;p.coordinator_leaf=coordinator.der;p.candidate_leaf=candidate.der;p.coordinator_pin=coordinator.spki;p.candidate_pin=candidate.pin;p.host=host;p.candidate_hostname=hostname;
+    JoinProposal p;p.join_id=join;p.consortium_id=consortium;p.coordinator_id=coordinator.id;p.candidate_id=candidate.id;p.revision=revision;p.coordinator_leaf=coordinator.der;p.candidate_leaf=candidate.der;p.coordinator_pin=coordinator.spki;p.candidate_pin=candidate.pin;p.host=host;p.candidate_hostname=hostname;
     return encode_join_proposal(p);
 }
 std::string host_ip(){auto iface=esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");esp_netif_ip_info_t ip{};if(!iface||esp_netif_get_ip_info(iface,&ip)!=ESP_OK||!ip.ip.addr)return {};char text[16];snprintf(text,sizeof(text),IPSTR,IP2STR(&ip.ip));return text;}
@@ -1277,7 +1274,7 @@ esp_err_t bootstrap_request(std::string_view request,std::string &response){
     if(p.get("phase")->string!="prepare"||!closed(p,{"phase","proposal","digest"})||p.get("proposal")->type!=Json::Type::string||p.get("digest")->type!=Json::Type::string)return ESP_ERR_INVALID_ARG;
     const auto proposal=p.get("proposal")->string;if(sha256(proposal)!=p.get("digest")->string)return ESP_ERR_INVALID_ARG;
     JoinProposal decoded;if(!decode_join_proposal(proposal,decoded)||decoded.candidate_id!=identity.id||decoded.candidate_leaf!=identity.der||decoded.candidate_pin!=identity.spki)return ESP_ERR_INVALID_ARG;
-    Group next;Peer authority;next.join_id=decoded.join_id;next.join_hostname=decoded.candidate_hostname;next.consortium=decoded.consortium_id;next.authority=decoded.coordinator_id;next.epoch=decoded.epoch;next.revision=decoded.revision;next.authority_host=decoded.host;authority.id=next.authority;authority.der=decoded.coordinator_leaf;
+    Group next;Peer authority;next.join_id=decoded.join_id;next.join_hostname=decoded.candidate_hostname;next.consortium=decoded.consortium_id;next.authority=decoded.coordinator_id;next.revision=decoded.revision;next.authority_host=decoded.host;authority.id=next.authority;authority.der=decoded.coordinator_leaf;
     if(!certificate(authority.der,authority.id,authority.pin)||authority.pin!=decoded.coordinator_pin)return ESP_ERR_INVALID_ARG;
     next.role=Group::prepared;next.join_digest=p.get("digest")->string;next.join_revision=next.revision;next.joining_id=identity.id;next.peers.push_back(authority);
     if(group.role!=Group::unclaimed&&!(group.role==Group::prepared&&group.join_id==next.join_id&&group.join_digest==next.join_digest))return ESP_ERR_INVALID_STATE;
@@ -1356,7 +1353,7 @@ void invite_worker_work(void *arg){
         const auto host=host_ip();good=current()&&!host.empty()&&current_group.role==Group::coordinator&&current_group.peers.size()<maximum_roster_peers&&current_group.revision<UINT64_MAX;
         for(const auto& old:current_group.peers)if(old.id==peer.id||old.pin==peer.pin)good=false;
         if(good){
-            proposal=proposal_json(join,current_group.consortium,local,peer,current_group.epoch,current_group.revision+1,host,hostname);digest=sha256(proposal);
+            proposal=proposal_json(join,current_group.consortium,local,peer,current_group.revision+1,host,hostname);digest=sha256(proposal);
             current_group.join_id=join;current_group.joining_id=peer.id;current_group.join_digest=digest;current_group.join_hostname=hostname;current_group.join_revision=current_group.revision+1;current_group.peers.push_back(peer);
             std::lock_guard<std::mutex> persistence(persistence_lock);std::unique_lock<std::mutex> guard(lock);
             good=current()&&!proposal.empty()&&admission.view.scan_id==scan&&group.role==Group::coordinator&&!group.join_id&&group.revision+1==current_group.join_revision&&without_runtime_lock(guard,[&]{return save_group(current_group);})==ESP_OK;
@@ -1393,7 +1390,6 @@ esp_err_t recovery_required(model::OctopusId local,esp_err_t result,const char *
 esp_err_t validate_startup(model::OctopusId local,const Group& stored,RuntimeStartup& out,Identity* verified_identity=nullptr,BoundedSetupTimings<5>* timing=nullptr){
     out={};if(verified_identity)*verified_identity={};
     if(!local){out.role=RuntimeStartup::recovery_required;return ESP_ERR_INVALID_STATE;}
-    if(!controller_membership_compatible(stored)){out.role=RuntimeStartup::recovery_required;return ESP_ERR_INVALID_STATE;}
     if(stored.role==Group::unclaimed)return ESP_OK;
     if(stored.peers.size()>maximum_roster_peers){out.role=RuntimeStartup::recovery_required;return ESP_ERR_INVALID_SIZE;}
     if((stored.role==Group::member||stored.role==Group::prepared)&&stored.joining_id!=local){out.role=RuntimeStartup::recovery_required;return ESP_ERR_INVALID_STATE;}
@@ -1402,7 +1398,7 @@ esp_err_t validate_startup(model::OctopusId local,const Group& stored,RuntimeSta
     if(timing)timing->finish(identity_stage,loaded==ESP_OK,1);
     if(loaded!=ESP_OK||(stored.role==Group::coordinator&&stored.authority!=local)){out.role=RuntimeStartup::recovery_required;return ESP_ERR_INVALID_STATE;}
     if(verified_identity)*verified_identity=std::move(verified);
-    out.role=static_cast<RuntimeStartup::Role>(stored.role);out.consortium_id=stored.consortium;out.authority_id=stored.authority;out.epoch=stored.epoch;out.membership_revision=stored.revision;
+    out.role=static_cast<RuntimeStartup::Role>(stored.role);out.consortium_id=stored.consortium;out.authority_id=stored.authority;out.membership_revision=stored.revision;
     return ESP_OK;
 }
 }
@@ -1435,15 +1431,15 @@ esp_err_t runtime_start(model::ConsortiumId consortium,model::OctopusId octopus,
     // Operational startup validates PSA and stored identity/authority. The
     // admission self-test runs only during an explicit Add attempt; it cannot
     // delay boot or prevent the independent Matter setup from choosing a main.
-    status.initialized=status.credential_ready=true;status.authority_ready=original_controller(group,identity.id);status.coordinator=group.role==Group::coordinator&&status.authority_ready;status.member=group.role==Group::member||group.role==Group::prepared;candidate_passive=status.member;status.epoch=group.epoch;status.membership_revision=group.revision;status.leaf_spki_sha256=identity.spki;status.phase=group.role==Group::prepared?"finishing_enrollment":(group.role==Group::unclaimed?"awaiting_setup":"idle");
+    status.initialized=status.credential_ready=true;status.authority_ready=original_controller(group,identity.id);status.coordinator=group.role==Group::coordinator&&status.authority_ready;status.member=group.role==Group::member||group.role==Group::prepared;candidate_passive=status.member;status.membership_revision=group.revision;status.leaf_spki_sha256=identity.spki;status.phase=group.role==Group::prepared?"finishing_enrollment":(group.role==Group::unclaimed?"awaiting_setup":"idle");
     if(startup.passive()){status.authority_ready=false;status.coordinator=false;status.member=true;}
     if(xTaskCreateWithCaps(network_loop,"group_net",6144,nullptr,2,nullptr,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS)return ESP_ERR_NO_MEM;
     timing.done(true);return ESP_OK;
 }
-void runtime_configuration_changed(uint64_t revision,const std::string &hash){
-    if(!revision||hash.size()!=64)return;
-    std::lock_guard<std::mutex> guard(lock);if(revision<configuration||(revision==configuration&&hash==configuration_hash))return;
-    configuration=revision;configuration_hash=hash;
+void runtime_configuration_changed(uint64_t revision){
+    if(!revision)return;
+    std::lock_guard<std::mutex> guard(lock);if(revision<=configuration)return;
+    configuration=revision;
     // The link task advances its authenticated scope in-band. Activity edits
     // do not disconnect owners or invalidate their HDMI observations.
 }
@@ -1468,9 +1464,9 @@ esp_err_t runtime_claim_original_controller(){
     // Only the application's verified Matter/network completion path calls
     // this entry. The durable candidate decision wins any concurrent claim.
     if(group.role!=Group::unclaimed||group.join_id||candidate_passive||candidate_generation||candidate_deadline||!singleton)return ESP_ERR_INVALID_STATE;
-    Group next;next.role=Group::coordinator;next.consortium=singleton;next.authority=identity.id;next.epoch=1;next.revision=1;
+    Group next;next.role=Group::coordinator;next.consortium=singleton;next.authority=identity.id;next.revision=1;
     const auto saved=without_runtime_lock(guard,[&]{return save_group(next);});if(saved!=ESP_OK){candidate_passive=true;status.phase="recovery_required";status.last_error="Controller setup could not be stored; restart to recover the saved role";return saved;}
-    group=std::move(next);status.coordinator=true;status.authority_ready=true;status.member=false;status.epoch=1;status.membership_revision=1;status.phase="idle";return ESP_OK;
+    group=std::move(next);status.coordinator=true;status.authority_ready=true;status.member=false;status.membership_revision=1;status.phase="idle";return ESP_OK;
 }
 bool runtime_original_setup_eligible(){
     std::lock_guard<std::mutex> guard(lock);
@@ -1817,20 +1813,19 @@ esp_err_t runtime_send_owned(const model::OwnedIntent& intent){
     }
     return admitted;
 }
-uint64_t runtime_owned_deadline(const model::OwnedAuthorization& auth){
+bool runtime_owned_authorized(const model::OwnedAuthorization& auth){
     RuntimeControlHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=controls;}
     const auto admitted=hooks.configuration_revision?hooks.configuration_revision():0;
     std::lock_guard<std::mutex> guard(lock);
-    if(auth.owner_boot!=boot)return 0;
-    if(auth.controller_id==identity.id)return (auth.config_revision==configuration||auth.config_revision==admitted)&&!auth.link_id&&auth.controller_boot==boot&&original_controller(group,identity.id)&&status.authority_ready?UINT64_MAX:0;
-    if(auth.config_revision!=configuration)return 0;
-    if(group.role!=Group::member||group.authority!=auth.controller_id)return 0;
+    if(auth.owner_boot!=boot)return false;
+    if(auth.controller_id==identity.id)return (auth.config_revision==configuration||auth.config_revision==admitted)&&!auth.link_id&&auth.controller_boot==boot&&original_controller(group,identity.id)&&status.authority_ready;
+    if(auth.config_revision!=configuration)return false;
+    if(group.role!=Group::member||group.authority!=auth.controller_id)return false;
     for(const auto& active:links)if(active->peer==auth.controller_id&&active->ready&&!active->cancelled&&!active->retiring&&!active->restart_requested&&!active->execution_fenced){const auto& scope=active->session.scope();if(scope.link_id==auth.link_id&&scope.peer_boot_id==auth.controller_boot&&scope.local_boot_id==auth.owner_boot&&scope.config_revision==auth.config_revision){
-        return UINT64_MAX;
+        return true;
     }}
-    return 0;
+    return false;
 }
-bool runtime_owned_authorized(const model::OwnedAuthorization& auth){return runtime_owned_deadline(auth)!=0;}
 std::vector<RuntimePeerStatus> runtime_peers(){
     std::lock_guard<std::mutex> guard(lock);std::vector<RuntimePeerStatus> out;
     for(const auto &peer:group.peers){RuntimePeerStatus result;unsigned selected=0;

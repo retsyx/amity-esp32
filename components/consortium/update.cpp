@@ -57,22 +57,22 @@ std::string update_chunk_envelope(const Envelope& envelope,std::string_view enco
     if(envelope.kind!=Kind::update_chunk||!envelope.consortium_id||!envelope.origin_octopus_id||
        !envelope.origin_boot_id||!envelope.destination_octopus_id||!envelope.destination_boot_id||
        !envelope.ttl_ms||envelope.ttl_ms>10000||!decode_update_chunk(encoded_chunk,chunk))return {};
-    std::string out="AFU1";out.reserve(104+encoded_chunk.size());
+    std::string out="AFU1";out.reserve(96+encoded_chunk.size());
     append_id(out,envelope.consortium_id);append_id(out,envelope.origin_octopus_id);append_id(out,envelope.origin_boot_id);
     append_id(out,envelope.destination_octopus_id);append_id(out,envelope.destination_boot_id);
-    append_number(out,envelope.coordinator_epoch,8);append_number(out,envelope.config_revision,8);append_number(out,envelope.ttl_ms,4);
+    append_number(out,envelope.config_revision,8);append_number(out,envelope.ttl_ms,4);
     out.append(encoded_chunk);return out;
 }
 Error parse_update_chunk_envelope(std::string_view bytes,Envelope& out) {
-    if(bytes.size()<=128||bytes.size()>128+update_chunk_bytes||bytes.substr(0,4)!="AFU1")return Error::invalid_message;
+    if(bytes.size()<=120||bytes.size()>120+update_chunk_bytes||bytes.substr(0,4)!="AFU1")return Error::invalid_message;
     Envelope envelope;
     if(!read_id(bytes.substr(4,16),envelope.consortium_id)||!read_id(bytes.substr(20,16),envelope.origin_octopus_id)||
        !read_id(bytes.substr(36,16),envelope.origin_boot_id)||!read_id(bytes.substr(52,16),envelope.destination_octopus_id)||
        !read_id(bytes.substr(68,16),envelope.destination_boot_id))return Error::invalid_message;
-    envelope.coordinator_epoch=read_number(bytes.substr(84,8));envelope.config_revision=read_number(bytes.substr(92,8));
-    envelope.ttl_ms=read_number(bytes.substr(100,4));
+    envelope.config_revision=read_number(bytes.substr(84,8));
+    envelope.ttl_ms=read_number(bytes.substr(92,4));
     UpdateChunk chunk;
-    if(!envelope.ttl_ms||envelope.ttl_ms>10000||!decode_update_chunk(bytes.substr(104),chunk))return Error::invalid_message;
+    if(!envelope.ttl_ms||envelope.ttl_ms>10000||!decode_update_chunk(bytes.substr(96),chunk))return Error::invalid_message;
     envelope.kind=Kind::update_chunk;envelope.update_chunk=std::move(chunk);out=std::move(envelope);return Error::none;
 }
 bool is_update_kind(Kind k) {

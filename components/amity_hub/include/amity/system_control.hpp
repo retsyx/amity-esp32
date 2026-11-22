@@ -16,8 +16,8 @@ public:
     system::BootId boot_identity()const{return boot_;}
     void set_hardware_error(std::string error){if(error.size()>192)error.resize(192);std::atomic_store(&hardware_error_,std::make_shared<const std::string>(std::move(error)));}
     std::string hardware_error()const{auto p=std::atomic_load(&hardware_error_);return p?*p:std::string{};}
-    void set_coordinator_authority(bool enabled,uint64_t epoch){local_coordinator_.store(enabled&&epoch==1);local_.set_coordinator_authority(enabled&&epoch==1,epoch);}
-    esp_err_t transition_coordinator_authority(bool enabled,uint64_t epoch);
+    void set_coordinator_authority(bool enabled){local_coordinator_.store(enabled);local_.set_coordinator_authority(enabled);}
+    esp_err_t transition_coordinator_authority(bool enabled);
     system::CecPortRef port(BusSide side)const{return {consortium_,octopus_,0,side==BusSide::Front?system::Side::front:system::Side::back};}
     esp_err_t start(const cec::BoardProfile& profile,const std::array<uint16_t,amity::max_tentacles>& pa){auto e=local_.start(profile,pa);if(e==ESP_OK)profile_=profile;return e;}
     uint8_t supported_tentacles()const{return profile_.tentacle_count;}
@@ -78,7 +78,6 @@ public:
     void set_owned_sender(OwnedSender sender){std::atomic_store(&sender_,sender?std::make_shared<const OwnedSender>(std::move(sender)):std::shared_ptr<const OwnedSender>{});}
     void set_owned_observer(std::function<void(const system::OwnedAdapterSnapshot&)> observer){local_.set_owned_observer(std::move(observer));}
     void set_owned_authorizer(std::function<bool(const system::OwnedAuthorization&)> check){local_.set_owned_authorizer(std::move(check));}
-    void set_owned_deadline(std::function<uint64_t(const system::OwnedAuthorization&)> check){local_.set_owned_deadline(std::move(check));}
     system::AdmissionResult submit_owned(const system::OwnedIntent& intent,const system::OwnedAuthorization& auth,uint32_t timeout=1000){return local_.submit_owned(intent,auth,timeout);}
     system::AdmissionResult submit_key_edges(const std::array<system::KeyEdge,2>& edges,uint8_t count,uint64_t generation,system::LinkId link,uint64_t deadline,uint32_t timeout=1000){return local_.submit_key_edges(edges,count,generation,link,deadline,timeout);}
     esp_err_t bind_owned_controller(system::OctopusId controller,uint64_t revision){return local_.bind_owned_controller(controller,revision);}

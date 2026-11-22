@@ -10,7 +10,7 @@ constexpr size_t update_chunk_bytes = 2048;
 // Binary chunks bind to the accepted begin request. Integers are big-endian.
 // Chunk payload: begin ID (16), offset (8), then 1..2048 image bytes.
 // Frame: AFU1 (4), consortium/origin/origin-boot/destination/destination-boot
-// IDs (5*16), epoch (8), configuration revision (8), TTL (4), chunk payload.
+// IDs (5*16), configuration revision (8), TTL (4), chunk payload.
 // The existing authenticated TLS frame length delimits the image bytes.
 bool valid_update_chunk(const UpdateChunk&);
 std::string encode_update_chunk(model::MessageId begin,uint64_t offset,std::string_view bytes);

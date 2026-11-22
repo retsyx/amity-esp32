@@ -10,13 +10,13 @@ struct RuntimeStatus {
     bool initialized=false,credential_ready=false,coordinator=false,member=false;
     bool enrollment_open=false,connected=false,synchronized=false;
     bool authority_ready=false;
-    uint32_t active_peers=0;uint64_t epoch=0,membership_revision=0;
+    uint32_t active_peers=0;uint64_t membership_revision=0;
     std::string phase,last_error,leaf_spki_sha256;
 };
 struct RuntimeStartup {
     enum Role {unclaimed,coordinator,member,prepared,recovery_required};
     Role role=unclaimed;model::ConsortiumId consortium_id;model::OctopusId authority_id;
-    uint64_t epoch=0,membership_revision=0;
+    uint64_t membership_revision=0;
     bool passive()const{return role==member||role==prepared||role==recovery_required;}
 };
 // NVS-only startup read before CEC/config; never generates keys or membership.
@@ -28,7 +28,7 @@ esp_err_t runtime_set_hardware_profile(uint8_t supported_tentacles,uint8_t confi
 // No listener opens until a durable original claim or committed join.
 esp_err_t runtime_start(model::ConsortiumId,model::OctopusId,model::BootId,uint64_t config_revision);
 RuntimeStatus runtime_status();
-void runtime_configuration_changed(uint64_t config_revision,const std::string &policy_hash);
+void runtime_configuration_changed(uint64_t config_revision);
 // Application-only claim after committed Matter commissioning and usable Wi-Fi
 // (or proven retained original). A prepared member decision wins the durable CAS.
 esp_err_t runtime_claim_original_controller();
@@ -158,7 +158,6 @@ esp_err_t runtime_send_owned(const model::OwnedIntent&);
 // An empty link publishes to the current session; retries name their exact link.
 esp_err_t runtime_send_owned_result(model::OctopusId,model::LinkId,const model::OwnedAdapterSnapshot&,uint64_t config_revision=0);
 void runtime_fence_owned_link(model::OctopusId,model::LinkId);
-uint64_t runtime_owned_deadline(const model::OwnedAuthorization&);
 bool runtime_owned_authorized(const model::OwnedAuthorization&);
 std::optional<model::LinkId> runtime_link_id(model::OctopusId,model::BootId);
 } // namespace amity::consortium

@@ -39,12 +39,12 @@ std::shared_ptr<Active> connection(bool server,bool matching,bool provisional){
  auto active=std::make_shared<Active>();active->ready=active->status.ready=false;
  const auto main=ident<model::OctopusId>(2),member=ident<model::OctopusId>(3);
  group={};group.role=server?Group::coordinator:(provisional?Group::prepared:Group::member);
- group.consortium=ident<model::ConsortiumId>(1);group.authority=main;group.epoch=group.revision=1;
+ group.consortium=ident<model::ConsortiumId>(1);group.authority=main;group.revision=1;
  identity.id=server?main:member;boot=ident<model::BootId>(server?4:5);
  active->tls->authenticated=server?member:main;
  HelloFrame peer;peer.consortium_id=group.consortium;peer.octopus_id=active->tls->authenticated;
- peer.boot_id=ident<model::BootId>(server?5:4);peer.coordinator_epoch=1;peer.config_revision=server?2:7;
- peer.config_hash=std::string(64,'a');peer.firmware_identity=matching?hex(std::string(32,char(0xab))):std::string(64,'c');
+ peer.boot_id=ident<model::BootId>(server?5:4);peer.config_revision=server?2:7;
+ peer.firmware_identity=matching?hex(std::string(32,char(0xab))):std::string(64,'c');
  peer.supported_tentacles=1;peer.configured_tentacles_mask=1;
  if(provisional){group.join_id=ident<model::JoinId>(8);group.join_digest=std::string(64,'d');group.joining_id=member;group.join_hostname="member";peer.pending_join_id=group.join_id;peer.join_digest=group.join_digest;}
  active->tls->incoming.push_back(hello_json(peer));
@@ -56,7 +56,7 @@ Envelope inbound(const Active& active,Kind kind){
  const auto scope=active.session.scope();Envelope message;
  message.consortium_id=scope.consortium_id;message.origin_octopus_id=scope.peer_id;message.destination_octopus_id=scope.local_id;
  message.origin_boot_id=scope.peer_boot_id;message.destination_boot_id=scope.local_boot_id;
- message.coordinator_epoch=scope.epoch;message.config_revision=scope.config_revision;message.ttl_ms=1000;message.kind=kind;return message;
+ message.config_revision=scope.config_revision;message.ttl_ms=1000;message.kind=kind;return message;
 }
 void mismatched(bool server,bool provisional){
  auto active=connection(server,false,provisional);const auto* tls=active->tls.get();LinkTrace trace;

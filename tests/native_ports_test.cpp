@@ -109,9 +109,9 @@ static void pending_activity_rejects_settings(bool repair) {
 static void passive_start_can_become_main() {
     fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
     fixture_send={};fixture_transmit={};fixture_incoming.clear();fixture_sent.clear();
-    LocalHubService owner;owner.set_coordinator_authority(false,1);
+    LocalHubService owner;owner.set_coordinator_authority(false);
     assert(fixture_start(owner,1,2)==ESP_OK);
-    assert(owner.transition_coordinator_authority(true,2)==ESP_OK);
+    assert(owner.transition_coordinator_authority(true)==ESP_OK);
     assert(fixture_configure(owner,{{"Watch","TV","Source","Source","",0}}));
     run_one_command();fixture_finish_discovery(owner);
     assert(fixture_select(owner,0));run_one_command();

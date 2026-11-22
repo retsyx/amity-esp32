@@ -33,7 +33,6 @@ amity::SystemControl* control=nullptr;
 config_store::RevisionPair published_input_revisions;
 bool configuration_passive=false;
 config_store::ConfigurationSnapshot deferred_configuration;
-uint64_t deferred_epoch=1;
 struct Tracked {std::string id,path,digest,status,error; m::OctopusId candidate{};m::MessageId scan_id{};std::string name;bool rebooting=false;std::string reset;
     config_store::RevisionPair removal_revisions{};bool removal_enrolled=false;};
 bool operation_pending(const Tracked& operation){return operation.status=="admitted"||operation.status=="configuring"||operation.status=="preparing"||operation.status=="activating";}
@@ -361,7 +360,7 @@ esp_err_t load_configuration(amity::SystemControl& service,bool defer_configurat
     if(staged_configuration&&running&&esp_ota_get_state_partition(running,&boot_state)==ESP_OK&&boot_state==ESP_OTA_IMG_PENDING_VERIFY){
         // Initial or hardware configuration writes wait for this image's
         // protected local health before replacing the current active record.
-        result=service.transition_coordinator_authority(false,deferred_epoch);if(result!=ESP_OK)return result;
+        result=service.transition_coordinator_authority(false);if(result!=ESP_OK)return result;
         result=service.configure_passive_metadata(configuration);if(result!=ESP_OK)return result;
         deferred_configuration=configuration;configuration_passive=true;return ESP_OK;
     }
@@ -373,9 +372,9 @@ esp_err_t load_configuration(amity::SystemControl& service,bool defer_configurat
 esp_err_t finish_configuration_activation(){
     if(!deferred_configuration)return ESP_OK;
     if(!system_services::firmware_ready())return ESP_ERR_INVALID_STATE;
-    auto candidate=deferred_configuration;const auto enabled=control->transition_coordinator_authority(true,deferred_epoch);if(enabled!=ESP_OK)return enabled;
+    auto candidate=deferred_configuration;const auto enabled=control->transition_coordinator_authority(true);if(enabled!=ESP_OK)return enabled;
     const auto activated=control->configure(candidate,[candidate]() mutable {std::string message;return config_store::activate_system_configuration(candidate,message);});
-    if(activated!=ESP_OK){control->transition_coordinator_authority(false,deferred_epoch);return activated;}
+    if(activated!=ESP_OK){control->transition_coordinator_authority(false);return activated;}
     deferred_configuration.reset();configuration_passive=false;publish_inputs();return ESP_OK;
 }
 

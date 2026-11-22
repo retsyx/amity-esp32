@@ -104,7 +104,7 @@ bool gatt_client_exchange(bool encrypted,std::string_view input,std::string& out
 SUITE = r'''
 void reset(){
     if(task_argument){delete static_cast<InviteRequest*>(task_argument);task_argument=nullptr;}
-    group={};group.role=Group::coordinator;group.consortium=ident<model::ConsortiumId>(1);group.authority=ident<model::OctopusId>(2);group.epoch=group.revision=1;
+    group={};group.role=Group::coordinator;group.consortium=ident<model::ConsortiumId>(1);group.authority=ident<model::OctopusId>(2);group.revision=1;
     identity={};identity.id=group.authority;identity.der="controller-leaf";identity.spki=std::string(64,'a');status={};status.initialized=status.credential_ready=status.authority_ready=true;
     admission={};invitation_running=invitation_cancelled=false;hostnames={};links.clear();settings_operations.clear();
     fail_phase.clear();clock_ms=100;during_wait={};spawn_ok=discover_ok=exchange_ok=true;networked=bad_identity=bad_certificate=false;
@@ -141,14 +141,14 @@ void cancellation_waits_for_proposal_store(){
 }
 void proposal_record_lifetime(){
     reset();auto local=identity;Peer peer{ident<model::OctopusId>(3),"candidate-leaf",std::string(64,'c'),false};
-    const auto bytes=proposal_json(ident<model::JoinId>(90),group.consortium,local,peer,1,2,"192.0.2.1","room");
+    const auto bytes=proposal_json(ident<model::JoinId>(90),group.consortium,local,peer,2,"192.0.2.1","room");
     assert(!bytes.empty()&&certificates==0); // No repeat signature or global cache.
     local.der="changed-local";local.spki=std::string(64,'b');peer.der="changed-peer";peer.pin=std::string(64,'d');
     JoinProposal decoded;assert(decode_join_proposal(bytes,decoded));
     assert(decoded.coordinator_leaf=="controller-leaf"&&decoded.coordinator_pin==std::string(64,'a')&&decoded.candidate_leaf=="candidate-leaf"&&decoded.candidate_pin==std::string(64,'c'));
     peer.der="candidate-leaf";peer.pin.clear();
-    assert(proposal_json(ident<model::JoinId>(90),group.consortium,identity,peer,1,2,"192.0.2.1","room").empty());
-    peer.pin=identity.spki;assert(proposal_json(ident<model::JoinId>(90),group.consortium,identity,peer,1,2,"192.0.2.1","room").empty());
+    assert(proposal_json(ident<model::JoinId>(90),group.consortium,identity,peer,2,"192.0.2.1","room").empty());
+    peer.pin=identity.spki;assert(proposal_json(ident<model::JoinId>(90),group.consortium,identity,peer,2,"192.0.2.1","room").empty());
 }
 void roster_capacity(){
     reset();
@@ -251,8 +251,6 @@ def main():
     names = ['std::string proposal_json(', 'void admission_failed(', 'void invite_worker_work(', 'RuntimeAdmissionStatus runtime_admission_status(',
              'esp_err_t runtime_scan_admission(', 'esp_err_t runtime_cancel_admission(', 'esp_err_t runtime_add_octopus(']
     actual = function((ROOT / 'components/consortium/settings_runtime.inc').read_text(), 'bool settings_hostname_pending(') + ''.join(function(source, name) for name in names)
-    if 'const Identity& coordinator,const Peer& candidate' not in source:
-        actual += 'std::string proposal_json(model::JoinId join,model::ConsortiumId consortium,const Identity& local,const Peer& peer,uint64_t epoch,uint64_t revision,const std::string& host,const std::string& name){return proposal_json(join,consortium,local.id,peer.id,epoch,revision,local.der,peer.der,host,name);}\n'
     with tempfile.TemporaryDirectory(prefix='amity-admission-workflow-') as directory:
         cpp = Path(directory) / 'test.cpp'
         binary = Path(directory) / 'test'

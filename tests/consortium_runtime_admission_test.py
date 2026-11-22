@@ -46,18 +46,18 @@ void removal_finish(model::OctopusId,model::MessageId,bool){}
 bool send(Active &,Kind kind,std::string_view,uint32_t){return kind==Kind::membership_event;}
 void check(bool value,const char *message){if(!value)throw std::runtime_error(message);}
 template<class T>T ident(unsigned n){char text[33];std::snprintf(text,sizeof(text),"%032x",n);return *T::parse(text);}
-LinkScope scope(uint64_t config=7){return {ident<m::LinkId>(1),ident<m::ConsortiumId>(2),ident<m::OctopusId>(3),ident<m::OctopusId>(4),ident<m::OctopusId>(3),ident<m::BootId>(5),ident<m::BootId>(6),1,config};}
+LinkScope scope(uint64_t config=7){return {ident<m::LinkId>(1),ident<m::ConsortiumId>(2),ident<m::OctopusId>(3),ident<m::OctopusId>(4),ident<m::OctopusId>(3),ident<m::BootId>(5),ident<m::BootId>(6),config};}
 void start(Active &active,uint64_t config=7){
     active.removal_request=ident<m::MessageId>(32);active.removal_until=clock_ms+2000;configuration=config;
-    const auto sc=scope(config);HelloFrame hello;hello.consortium_id=sc.consortium_id;hello.octopus_id=sc.peer_id;hello.boot_id=sc.peer_boot_id;hello.coordinator_epoch=sc.epoch;hello.config_revision=sc.config_revision;
+    const auto sc=scope(config);HelloFrame hello;hello.consortium_id=sc.consortium_id;hello.octopus_id=sc.peer_id;hello.boot_id=sc.peer_boot_id;hello.config_revision=sc.config_revision;
     active.peer=sc.peer_id;active.tls->authenticated=sc.peer_id;identity.id=sc.local_id;boot=sc.local_boot_id;
-    group={};group.role=platform::Group::coordinator;group.authority=sc.coordinator_id;group.consortium=sc.consortium_id;group.epoch=sc.epoch;group.revision=2;
+    group={};group.role=platform::Group::coordinator;group.authority=sc.coordinator_id;group.consortium=sc.consortium_id;group.revision=2;
     removal_operations.clear();removal_operations.push_back({active.peer,active.removal_request,active.removal_until,"pending",false,sc});
     check(active.session.authenticate(sc,sc.peer_id,PeerRole::actuator,true)==Error::none,"authenticate failed");
     check(active.session.hello(hello)==Error::none&&active.session.synchronized(config,true,true)==Error::none,"session did not synchronize");
 }
-Envelope envelope(Kind kind,uint64_t config=7){const auto s=scope(config);Envelope e;e.kind=kind;e.consortium_id=s.consortium_id;e.origin_octopus_id=s.peer_id;e.origin_boot_id=s.peer_boot_id;e.destination_octopus_id=s.local_id;e.destination_boot_id=s.local_boot_id;e.coordinator_epoch=s.epoch;e.config_revision=s.config_revision;e.ttl_ms=2000;return e;}
-std::string packet(const Envelope&e,std::string payload){return "{\"protocol_version\":1,\"consortium_id\":\""+e.consortium_id.str()+"\",\"origin_octopus_id\":\""+e.origin_octopus_id.str()+"\",\"origin_boot_id\":\""+e.origin_boot_id.str()+"\",\"destination_octopus_id\":\""+e.destination_octopus_id.str()+"\",\"destination_boot_id\":\""+e.destination_boot_id.str()+"\",\"coordinator_epoch\":\""+std::to_string(e.coordinator_epoch)+"\",\"config_revision\":\""+std::to_string(e.config_revision)+"\",\"kind\":\""+kind_name(e.kind)+"\",\"ttl_ms\":2000,\"payload\":"+payload+"}";}
+Envelope envelope(Kind kind,uint64_t config=7){const auto s=scope(config);Envelope e;e.kind=kind;e.consortium_id=s.consortium_id;e.origin_octopus_id=s.peer_id;e.origin_boot_id=s.peer_boot_id;e.destination_octopus_id=s.local_id;e.destination_boot_id=s.local_boot_id;e.config_revision=s.config_revision;e.ttl_ms=2000;return e;}
+std::string packet(const Envelope&e,std::string payload){return "{\"protocol_version\":1,\"consortium_id\":\""+e.consortium_id.str()+"\",\"origin_octopus_id\":\""+e.origin_octopus_id.str()+"\",\"origin_boot_id\":\""+e.origin_boot_id.str()+"\",\"destination_octopus_id\":\""+e.destination_octopus_id.str()+"\",\"destination_boot_id\":\""+e.destination_boot_id.str()+"\",\"config_revision\":\""+std::to_string(e.config_revision)+"\",\"kind\":\""+kind_name(e.kind)+"\",\"ttl_ms\":2000,\"payload\":"+payload+"}";}
 const std::string device_status="{\"hostname\":\"amity-member\"}";
 std::string acknowledgement(bool correct=true){return packet(envelope(Kind::membership_result),correct?"{\"phase\":\"factory_reset\",\"result\":\"reset_scheduled\"}":"{\"phase\":\"factory_reset\",\"result\":\"rejected\"}");}
 const std::string settings_payload="{\"request_id\":\"00000000000000000000000000000100\",\"operation\":\"read\",\"stage\":\"applied\",\"error\":\"\",\"snapshot\":{\"boot_id\":\"00000000000000000000000000000006\",\"settings_revision\":\"1\",\"hostname_revision\":\"1\",\"hostname\":\"amity\",\"adapters\":[{\"tentacle_id\":0,\"name\":\"HDMI adapter 1\",\"configured\":true,\"default_front_physical_address\":\"1.0.0.0\",\"observed_front_physical_address\":null,\"effective_front_physical_address\":\"1.0.0.0\"}]},\"rebooting\":false}";
@@ -81,8 +81,8 @@ void settings_retirement_tests(){
      check(active.session.state()==ConnectionState::restricted&&!active.ready&&!active.status.ready&&active.queue.empty(),"drained settings reply restored work authority");
      check(active.transport.largest_timeout<=2000,"settings reply drain extended the removal deadline");
      check(active.session.admit(envelope(Kind::device_status),clock_ms,clock_ms)!=Error::none,"settings reply left the session in management mode");}
-    for(unsigned failure=0;failure<7;++failure){Active active;start(active);auto foreign=envelope(Kind::settings_result);
-     switch(failure){case 0:foreign.origin_boot_id=ident<m::BootId>(99);break;case 1:foreign.destination_boot_id=ident<m::BootId>(99);break;case 2:foreign.origin_octopus_id=ident<m::OctopusId>(99);break;case 3:foreign.destination_octopus_id=ident<m::OctopusId>(99);break;case 4:foreign.consortium_id=ident<m::ConsortiumId>(99);break;case 5:foreign.coordinator_epoch=2;break;case 6:foreign.config_revision=8;break;}
+    for(unsigned failure=0;failure<6;++failure){Active active;start(active);auto foreign=envelope(Kind::settings_result);
+     switch(failure){case 0:foreign.origin_boot_id=ident<m::BootId>(99);break;case 1:foreign.destination_boot_id=ident<m::BootId>(99);break;case 2:foreign.origin_octopus_id=ident<m::OctopusId>(99);break;case 3:foreign.destination_octopus_id=ident<m::OctopusId>(99);break;case 4:foreign.consortium_id=ident<m::ConsortiumId>(99);break;case 5:foreign.config_revision=8;break;}
      active.transport.frames={packet(foreign,settings_payload),acknowledgement()};
      check(!finish_retirement(active)&&active.transport.next==1,"foreign settings reply was drained or acknowledged");}
     {Active active;start(active);active.transport.frames={settings_reply()};

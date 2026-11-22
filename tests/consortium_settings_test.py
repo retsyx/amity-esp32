@@ -51,19 +51,19 @@ Error apply(model::MessageId id,const Json& body,uint64_t deadline,std::string& 
  response="{\"request_id\":\""+id.str()+"\",\"stage\":\""+(error==Error::none?"applied":"failed")+"\",\"error\":\""+(error==Error::none?"":settings_error(error))+"\",\"snapshot\":"+(error==Error::none?snapshot():"null")+"}";return error;
 }
 void reset(bool main){
- clock_ms=100;revision=2;hostname_revision=10;local_hostname="main-name";registry_failure=false;hostnames={};network={};admission={};network.get_hostname=[]{return local_hostname;};configuration=1;saves=restarts=0;send_success=true;applied_sent=http_sent=false;effect_fault=0;sent.clear();links.clear();current_link.reset();group={};identity={};status={};settings_caches.clear();settings_operations.clear();settings_received.clear();settings_authorization={};identity.id=ident<model::OctopusId>(4);group.role=main?Group::coordinator:Group::member;group.authority=main?identity.id:ident<model::OctopusId>(3);group.consortium=ident<model::ConsortiumId>(2);group.epoch=1;group.revision=1;group.peers.push_back({ident<model::OctopusId>(3),"leaf","pin",true});status.authority_ready=main;status.coordinator=main;status.member=!main;
+ clock_ms=100;revision=2;hostname_revision=10;local_hostname="main-name";registry_failure=false;hostnames={};network={};admission={};network.get_hostname=[]{return local_hostname;};configuration=1;saves=restarts=0;send_success=true;applied_sent=http_sent=false;effect_fault=0;sent.clear();links.clear();current_link.reset();group={};identity={};status={};settings_caches.clear();settings_operations.clear();settings_received.clear();settings_authorization={};identity.id=ident<model::OctopusId>(4);group.role=main?Group::coordinator:Group::member;group.authority=main?identity.id:ident<model::OctopusId>(3);group.consortium=ident<model::ConsortiumId>(2);group.revision=1;group.peers.push_back({ident<model::OctopusId>(3),"leaf","pin",true});status.authority_ready=main;status.coordinator=main;status.member=!main;
  settings_hooks={[]{return snapshot();},apply};
 }
 std::shared_ptr<Active> connection(bool receiver){
  auto active=std::make_shared<Active>();active->peer=ident<model::OctopusId>(3);active->tls->authenticated=active->peer;
- LinkScope sc{ident<model::LinkId>(5),group.consortium,identity.id,active->peer,group.authority,boot,ident<model::BootId>(7),1,1};
+ LinkScope sc{ident<model::LinkId>(5),group.consortium,identity.id,active->peer,group.authority,boot,ident<model::BootId>(7),1};
  assert(active->session.authenticate(sc,sc.peer_id,receiver?PeerRole::coordinator:PeerRole::actuator,true)==Error::none);
- HelloFrame hello;hello.consortium_id=sc.consortium_id;hello.octopus_id=sc.peer_id;hello.boot_id=sc.peer_boot_id;hello.coordinator_epoch=1;hello.config_revision=1;
+ HelloFrame hello;hello.consortium_id=sc.consortium_id;hello.octopus_id=sc.peer_id;hello.boot_id=sc.peer_boot_id;hello.config_revision=1;
  assert(active->session.hello(hello)==Error::none&&active->session.synchronized(1,true,true)==Error::none);
  active->status.id=active->peer;active->status.boot_id=sc.peer_boot_id;active->status.config_revision=1;active->status.ready=true;
  links.push_back(active);current_link=active;return active;
 }
-Envelope message(const std::shared_ptr<Active>& active,Kind kind,const Json& payload){auto sc=active->session.scope();Envelope e;e.consortium_id=sc.consortium_id;e.origin_octopus_id=sc.peer_id;e.destination_octopus_id=sc.local_id;e.origin_boot_id=sc.peer_boot_id;e.destination_boot_id=sc.local_boot_id;e.coordinator_epoch=1;e.config_revision=1;e.kind=kind;e.ttl_ms=1000;e.payload=payload;return e;}
+Envelope message(const std::shared_ptr<Active>& active,Kind kind,const Json& payload){auto sc=active->session.scope();Envelope e;e.consortium_id=sc.consortium_id;e.origin_octopus_id=sc.peer_id;e.destination_octopus_id=sc.local_id;e.origin_boot_id=sc.peer_boot_id;e.destination_boot_id=sc.local_boot_id;e.config_revision=1;e.kind=kind;e.ttl_ms=1000;e.payload=payload;return e;}
 Envelope write_message(const std::shared_ptr<Active>& active,unsigned request=20,const Json* body=nullptr){auto content=body?*body:core();return message(active,Kind::settings_write,parsed("{\"request_id\":\""+ident<model::MessageId>(request).str()+"\",\"settings\":"+settings_json(content)+"}"));}
 void codec_tests(){
  reset(true);auto snap=parsed(snapshot());assert(valid_settings_snapshot(snap));snap.get("adapters")->array[0].get("configured")->boolean=false;assert(valid_settings_snapshot(snap));

@@ -45,7 +45,7 @@ static m::OwnedIntent power(m::OctopusId id,m::Side side,uint8_t adapter=0){
     intent.on=true;intent.activity_step=true;return intent;
 }
 static void start_owner(HubService& hub,m::OctopusId id,bool two_adapters=false,int front=1,int back=2){
-    hub.set_system_identity(group,id);hub.set_boot_identity(boot);hub.set_coordinator_authority(false,1);
+    hub.set_system_identity(group,id);hub.set_boot_identity(boot);hub.set_coordinator_authority(false);
     if(two_adapters){
         const cec::BoardProfile profile{cec::BoardProfileId::Development4Tentacle,1,amity::max_tentacles,
             {{0,cec::Side::Front,1},{0,cec::Side::Back,2},{1,cec::Side::Front,5},{1,cec::Side::Back,6},
@@ -320,7 +320,7 @@ static void long_power_repair_preserves_normal_input(){
 
 static void isolated_source_input(bool nested,bool same_adapter,bool front_source=false,bool lose_authority=false,bool reject_announcement=false,bool missing=false){
     reset_fixture();fixture_present=false;
-    LocalHubService hub;hub.set_system_identity(group,owner);hub.set_boot_identity(boot);hub.set_coordinator_authority(false,1);
+    LocalHubService hub;hub.set_system_identity(group,owner);hub.set_boot_identity(boot);hub.set_coordinator_authority(false);
     const cec::BoardProfile profile{cec::BoardProfileId::Development4Tentacle,1,amity::max_tentacles,
         {{0,cec::Side::Front,1},{0,cec::Side::Back,2},{1,cec::Side::Front,5},{1,cec::Side::Back,6},
          {2,cec::Side::Front,-1},{2,cec::Side::Back,-1},{3,cec::Side::Front,-1},{3,cec::Side::Back,-1}},-1,-1};
@@ -370,7 +370,7 @@ static void isolated_source_input(bool nested,bool same_adapter,bool front_sourc
 
 static void selected_display_announces_its_own_input(bool projector,bool source_present,bool display_present=true){
     reset_fixture();fixture_present=false;
-    LocalHubService hub;hub.set_system_identity(group,owner);hub.set_boot_identity(boot);hub.set_coordinator_authority(false,1);
+    LocalHubService hub;hub.set_system_identity(group,owner);hub.set_boot_identity(boot);hub.set_coordinator_authority(false);
     const cec::BoardProfile profile{cec::BoardProfileId::Development4Tentacle,1,amity::max_tentacles,
         {{0,cec::Side::Front,1},{0,cec::Side::Back,2},{1,cec::Side::Front,5},{1,cec::Side::Back,6},
          {2,cec::Side::Front,-1},{2,cec::Side::Back,-1},{3,cec::Side::Front,-1},{3,cec::Side::Back,-1}},-1,-1};

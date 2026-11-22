@@ -12,14 +12,14 @@ c::LinkScope scope(c::PeerRole role){
     c::LinkScope value;value.link_id=ident<m::LinkId>('1');value.consortium_id=ident<m::ConsortiumId>('2');
     value.local_id=ident<m::OctopusId>('3');value.peer_id=ident<m::OctopusId>('4');
     value.coordinator_id=role==c::PeerRole::coordinator?value.peer_id:value.local_id;
-    value.local_boot_id=ident<m::BootId>('5');value.peer_boot_id=ident<m::BootId>('6');value.epoch=1;value.config_revision=7;
+    value.local_boot_id=ident<m::BootId>('5');value.peer_boot_id=ident<m::BootId>('6');value.config_revision=7;
     return value;
 }
 c::Session session(c::PeerRole role,bool active=true){
     const auto link=scope(role);c::Session value;
     assert(value.authenticate(link,link.peer_id,role,active)==c::Error::none);
     c::HelloFrame hello;hello.consortium_id=link.consortium_id;hello.octopus_id=link.peer_id;hello.boot_id=link.peer_boot_id;
-    hello.coordinator_epoch=1;hello.config_revision=7;
+    hello.config_revision=7;
     assert(value.hello(hello)==c::Error::none);
     if(active)assert(value.synchronized(7,true,true)==c::Error::none);
     return value;
@@ -27,7 +27,7 @@ c::Session session(c::PeerRole role,bool active=true){
 c::Envelope message(const c::Session& value,c::Kind kind){
     const auto link=value.scope();c::Envelope envelope;
     envelope.consortium_id=link.consortium_id;envelope.origin_octopus_id=link.peer_id;envelope.destination_octopus_id=link.local_id;
-    envelope.origin_boot_id=link.peer_boot_id;envelope.destination_boot_id=link.local_boot_id;envelope.coordinator_epoch=1;
+    envelope.origin_boot_id=link.peer_boot_id;envelope.destination_boot_id=link.local_boot_id;
     envelope.config_revision=7;envelope.kind=kind;envelope.ttl_ms=1000;
     const auto transfer=ident<m::MessageId>('7');
     envelope.payload=parsed(kind==c::Kind::log_request?c::log_request_json(transfer,0):c::log_result_json(transfer,0,1,"x"));
@@ -76,7 +76,7 @@ void codec_tests(){
     const auto link=scope(c::PeerRole::coordinator);
     for(const auto kind:{c::Kind::log_request,c::Kind::log_result}){
         const auto payload=kind==c::Kind::log_request?c::log_request_json(transfer,0):c::log_result_json(transfer,0,1,"x");
-        const auto wire="{\"protocol_version\":1,\"consortium_id\":\""+link.consortium_id.str()+"\",\"origin_octopus_id\":\""+link.peer_id.str()+"\",\"origin_boot_id\":\""+link.peer_boot_id.str()+"\",\"destination_octopus_id\":\""+link.local_id.str()+"\",\"destination_boot_id\":\""+link.local_boot_id.str()+"\",\"coordinator_epoch\":\"1\",\"config_revision\":\"7\",\"kind\":\""+c::kind_name(kind)+"\",\"ttl_ms\":1000,\"payload\":"+payload+"}";
+        const auto wire="{\"protocol_version\":1,\"consortium_id\":\""+link.consortium_id.str()+"\",\"origin_octopus_id\":\""+link.peer_id.str()+"\",\"origin_boot_id\":\""+link.peer_boot_id.str()+"\",\"destination_octopus_id\":\""+link.local_id.str()+"\",\"destination_boot_id\":\""+link.local_boot_id.str()+"\",\"config_revision\":\"7\",\"kind\":\""+c::kind_name(kind)+"\",\"ttl_ms\":1000,\"payload\":"+payload+"}";
         c::Envelope decoded;assert(c::parse_envelope(wire,decoded)==c::Error::none&&decoded.kind==kind);
     }
 }

@@ -73,7 +73,7 @@ void emit_key_network(const model::OctopusId&,uint8_t,uint64_t,uint8_t,bool,cons
 std::mutex lock,persistence_lock;RuntimeControlHooks controls;RuntimeStatus status;Group group;Identity identity;
 RuntimeNetworkHooks network;RuntimeUpdateHooks updates;
 std::vector<std::tuple<model::OctopusId,model::BootId,model::LinkId>> restart_fences;
-uint64_t configuration=7;std::string configuration_hash=std::string(64,'a');
+uint64_t configuration=7;
 std::vector<std::shared_ptr<Active>> links;
 unsigned shutdowns=0;
 esp_err_t save_group(const Group&){return ESP_OK;}
@@ -94,7 +94,7 @@ PREFIX += 'namespace amity::consortium {\n' + function(
 SUPPORT = r'''
 namespace amity::consortium {
 std::string packet(const Envelope& e){
- return "{\"protocol_version\":1,\"consortium_id\":\""+e.consortium_id.str()+"\",\"origin_octopus_id\":\""+e.origin_octopus_id.str()+"\",\"origin_boot_id\":\""+e.origin_boot_id.str()+"\",\"destination_octopus_id\":\""+e.destination_octopus_id.str()+"\",\"destination_boot_id\":\""+e.destination_boot_id.str()+"\",\"coordinator_epoch\":\""+std::to_string(e.coordinator_epoch)+"\",\"config_revision\":\""+std::to_string(e.config_revision)+"\",\"kind\":\""+kind_name(e.kind)+"\",\"ttl_ms\":"+std::to_string(e.ttl_ms)+",\"payload\":"+settings_json(e.payload)+"}";
+ return "{\"protocol_version\":1,\"consortium_id\":\""+e.consortium_id.str()+"\",\"origin_octopus_id\":\""+e.origin_octopus_id.str()+"\",\"origin_boot_id\":\""+e.origin_boot_id.str()+"\",\"destination_octopus_id\":\""+e.destination_octopus_id.str()+"\",\"destination_boot_id\":\""+e.destination_boot_id.str()+"\",\"config_revision\":\""+std::to_string(e.config_revision)+"\",\"kind\":\""+kind_name(e.kind)+"\",\"ttl_ms\":"+std::to_string(e.ttl_ms)+",\"payload\":"+settings_json(e.payload)+"}";
 }
 bool send(Active& active,Kind kind,std::string_view payload,uint32_t ttl){
  auto e=outgoing(active,kind,ttl);JsonError error;
@@ -104,7 +104,7 @@ bool send(Active& active,Kind kind,std::string_view payload,uint32_t ttl){
 }
 Envelope inbound(const LinkScope& scope,uint64_t revision,Kind kind,std::string_view payload){
  Envelope e;e.consortium_id=scope.consortium_id;e.origin_octopus_id=scope.peer_id;e.destination_octopus_id=scope.local_id;
- e.origin_boot_id=scope.peer_boot_id;e.destination_boot_id=scope.local_boot_id;e.coordinator_epoch=scope.epoch;e.config_revision=revision;e.kind=kind;e.ttl_ms=1000;
+ e.origin_boot_id=scope.peer_boot_id;e.destination_boot_id=scope.local_boot_id;e.config_revision=revision;e.kind=kind;e.ttl_ms=1000;
  JsonError error;assert(parse_json(payload,e.payload,error)&&valid_envelope_payload(kind,e.payload));return e;
 }
 void feed(Active& active,const Envelope& e){active.tls->incoming.push_back(packet(e));}
@@ -114,11 +114,11 @@ SnapshotManifest manifest(model::OctopusId owner,model::BootId boot,uint64_t rev
 std::shared_ptr<Active> start(bool server){
  auto a=std::make_shared<Active>();
  const auto coordinator=ident<model::OctopusId>(2),member=ident<model::OctopusId>(3);const auto mainboot=ident<model::BootId>(4),memberboot=ident<model::BootId>(5);
- LinkScope scope{ident<model::LinkId>(6),ident<model::ConsortiumId>(1),server?coordinator:member,server?member:coordinator,coordinator,server?mainboot:memberboot,server?memberboot:mainboot,1,7};
+ LinkScope scope{ident<model::LinkId>(6),ident<model::ConsortiumId>(1),server?coordinator:member,server?member:coordinator,coordinator,server?mainboot:memberboot,server?memberboot:mainboot,7};
  a->peer=scope.peer_id;a->tls->authenticated=a->peer;a->status.id=a->peer;a->status.boot_id=scope.peer_boot_id;a->status.config_revision=7;a->status.ready=true;
- HelloFrame h;h.consortium_id=scope.consortium_id;h.octopus_id=scope.peer_id;h.boot_id=scope.peer_boot_id;h.coordinator_epoch=1;h.config_revision=7;
+ HelloFrame h;h.consortium_id=scope.consortium_id;h.octopus_id=scope.peer_id;h.boot_id=scope.peer_boot_id;h.config_revision=7;
  assert(a->session.authenticate(scope,scope.peer_id,server?PeerRole::actuator:PeerRole::coordinator,true)==Error::none&&a->session.hello(h)==Error::none&&a->session.synchronized(7,true,true)==Error::none);
- clock_ms=100;controls={};updates={};restart_fences.clear();controls.restart_session=[](auto owner,auto peer_boot,auto old_link){restart_fences.emplace_back(owner,peer_boot,old_link);return true;};network={};network.get_hostname=[server]{return server?"amity-main":"amity-member";};configuration=7;configuration_hash=std::string(64,'a');status={};status.authority_ready=server;identity.id=scope.local_id;group={};group.consortium=scope.consortium_id;group.role=server?Group::coordinator:Group::member;group.authority=coordinator;group.epoch=1;links={a};on_send={};shutdowns=0;diagnostic_logs.clear();key_transfer_logs.clear();
+ clock_ms=100;controls={};updates={};restart_fences.clear();controls.restart_session=[](auto owner,auto peer_boot,auto old_link){restart_fences.emplace_back(owner,peer_boot,old_link);return true;};network={};network.get_hostname=[server]{return server?"amity-main":"amity-member";};configuration=7;status={};status.authority_ready=server;identity.id=scope.local_id;group={};group.consortium=scope.consortium_id;group.role=server?Group::coordinator:Group::member;group.authority=coordinator;links={a};on_send={};shutdowns=0;diagnostic_logs.clear();key_transfer_logs.clear();
  return a;
 }
 std::string controller_slice(const LinkScope& scope,uint64_t revision){return "{\"controller\":\""+scope.coordinator_id.str()+"\",\"config_revision\":\""+std::to_string(revision)+"\"}";}
@@ -172,14 +172,14 @@ void coordinator_refresh(){
    feed(active,inbound(original,8,Kind::snapshot_chunk,snapshot_chunk_json(state,0,owner_state)));
   }
  };
- runtime_configuration_changed(8,std::string(64,'b'));
+ runtime_configuration_changed(8);
  assert(configuration==8&&a->session.scope()==original&&a->ready&&a->status.ready&&shutdowns==0&&applied==0&&cached.size()==3);
  assert(synchronize(*a,true,true,8));unchanged(*a,original,tls);assert(applied==1&&cached.size()==3&&a->session.scope().config_revision==8&&a->status.config_revision==8);
  assert(!a->context_ready);
  assert(stale&&a->session.admit(*stale,clock_ms,clock_ms)==Error::stale_config&&a->session.discard_stale(*stale,clock_ms,clock_ms)==Error::none);
  assert(result&&a->session.admit(*result,clock_ms,clock_ms)==Error::stale_config&&a->session.discard_stale(*result,clock_ms,clock_ms)==Error::none);
  assert(a->tls->sent.size()==4&&a->tls->sent[0].config_revision==7&&a->tls->sent[1].config_revision==7&&a->tls->sent[2].config_revision==8&&a->tls->sent[3].config_revision==8);
- runtime_configuration_changed(6,std::string(64,'c'));assert(configuration==8&&shutdowns==0);
+ runtime_configuration_changed(6);assert(configuration==8&&shutdowns==0);
  assert(a->advertised_hostname.empty());on_send={};assert(refresh_local_hostname(*a));
  assert(a->tls->sent.size()==5&&a->tls->sent.back().kind==Kind::device_status&&a->tls->sent.back().config_revision==8&&a->tls->sent.back().payload.get("hostname")->string=="renamed-main");
  assert(refresh_local_hostname(*a)&&a->tls->sent.size()==5);unchanged(*a,original,tls);
@@ -192,7 +192,7 @@ void future_context_recaptures_after_slow_refresh(){
   else if(e.kind==Kind::snapshot_chunk){assert(config_manifest);feed(active,inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(*config_manifest,"complete",1)));
    const auto state=manifest(original.peer_id,original.peer_boot_id,8,"owner_state",owner_state);feed(active,inbound(original,8,Kind::snapshot_request,snapshot_manifest_json(state,"begin",0)));feed(active,inbound(original,8,Kind::snapshot_chunk,snapshot_chunk_json(state,0,owner_state)));}
  };
- unsigned receives=0;a->tls->before_receive=[&]{if(++receives==3)clock_ms+=1150;};runtime_configuration_changed(8,std::string(64,'b'));
+ unsigned receives=0;a->tls->before_receive=[&]{if(++receives==3)clock_ms+=1150;};runtime_configuration_changed(8);
  model::OwnedIntent context;context.kind=model::OwnedIntentKind::context;context.target.port={original.consortium_id,original.peer_id,0,model::Side::front};context.config_revision=8;context.generation=1;
  assert(runtime_send_owned(context)==ESP_OK&&a->queue.empty());
  auto positive=context;positive.kind=model::OwnedIntentKind::key_edges;positive.edges[0]={4,true};positive.edge_count=1;
@@ -212,7 +212,7 @@ void future_context_recaptures_after_slow_refresh(){
  unchanged(*a,original,a->tls.get());
 }
 void rejected_interleaved_observations(){
- for(unsigned failure=0;failure<7;++failure){
+ for(unsigned failure=0;failure<6;++failure){
   auto a=start(true);const auto original=a->session.scope();unsigned applied=0;
   controls.snapshot=[](auto){return owner_state;};controls.configuration_snapshot=[&](auto,uint64_t revision){return controller_slice(original,revision);};
   controls.synchronize=[&](auto,const Json&){++applied;return Error::none;};
@@ -225,8 +225,7 @@ void rejected_interleaved_observations(){
     case 2:result.origin_octopus_id=ident<model::OctopusId>(99);break;
     case 3:result.destination_octopus_id=ident<model::OctopusId>(99);break;
     case 4:result.consortium_id=ident<model::ConsortiumId>(99);break;
-    case 5:result.coordinator_epoch=2;break;
-    case 6:result.config_revision=8;break;
+    case 5:result.config_revision=8;break;
    }
    feed(active,result);feed(active,inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(m,"ack",0)));
   };
@@ -270,7 +269,7 @@ void immutable_queue(){
  auto a=start(true);on_send={};const auto original=a->session.scope();
  model::OwnedIntent i;i.kind=model::OwnedIntentKind::key_edges;i.target.port={original.consortium_id,original.peer_id,0,model::Side::front};i.generation=1;i.edges[0]={4,true};i.edge_count=1;i.config_revision=8;
  auto owned=std::make_shared<const model::OwnedIntent>(i);Queued queued{Kind::scoped_intent,{},500,100,8,owned};a->queue.push_back(queued);
- runtime_configuration_changed(8,std::string(64,'b'));assert(a->queue.size()==1&&a->queue.front().owned==owned&&a->queue.front().created==100&&a->queue.front().ttl==500&&a->session.scope()==original&&shutdowns==0);
+ runtime_configuration_changed(8);assert(a->queue.size()==1&&a->queue.front().owned==owned&&a->queue.front().created==100&&a->queue.front().ttl==500&&a->session.scope()==original&&shutdowns==0);
  std::string payload;assert(prepare_queued(*a,queued,payload)==QueuedState::stale&&payload.empty());
  assert(a->session.advance_configuration(8)==Error::none);a->status.config_revision=8;a->context_ready=false;
  assert(prepare_queued(*a,queued,payload)==QueuedState::waiting);

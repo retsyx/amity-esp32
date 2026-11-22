@@ -479,11 +479,11 @@ void await_original_work() {
         if(station_has_address()&&amity_matter_controller_enrollment_complete()){
             const auto claimed=amity::consortium::runtime_claim_original_controller();
             if(claimed==ESP_OK){
-                ESP_ERROR_CHECK(hub.transition_coordinator_authority(true,1));
+                ESP_ERROR_CHECK(hub.transition_coordinator_authority(true));
                 ESP_ERROR_CHECK(web_admin::load(hub,false));
                 ESP_ERROR_CHECK(web_admin::finish_configuration_activation());
                 const auto config=hub.configuration_snapshot();
-                if(config)amity::consortium::runtime_configuration_changed(config->configuration.config_revision,config->policy_hash);
+                if(config)amity::consortium::runtime_configuration_changed(config->configuration.config_revision);
                 original_interfaces_enabled.store(true);
                 start_original_interfaces();
                 ESP_LOGI("amity","Original Amity setup complete. Administration: https://%s.local",device_settings::hostname());
@@ -553,7 +553,7 @@ extern "C" void app_main() {
     ESP_ERROR_CHECK(amity_matter_set_controller_enabled(!passive_member));
     if(membership.consortium_id)consortium_id=membership.consortium_id;
     hub.set_identity(consortium_id, octopus_id);
-    hub.set_coordinator_authority(!passive_startup,membership.epoch?membership.epoch:1);
+    hub.set_coordinator_authority(!passive_startup);
     const auto boot=amity::system::BootId::parse(system_services::boot_id());
     if(!boot)return;
     hub.set_boot_identity(*boot);
@@ -599,7 +599,7 @@ extern "C" void app_main() {
                 if(owner==octopus_id){if(maintenance){if(hub.execution_snapshot().applied_config_revision)hub.begin_maintenance();}else hub.end_maintenance();}
                 else amity::set_owner_maintenance(owner,maintenance);
             },[]{return hub.execution_snapshot().applied_config_revision;},[]{return hub.execution_snapshot().applied_policy_hash;}});
-        if(installed)amity::consortium::runtime_configuration_changed(installed->configuration.config_revision,installed->policy_hash);
+        if(installed)amity::consortium::runtime_configuration_changed(installed->configuration.config_revision);
     }
     startup_memory("Matter and consortium");
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT,ESP_EVENT_ANY_ID,[](void *,esp_event_base_t,int32_t id,void *data){

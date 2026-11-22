@@ -49,10 +49,10 @@ void frame_tests(std::string_view body){
     reader.reset();assert(reader.feed(bulk.data(),1,used,0)==FrameReader::Result::incomplete&&!reader.bulk()&&reader.check_deadline(2000)==FrameReader::Result::timed_out); // Incomplete prefixes retain the ordinary bound.
 }
 
-LinkScope scope(){return {ident<m::LinkId>(1),ident<m::ConsortiumId>(2),ident<m::OctopusId>(3),ident<m::OctopusId>(4),ident<m::OctopusId>(4),ident<m::BootId>(5),ident<m::BootId>(6),1,7};}
-HelloFrame hello(const LinkScope& s){HelloFrame h;h.consortium_id=s.consortium_id;h.octopus_id=s.peer_id;h.boot_id=s.peer_boot_id;h.coordinator_epoch=s.epoch;h.config_revision=s.config_revision;return h;}
-Envelope envelope(const LinkScope& s){Envelope e;e.consortium_id=s.consortium_id;e.origin_octopus_id=s.peer_id;e.destination_octopus_id=s.local_id;e.origin_boot_id=s.peer_boot_id;e.destination_boot_id=s.local_boot_id;e.coordinator_epoch=s.epoch;e.config_revision=s.config_revision;e.ttl_ms=10000;e.kind=Kind::device_status;JsonError detail;assert(parse_json("{\"hostname\":\"member\"}",e.payload,detail));return e;}
-std::string packet(const LinkScope& s,Kind kind,const std::string& payload){return "{\"protocol_version\":1,\"consortium_id\":\""+s.consortium_id.str()+"\",\"origin_octopus_id\":\""+s.peer_id.str()+"\",\"origin_boot_id\":\""+s.peer_boot_id.str()+"\",\"destination_octopus_id\":\""+s.local_id.str()+"\",\"destination_boot_id\":\""+s.local_boot_id.str()+"\",\"coordinator_epoch\":\"1\",\"config_revision\":\"7\",\"kind\":\""+kind_name(kind)+"\",\"ttl_ms\":1000,\"payload\":"+payload+"}";}
+LinkScope scope(){return {ident<m::LinkId>(1),ident<m::ConsortiumId>(2),ident<m::OctopusId>(3),ident<m::OctopusId>(4),ident<m::OctopusId>(4),ident<m::BootId>(5),ident<m::BootId>(6),7};}
+HelloFrame hello(const LinkScope& s){HelloFrame h;h.consortium_id=s.consortium_id;h.octopus_id=s.peer_id;h.boot_id=s.peer_boot_id;h.config_revision=s.config_revision;return h;}
+Envelope envelope(const LinkScope& s){Envelope e;e.consortium_id=s.consortium_id;e.origin_octopus_id=s.peer_id;e.destination_octopus_id=s.local_id;e.origin_boot_id=s.peer_boot_id;e.destination_boot_id=s.local_boot_id;e.config_revision=s.config_revision;e.ttl_ms=10000;e.kind=Kind::device_status;JsonError detail;assert(parse_json("{\"hostname\":\"member\"}",e.payload,detail));return e;}
+std::string packet(const LinkScope& s,Kind kind,const std::string& payload){return "{\"protocol_version\":1,\"consortium_id\":\""+s.consortium_id.str()+"\",\"origin_octopus_id\":\""+s.peer_id.str()+"\",\"origin_boot_id\":\""+s.peer_boot_id.str()+"\",\"destination_octopus_id\":\""+s.local_id.str()+"\",\"destination_boot_id\":\""+s.local_boot_id.str()+"\",\"config_revision\":\"7\",\"kind\":\""+kind_name(kind)+"\",\"ttl_ms\":1000,\"payload\":"+payload+"}";}
 m::OwnedIntent action(const LinkScope& s){m::OwnedIntent x;x.kind=m::OwnedIntentKind::activity;x.target={{s.consortium_id,s.local_id,0,m::Side::back},"Player"};x.generation=1;x.selected=true;x.source=x.target;return x;}
 void envelope_tests(const std::string& body){
     Envelope out;assert(parse_envelope(body,out)==Error::none);m::OwnedIntent decoded;
@@ -94,7 +94,7 @@ void session_tests(){
     // including after an idle interval beyond the previous grant period.
     assert(session.admit(e,5100,5100)==Error::none);
     assert(session.admit(e,5100,5000)==Error::invalid_message&&session.admit(e,5100,15100)==Error::invalid_message);
-    for(unsigned n=0;n<6;++n){auto bad=e;switch(n){case 0:bad.origin_boot_id=ident<m::BootId>(99);break;case 1:bad.destination_boot_id=ident<m::BootId>(99);break;case 2:bad.coordinator_epoch=2;break;case 3:bad.origin_octopus_id=ident<m::OctopusId>(99);break;case 4:bad.destination_octopus_id=ident<m::OctopusId>(99);break;case 5:bad.config_revision=8;break;}assert(session.admit(bad,5200,5200)!=Error::none);}
+    for(unsigned n=0;n<6;++n){auto bad=e;switch(n){case 0:bad.origin_boot_id=ident<m::BootId>(99);break;case 1:bad.destination_boot_id=ident<m::BootId>(99);break;case 2:bad.consortium_id=ident<m::ConsortiumId>(99);break;case 3:bad.origin_octopus_id=ident<m::OctopusId>(99);break;case 4:bad.destination_octopus_id=ident<m::OctopusId>(99);break;case 5:bad.config_revision=8;break;}assert(session.admit(bad,5200,5200)!=Error::none);}
     intent.kind=m::OwnedIntentKind::key_edges;intent.edge_count=1;intent.edges[0]={4,true};assert(parse_json(owned_intent_json(intent),e.payload,detail));assert(session.admit(e,5200,5200)==Error::none);
     assert(session.admit(e,5200,15200)==Error::invalid_message);
     intent.edges[0].down=false;assert(parse_json(owned_intent_json(intent),e.payload,detail));assert(session.admit(e,5700,5700)==Error::none);
@@ -158,16 +158,15 @@ void synchronization_tests(){
     assert(member.state()==ConnectionState::synchronizing&&member.admit(begin,100,100)==Error::none);
     for(const auto revision:{6u,8u,99u}){auto barrier=begin;barrier.config_revision=revision;assert(member.admit(barrier,100,100)==Error::none);}
     auto ordinary=envelope(original);ordinary.config_revision=8;assert(member.admit(ordinary,100,100)==Error::stale_config);
-    for(unsigned field=0;field<9;++field){auto bad=begin;switch(field){
+    for(unsigned field=0;field<8;++field){auto bad=begin;switch(field){
         case 0:bad.consortium_id=ident<m::ConsortiumId>(99);break;
         case 1:bad.origin_octopus_id=ident<m::OctopusId>(99);break;
         case 2:bad.destination_octopus_id=ident<m::OctopusId>(99);break;
         case 3:bad.origin_boot_id=ident<m::BootId>(99);break;
         case 4:bad.destination_boot_id=ident<m::BootId>(99);break;
-        case 5:bad.coordinator_epoch=2;break;
-        case 6:bad.ttl_ms=0;break;
-        case 7:bad.ttl_ms=10001;break;
-        case 8:bad.config_revision=0;break;
+        case 5:bad.ttl_ms=0;break;
+        case 6:bad.ttl_ms=10001;break;
+        case 7:bad.config_revision=0;break;
     }assert(member.admit(bad,100,100)!=Error::none);}
     assert(member.admit(begin,100,99)==Error::invalid_message&&member.admit(begin,100,1100)==Error::invalid_message);
     assert(member.admit(begin,100,100)==Error::none);
@@ -191,13 +190,12 @@ void synchronization_tests(){
     assert(member.discard_synchronization_frame(stale_work,100,99)==Error::invalid_message&&member.discard_synchronization_frame(stale_work,100,10100)==Error::invalid_message);
     for(const auto revision:{0u,9u}){auto invalid=stale_work;invalid.config_revision=revision;assert(member.discard_synchronization_frame(invalid,100,101)==Error::stale_config);}
     auto malformed=stale_work;malformed.payload.object.emplace_back("extra",Json{});assert(member.discard_synchronization_frame(malformed,100,101)==Error::invalid_message);
-    for(unsigned field=0;field<6;++field){auto bad=stale_work;switch(field){
+    for(unsigned field=0;field<5;++field){auto bad=stale_work;switch(field){
         case 0:bad.origin_boot_id=ident<m::BootId>(99);break;
         case 1:bad.destination_boot_id=ident<m::BootId>(99);break;
         case 2:bad.origin_octopus_id=ident<m::OctopusId>(99);break;
         case 3:bad.destination_octopus_id=ident<m::OctopusId>(99);break;
         case 4:bad.consortium_id=ident<m::ConsortiumId>(99);break;
-        case 5:bad.coordinator_epoch=2;break;
     }assert(member.discard_synchronization_frame(bad,100,101)!=Error::none);}
     auto rollback=begin;assert(parse_json(payload("begin",7),rollback.payload,detail));assert(member.admit(rollback,100,101)==Error::stale_config);
     auto positive=envelope(expected);positive.kind=Kind::scoped_intent;assert(parse_json(owned_intent_json(action(expected)),positive.payload,detail));
@@ -244,8 +242,8 @@ void logical_session_restart_tests(){
     assert(session.scope()==expected&&session.state()==ConnectionState::synchronizing);
 }
 void original_controller_tests(){
-    using namespace amity::consortium::platform;const auto local=ident<m::OctopusId>(2);Group group;assert(controller_membership_compatible(group)&&!original_controller(group,local));group.role=Group::coordinator;group.authority=local;group.epoch=1;assert(original_controller(group,local)&&!original_controller(group,ident<m::OctopusId>(3)));
-    for(auto role:{Group::member,Group::prepared}){group.role=role;assert(controller_membership_compatible(group)&&!original_controller(group,local));}group.role=Group::coordinator;group.epoch=2;assert(!controller_membership_compatible(group));
+    using namespace amity::consortium::platform;const auto local=ident<m::OctopusId>(2);Group group;assert(!original_controller(group,local));group.role=Group::coordinator;group.authority=local;assert(original_controller(group,local)&&!original_controller(group,ident<m::OctopusId>(3)));
+    for(auto role:{Group::member,Group::prepared}){group.role=role;assert(!original_controller(group,local));}
 }
 void live_configuration_tests(){
     const auto old=scope();Session session;JsonError detail;
@@ -271,15 +269,14 @@ void live_configuration_tests(){
 
     for(auto invalid:{0u,8u,9u}){stale.config_revision=invalid;assert(session.discard_stale(stale,100,103)==Error::stale_config);}
     stale.config_revision=7;
-    for(unsigned field=0;field<8;++field){auto bad=stale;switch(field){
+    for(unsigned field=0;field<7;++field){auto bad=stale;switch(field){
         case 0:bad.consortium_id=ident<m::ConsortiumId>(99);break;
         case 1:bad.origin_octopus_id=ident<m::OctopusId>(99);break;
         case 2:bad.destination_octopus_id=ident<m::OctopusId>(99);break;
         case 3:bad.origin_boot_id=ident<m::BootId>(99);break;
         case 4:bad.destination_boot_id=ident<m::BootId>(99);break;
-        case 5:bad.coordinator_epoch=2;break;
-        case 6:bad.ttl_ms=0;break;
-        case 7:bad.ttl_ms=10001;break;
+        case 5:bad.ttl_ms=0;break;
+        case 6:bad.ttl_ms=10001;break;
     }assert(session.discard_stale(bad,100,103)!=Error::none);}
     assert(session.discard_stale(stale,100,99)==Error::invalid_message&&session.discard_stale(stale,100,10100)==Error::invalid_message);
     auto malformed=stale;malformed.payload.object.emplace_back("unknown",Json{});assert(session.discard_stale(malformed,100,103)==Error::invalid_message);
@@ -299,7 +296,7 @@ void live_configuration_tests(){
     Session negotiating;assert(negotiating.authenticate(old,old.peer_id,PeerRole::coordinator,true)==Error::none);assert(negotiating.advance_configuration(8)==Error::not_ready);
 }
 void hello_profile_tests(){
-    auto value=hello(scope());value.firmware_identity=std::string(64,'a');value.config_hash=std::string(64,'b');
+    auto value=hello(scope());value.firmware_identity=std::string(64,'a');
     HelloFrame parsed;
     for(uint8_t count=1;count<=4;++count)for(uint8_t mask=0;mask<32;++mask){
         value.supported_tentacles=count;value.configured_tentacles_mask=mask;const auto body=hello_json(value);
@@ -384,22 +381,22 @@ void binary_update_tests(){
     assert(encode_update_chunk(begin,0,image+"x").empty()&&encode_update_chunk(begin,UINT64_MAX,"x").empty());
     auto e=envelope(scope());e.kind=Kind::update_chunk;
     const auto binary=update_chunk_envelope(e,encoded);
-    assert(binary.size()==128+image.size()&&binary.substr(0,4)=="AFU1"&&binary.substr(128)==image);
+    assert(binary.size()==120+image.size()&&binary.substr(0,4)=="AFU1"&&binary.substr(120)==image);
     frame_tests(binary);
     Envelope received;assert(parse_envelope(binary,received)==Error::none);
     assert(received.kind==Kind::update_chunk&&received.consortium_id==e.consortium_id&&
         received.origin_octopus_id==e.origin_octopus_id&&received.origin_boot_id==e.origin_boot_id&&
         received.destination_octopus_id==e.destination_octopus_id&&received.destination_boot_id==e.destination_boot_id&&
-        received.coordinator_epoch==e.coordinator_epoch&&received.config_revision==e.config_revision&&received.ttl_ms==e.ttl_ms);
+        received.config_revision==e.config_revision&&received.ttl_ms==e.ttl_ms);
     assert(received.update_chunk&&received.update_chunk->begin_id==begin&&received.update_chunk->offset==offset&&received.update_chunk->bytes==image);
-    for(size_t n=0;n<=128;++n)assert(parse_envelope(std::string_view(binary).substr(0,n),received)!=Error::none);
+    for(size_t n=0;n<=120;++n)assert(parse_envelope(std::string_view(binary).substr(0,n),received)!=Error::none);
     assert(parse_envelope(binary+"x",received)==Error::invalid_message);
     invalid=binary;invalid[3]='2';assert(parse_envelope(invalid,received)==Error::invalid_message);
-    for(size_t position:{4,20,36,52,68,104}){
+    for(size_t position:{4,20,36,52,68,96}){
         invalid=binary;invalid.replace(position,16,16,'\0');assert(parse_envelope(invalid,received)==Error::invalid_message);
     }
     for(uint32_t ttl:{0u,10001u,UINT32_MAX}){
-        invalid=binary;for(unsigned n=0;n<4;++n)invalid[100+n]=char(ttl>>(24-n*8));
+        invalid=binary;for(unsigned n=0;n<4;++n)invalid[92+n]=char(ttl>>(24-n*8));
         assert(parse_envelope(invalid,received)==Error::invalid_message);
         auto expired=e;expired.ttl_ms=ttl;assert(update_chunk_envelope(expired,encoded).empty());
     }
@@ -419,7 +416,7 @@ void binary_update_tests(){
     for(unsigned n=0;n<6;++n){
         auto stale=received;
         switch(n){case 0:stale.origin_boot_id=ident<m::BootId>(99);break;case 1:stale.destination_boot_id=ident<m::BootId>(99);break;
-        case 2:stale.coordinator_epoch=2;break;case 3:stale.origin_octopus_id=ident<m::OctopusId>(99);break;
+        case 2:stale.consortium_id=ident<m::ConsortiumId>(99);break;case 3:stale.origin_octopus_id=ident<m::OctopusId>(99);break;
         case 4:stale.destination_octopus_id=ident<m::OctopusId>(99);break;case 5:stale.config_revision=8;break;}
         Envelope parsed;assert(parse_envelope(update_chunk_envelope(stale,encoded),parsed)==Error::none);
         assert(session.admit(parsed,100,100)!=Error::none);

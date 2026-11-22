@@ -17,7 +17,7 @@ struct Group {
     Role role=unclaimed;
     model::ConsortiumId consortium;
     model::OctopusId authority;
-    uint64_t epoch=0,revision=0;
+    uint64_t revision=0;
     std::string authority_host;
     model::JoinId join_id;model::OctopusId joining_id;std::string join_digest,join_hostname;uint64_t join_revision=0;
     std::vector<Peer> peers;

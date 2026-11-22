@@ -108,7 +108,7 @@ void reset(){
 }
 void seed_role(Group::Role role){
  seed.role=role;if(role==Group::unclaimed)return;
- seed.consortium=ident<model::ConsortiumId>(1);seed.epoch=seed.revision=1;seed.authority=ident<model::OctopusId>(role==Group::coordinator?2:9);
+ seed.consortium=ident<model::ConsortiumId>(1);seed.revision=1;seed.authority=ident<model::OctopusId>(role==Group::coordinator?2:9);
  seed.joining_id=ident<model::OctopusId>(2);if(role==Group::member||role==Group::prepared)seed.peers={{seed.authority,"validated-authority","validated-pin",role==Group::member}};
  records["amity_group/identity"]="same-exact-record";
 }
@@ -143,12 +143,11 @@ void startup_tests(){
  }
  // Failure before operational readiness remains fail closed for every role.
  for(auto role:{Group::unclaimed,Group::coordinator,Group::prepared,Group::member}){
-  for(unsigned failure=0;failure<4;++failure){
+  for(unsigned failure=0;failure<3;++failure){
    reset();seed_role(role);
    if(failure==0)psa_ok=false;
    if(failure==1)group_ok=false;
    if(failure==2)identity_ok=false;
-   if(failure==3){if(role==Group::unclaimed)continue;seed.epoch=2;}
    check(start_runtime()!=ESP_OK&&recoveries==1&&status.initialized&&status.phase=="recovery_required"&&!status.credential_ready&&!created_tasks,"invalid PSA/group/journal/identity reached operational readiness");
   }
  }

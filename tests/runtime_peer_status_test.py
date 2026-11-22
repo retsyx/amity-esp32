@@ -17,7 +17,7 @@ namespace amity::consortium {
 HostnameRegistry hostnames;
 std::shared_ptr<Active> link(model::OctopusId owner,unsigned boot,bool ready){
     auto value=std::make_shared<Active>();value->peer=owner;value->tls->authenticated=owner;value->tls->allowed=group.peers;
-    LinkScope scope{ident<model::LinkId>(100+boot),ident<model::ConsortiumId>(1),ident<model::OctopusId>(2),owner,ident<model::OctopusId>(2),ident<model::BootId>(4),ident<model::BootId>(boot),1,1};
+    LinkScope scope{ident<model::LinkId>(100+boot),ident<model::ConsortiumId>(1),ident<model::OctopusId>(2),owner,ident<model::OctopusId>(2),ident<model::BootId>(4),ident<model::BootId>(boot),1};
     assert(value->session.authenticate(scope,owner,PeerRole::actuator,true)==Error::none);
     value->ready=value->status.ready=ready;value->status.id=owner;value->status.boot_id=scope.peer_boot_id;return value;
 }

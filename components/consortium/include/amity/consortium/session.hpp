@@ -9,9 +9,9 @@ struct LinkScope {
     model::ConsortiumId consortium_id;
     model::OctopusId local_id, peer_id, coordinator_id;
     model::BootId local_boot_id, peer_boot_id;
-    uint64_t epoch = 0, config_revision = 0;
+    uint64_t config_revision = 0;
     friend bool operator==(const LinkScope &a,const LinkScope &b) {
-        return a.link_id==b.link_id&&a.consortium_id==b.consortium_id&&a.local_id==b.local_id&&a.peer_id==b.peer_id&&a.coordinator_id==b.coordinator_id&&a.local_boot_id==b.local_boot_id&&a.peer_boot_id==b.peer_boot_id&&a.epoch==b.epoch&&a.config_revision==b.config_revision;
+        return a.link_id==b.link_id&&a.consortium_id==b.consortium_id&&a.local_id==b.local_id&&a.peer_id==b.peer_id&&a.coordinator_id==b.coordinator_id&&a.local_boot_id==b.local_boot_id&&a.peer_boot_id==b.peer_boot_id&&a.config_revision==b.config_revision;
     }
 };
 enum class ConnectionState { disconnected, authenticating, negotiating, synchronizing, ready, restricted };
