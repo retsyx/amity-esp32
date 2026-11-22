@@ -1,7 +1,9 @@
 """A real BLE keyboard fixture paired through Amity's existing remote UI.
 
 The Pi owns keyboard reports, fixture control, authentication and pair/unpair
-operations through the shipping UI.
+operations through the shipping UI. Like the UI, pairing is untargeted: Amity
+selects the first nearby supported remote, so the Pi keyboard must be the only
+one advertising near the main.
 """
 
 from copy import deepcopy
@@ -220,7 +222,6 @@ class PairedKeyboard:
         self._created = self._closed = self._started = self._disconnected = False
         self._pair_pending = self._unpair_pending = None
         self._pair_generation = None
-        self._scan_state = None
         self._record = {"kind": "ble_keyboard", "device_id": dut.identity.device_id, "checks": []}
         if not hasattr(bed, "control_observations"):
             bed.control_observations = []
@@ -273,10 +274,9 @@ class PairedKeyboard:
 
     def _post(self, operation, state, deadline):
         request_id = uuid4().hex
+        # The UI's exact approval; Pair names no remote.
         payload = {"request_id": request_id, "expected_boot_id": self.boot,
                    "expected_remote_generation": state["remote_generation"]}
-        if operation == "pair":
-            payload.update(address=self.identity["address"], type=self.identity["type"])
         pending = {"request_id": request_id, "generation": str(int(state["remote_generation"]) + 1)}
         if operation == "pair":
             self._pair_pending = pending
@@ -315,29 +315,40 @@ class PairedKeyboard:
 
     def _finish_pair(self, deadline, *, check_health=True, for_cleanup=False):
         pending = self._pair_pending
-        while True:
-            state = self._status(deadline, check_health=check_health)
-            if state["remote_generation"] != pending["generation"]:
-                raise KeyboardConflict("Remote administration changed while pairing the keyboard")
-            error = state.get("last_error")
-            if (type(error) is int and error != 0
-                    and not any(state[name] for name in ("bonded", "connected", "connecting", "pairing", "unpairing"))):
-                self._pair_pending = None
-                self._note("pair_failed", main_boot=self.boot, remote_generation=pending["generation"],
-                           last_error=error, bonded=False, connected=False)
-                raise KeyboardConflict("The DUT rejected keyboard connection or discovery (error " + str(error) + ")")
-            if self._paired_link(state, require_ready=not for_cleanup):
-                self._created = True
-                self._pair_generation = pending["generation"]
-                self._pair_pending = None
-                self._note("pair_owned_for_cleanup" if for_cleanup else "paired",
-                           main_boot=self.boot, remote_generation=self._pair_generation,
-                           address=self.identity["address"], connected=True, bonded=True)
-                return
-            self._pause(deadline)
+        too_far = other_remote = False
+        try:
+            while True:
+                state = self._status(deadline, check_health=check_health)
+                if state["remote_generation"] != pending["generation"]:
+                    raise KeyboardConflict("Remote administration changed while pairing the keyboard")
+                too_far = too_far or state.get("too_far") is True
+                error = state.get("last_error")
+                if (type(error) is int and error != 0
+                        and not any(state[name] for name in ("bonded", "connected", "connecting", "pairing", "unpairing"))):
+                    self._pair_pending = None
+                    self._note("pair_failed", main_boot=self.boot, remote_generation=pending["generation"],
+                               last_error=error, bonded=False, connected=False, too_far=too_far)
+                    raise KeyboardConflict("The DUT rejected keyboard connection or discovery (error " + str(error) + ")"
+                                           + (": the keyboard was below its pairing signal strength" if too_far else ""))
+                if self._paired_link(state, require_ready=not for_cleanup):
+                    self._created = True
+                    self._pair_generation = pending["generation"]
+                    self._pair_pending = None
+                    self._note("pair_owned_for_cleanup" if for_cleanup else "paired",
+                               main_boot=self.boot, remote_generation=self._pair_generation,
+                               address=self.identity["address"], connected=True, bonded=True)
+                    return
+                other_remote = state["bonded"] and state["connected"] and self.worker.status().get("connected") is False
+                self._pause(deadline)
+        except TimeoutError as error:
+            if other_remote:
+                # Untargeted pairing took another nearby remote. It is not
+                # this fixture's bond, so cleanup never removes it.
+                raise KeyboardConflict("The DUT paired a nearby remote other than the test keyboard") from error
+            raise
 
     def open(self, *, _deadline=None):
-        """Register one owned keyboard advertisement without scanning or pairing."""
+        """Register one owned keyboard advertisement without pairing it."""
         if self._started or self._closed:
             raise RuntimeError("The BLE keyboard context cannot be reused")
         self._started = True
@@ -359,68 +370,32 @@ class PairedKeyboard:
 
     def _advertised(self):
         if not self._started or self._closed or self.worker is None:
-            raise RuntimeError("Open the BLE keyboard before scanning or pairing")
+            raise RuntimeError("Open the BLE keyboard before pairing")
         status = self.worker.status()
         if status.get("advertisement_registered") is not True:
             raise KeyboardConflict("The owned keyboard advertisement is no longer registered")
         return status
 
-    def scan(self, *, _deadline=None):
-        """Run one fresh UI scan and require this exact advertised keyboard."""
-        worker = self._advertised()
-        if worker.get("connected") is not False or worker.get("bonded") is not False:
-            raise KeyboardConflict("The advertised keyboard already has a Bluetooth peer")
-        deadline = time.monotonic() + self.timeout if _deadline is None else _deadline
-        state = self._status(deadline)
-        if (self._created or self._pair_pending is not None or self._unpair_pending is not None
-                or not state["ready"] or any(state[name] for name in
-                    ("bonded", "connected", "pairing", "unpairing", "connecting", "scanning"))):
-            raise KeyboardConflict("Remote administration must be idle and unbonded before scanning")
-        self._scan_state = None
-        self._request("/api/remotes/scan", {}, deadline=deadline)
-        while True:
-            state = self._status(deadline)
-            if state["bonded"] or state["connected"]:
-                raise KeyboardConflict("Another remote was paired during keyboard discovery")
-            if not state["scanning"]:
-                matches = [row for row in state.get("devices", []) if isinstance(row, dict)
-                           and isinstance(row.get("address"), str)
-                           and row["address"].lower() == self.identity["address"].lower()
-                           and row.get("type") == self.identity["type"]]
-                if len(matches) != 1:
-                    raise KeyboardConflict("The completed remote scan did not find this exact test keyboard")
-                break
-            self._pause(deadline)
-        self._advertised()
-        self._scan_state = deepcopy(state)
-        self._note("scanned", main_boot=self.boot, remote_generation=state["remote_generation"],
-                   address=self.identity["address"], address_type=self.identity["type"],
-                   matched_devices=len(matches))
-        return self
-
     def pair(self, *, _deadline=None):
-        """Pair after a completed scan, without issuing another scan."""
+        """Start the UI's untargeted pairing and require this keyboard's bond."""
         worker = self._advertised()
+        if self._created or self._pair_pending is not None or self._unpair_pending is not None:
+            raise RuntimeError("Unpair this keyboard before pairing it again")
         if worker.get("connected") is not False or worker.get("bonded") is not False:
             raise KeyboardConflict("The advertised keyboard already has a Bluetooth peer")
-        if self._scan_state is None or self._created or self._pair_pending is not None:
-            raise RuntimeError("Complete a fresh keyboard scan before pairing")
         deadline = time.monotonic() + self.timeout if _deadline is None else _deadline
         state = self._status(deadline)
-        if (state["remote_generation"] != self._scan_state["remote_generation"]
-                or not state["ready"] or any(state[name] for name in
-                    ("bonded", "connected", "pairing", "unpairing", "connecting", "scanning"))):
-            raise KeyboardConflict("Remote administration changed after keyboard discovery")
+        if not state["ready"] or any(state[name] for name in
+                                     ("bonded", "connected", "pairing", "unpairing", "connecting", "scanning")):
+            raise KeyboardConflict("Remote administration must be idle and unbonded before pairing")
         self._post("pair", state, deadline)
         self._finish_pair(deadline)
-        self._scan_state = None
         self._disconnected = False
         return self
 
     def create(self):
         deadline = time.monotonic() + self.timeout
         self.open(_deadline=deadline)
-        self.scan(_deadline=deadline)
         self.pair(_deadline=deadline)
         return self
 
@@ -604,7 +579,7 @@ class PairedKeyboard:
             return state
 
     def unpair(self):
-        """Remove this owned pair while retaining its advertisement for more scans."""
+        """Remove this owned pair while retaining its advertisement for another pairing."""
         self._advertised()
         if not self._created or self._disconnected:
             raise RuntimeError("Unpair a connected owned keyboard before reusing its advertisement")
@@ -637,7 +612,6 @@ class PairedKeyboard:
         result = self.worker.forget_peer()
         if not isinstance(result, dict) or result.get("cleared") is not True:
             raise KeyboardConflict("The Pi did not confirm removal of its owned disconnected peer")
-        self._scan_state = None
         self._advertised()
         return self
 

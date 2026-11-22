@@ -32,9 +32,9 @@ class Fixture:
         self.system = {"octopus_id": self.main.identity.device_id, "boot_id": self.boot,
                        "consortium_id": self.group, "mode": "coordinator",
                        "membership": {"coordinator": True, "member": False, "authority_ready": True}}
-        self.state = {"ready": True, "boot_id": self.boot, "remote_generation": "0", "devices": [],
+        self.state = {"ready": True, "boot_id": self.boot, "remote_generation": "0",
                       "scanning": False, "bonded": False, "connected": False, "pairing": False,
-                      "connecting": False, "unpairing": False}
+                      "connecting": False, "unpairing": False, "too_far": False, "last_error": 0}
         self.activity = {"expected_boot_id": self.boot, "current_activity": 0, "activity_settling": False,
                          "expected_config_revision": "4", "expected_presentation_revision": "4"}
         self.session = SimpleNamespace(assert_healthy=lambda: None)
@@ -51,10 +51,11 @@ class Fixture:
                                              owner_duts={self.main.identity.device_id: self.main},
                                              expected=(), validate_owners=lambda expected, **kwargs: None)
         self.lose_pair_reply = self.lose_unpair_reply = self.reject_pair = False
-        self.scan_started = self.omit_candidate = False
-        self.scan_reads_remaining = 0
-        self.completed_scan_generation = None
-        self.scan_statuses = []
+        # Untargeted pairing: Amity searches, then connects to the first
+        # eligible advertiser. Each status read advances that search once.
+        self.search_reads = 0
+        self.too_far = self.other_remote = False
+        self.pairing_statuses = []
         self.terminal_pair_error = None
         self.drop_receipt = None
         self.reconnect_after_drops = True
@@ -62,37 +63,30 @@ class Fixture:
     def request(self, path, data=None, **kwargs):
         self.calls.append((path, deepcopy(data)))
         if path == "/api/remotes" and data is None:
-            if self.scan_started and self.state["scanning"]:
-                if self.scan_reads_remaining:
-                    self.scan_reads_remaining -= 1
+            if self.state["pairing"]:
+                self.pairing_statuses.append(deepcopy(self.state))
+                if self.search_reads:
+                    self.search_reads -= 1
+                    self.state["too_far"] = self.too_far
                 else:
-                    self.state["scanning"] = False
-                    if self.completed_scan_generation is not None:
-                        self.state["remote_generation"] = self.completed_scan_generation
-                self.scan_statuses.append(deepcopy(self.state))
+                    self.finish_search()
             return deepcopy(self.state)
-        if path == "/api/remotes/scan":
-            self.state["devices"] = [] if self.omit_candidate else [
-                {"address": "12:34:56:78:9a:bc", "name": "Amity Test Keyboard", "type": 0}]
-            self.state["scanning"] = True
-            self.scan_started = True
-            return {"saved": True}
         if path not in ("/api/remotes/pair", "/api/remotes/unpair"):
             raise AssertionError("Unexpected DUT route: " + path)
         self.assert_payload(path, data)
         if path.endswith("/pair"):
-            assert not self.state["scanning"], "The completed manual scan must release radio admission before pairing"
+            assert not any(self.state[name] for name in ("scanning", "pairing", "connecting", "bonded")), \
+                "Pair starts only from an idle, unbonded remote"
         if self.reject_pair and path.endswith("/pair"):
             raise AmityHTTPError(409, "Changed pairing review")
         self.state["remote_generation"] = str(int(self.state["remote_generation"]) + 1)
         paired = path.endswith("/pair")
-        self.state.update(bonded=paired, connected=paired, scanning=False)
-        self.worker.connected = self.worker.ready = paired
         if paired:
-            self.worker.bonded = True
-        if paired and self.terminal_pair_error is not None:
-            self.state.update(bonded=False, connected=False, connecting=False, pairing=False,
-                              unpairing=False, last_error=self.terminal_pair_error)
+            self.state.update(pairing=True, scanning=True, last_error=0)
+            if not self.search_reads:
+                self.finish_search()
+        else:
+            self.state.update(bonded=False, connected=False, scanning=False)
             self.worker.connected = self.worker.ready = False
         if paired and self.lose_pair_reply:
             self.lose_pair_reply = False
@@ -103,14 +97,24 @@ class Fixture:
         return {"saved": True, "admitted": True, "duplicate": False,
                 "remote_generation": self.state["remote_generation"]}
 
+    def finish_search(self):
+        self.state.update(pairing=False, scanning=False, too_far=False)
+        if self.terminal_pair_error is not None:
+            # The Pi side may complete Just Works before the DUT rejects it.
+            self.state.update(bonded=False, connected=False, connecting=False,
+                              unpairing=False, last_error=self.terminal_pair_error, too_far=self.too_far)
+            self.worker.bonded = True
+            return
+        self.state.update(bonded=True, connected=True)
+        if not self.other_remote:
+            self.worker.connected = self.worker.ready = self.worker.bonded = True
+
     def assert_payload(self, path, data):
+        # The UI's exact approval, identical for Pair and Unpair.
         assert data["expected_boot_id"] == self.boot
         assert data["expected_remote_generation"] == self.state["remote_generation"]
         assert len(data["request_id"]) == 32
-        assert set(data) == {"request_id", "expected_boot_id", "expected_remote_generation"} | (
-            {"address", "type"} if path.endswith("/pair") else set())
-        if path.endswith("/pair"):
-            assert data["address"] == "12:34:56:78:9a:bc" and data["type"] == 0
+        assert set(data) == {"request_id", "expected_boot_id", "expected_remote_generation"}
 
 
 def link_drop(number, **changes):
@@ -170,7 +174,7 @@ class PairedKeyboardTests(unittest.TestCase):
     def setUp(self):
         self.clock = use_virtual_time(self)
 
-    def test_exact_target_pair_and_owned_cleanup_use_fresh_shipping_ui_reviews(self):
+    def test_untargeted_pair_and_owned_cleanup_use_fresh_shipping_ui_reviews(self):
         fixture = Fixture()
         with fixture.main.pair_ble_keyboard() as keyboard:
             self.assertIs(keyboard.assert_paired(), keyboard)
@@ -183,10 +187,11 @@ class PairedKeyboardTests(unittest.TestCase):
         self.assertEqual(paths.count("/api/remotes/pair"), 1)
         self.assertEqual(paths.count("/api/remotes/unpair"), 1)
         self.assertNotIn("/api/key", paths)
+        self.assertNotIn("/api/remotes/scan", paths)
         self.assertFalse(fixture.state["bonded"])
         self.assertEqual(fixture.state["remote_generation"], "2")
         phases = [row["phase"] for row in fixture.bed.control_observations[0]["checks"]]
-        self.assertEqual(phases, ["scanned", "pair_submit", "paired", "report", "unpair_submit", "unpaired"])
+        self.assertEqual(phases, ["pair_submit", "paired", "report", "unpair_submit", "unpaired"])
 
     def test_explicit_wide_keyboard_capacity_reaches_factory_and_report_context(self):
         fixture = Fixture()
@@ -212,49 +217,41 @@ class PairedKeyboardTests(unittest.TestCase):
         self.assertEqual(LocalKeyboard(keyboard_slots=10)._command()[-1], "10")
         with self.assertRaises(ValueError): LocalKeyboard(keyboard_slots=7)
 
-    def test_six_explicit_scans_keep_one_advertisement_through_owned_unpair_and_repair(self):
+    def test_one_advertisement_pairs_again_after_its_owned_unpair(self):
         fixture = Fixture()
         with PairedKeyboard(fixture.main) as keyboard:
             keyboard.open()
-            for number in range(1, 7):
-                self.assertIs(keyboard.scan(), keyboard)
+            for number in (1, 2):
+                keyboard.pair().assert_paired()
                 self.assertEqual(fixture.worker_calls.count(("open",)), 1)
                 self.assertEqual(fixture.worker_calls.count(("close",)), 0)
-                if number in (4, 6):
-                    keyboard.pair().assert_paired()
-                    if number == 4:
+                if number == 1:
+                    keyboard.unpair()
+                    self.assertEqual(fixture.worker_calls.count(("forget_peer",)), 1)
+                    with self.assertRaisesRegex(RuntimeError, "Open the BLE keyboard|Unpair"):
                         keyboard.unpair()
-                        self.assertEqual(fixture.worker_calls.count(("forget_peer",)), 1)
         mutations = [path for path, data in fixture.calls if data is not None]
-        self.assertEqual(mutations, ["/api/remotes/scan"] * 4 +
-                         ["/api/remotes/pair", "/api/remotes/unpair"] +
-                         ["/api/remotes/scan"] * 2 + ["/api/remotes/pair", "/api/remotes/unpair"])
+        self.assertEqual(mutations, ["/api/remotes/pair", "/api/remotes/unpair"] * 2)
         self.assertEqual(fixture.worker_calls.count(("close",)), 1)
         self.assertEqual(fixture.state["remote_generation"], "4")
 
-    def test_explicit_scans_require_live_advertisement_and_never_pair_on_a_miss(self):
-        for changed in ("advertisement", "candidate", "peer"):
+    def test_pair_requires_a_live_unconnected_advertisement_and_an_idle_remote(self):
+        for changed in ("advertisement", "peer", "searching", "repeated"):
             with self.subTest(changed=changed):
                 fixture = Fixture()
                 with PairedKeyboard(fixture.main) as keyboard:
                     keyboard.open()
                     if changed == "advertisement": fixture.worker.advertisement_registered = False
-                    if changed == "candidate": fixture.omit_candidate = True
                     if changed == "peer": fixture.worker.connected = True
-                    with self.assertRaises(KeyboardConflict): keyboard.scan()
+                    if changed == "searching": fixture.state["scanning"] = True
+                    if changed == "repeated":
+                        keyboard.pair()
+                        with self.assertRaisesRegex(RuntimeError, "Unpair this keyboard"): keyboard.pair()
+                        continue
+                    with self.assertRaises(KeyboardConflict): keyboard.pair()
+                    fixture.state["scanning"] = False
                 paths = [path for path, data in fixture.calls if data is not None]
-                self.assertNotIn("/api/remotes/pair", paths)
-                self.assertEqual(paths.count("/api/remotes/scan"), int(changed == "candidate"))
-
-    def test_explicit_pair_requires_a_completed_current_generation_scan(self):
-        fixture = Fixture()
-        with PairedKeyboard(fixture.main) as keyboard:
-            keyboard.open()
-            with self.assertRaisesRegex(RuntimeError, "fresh keyboard scan"): keyboard.pair()
-            keyboard.scan()
-            fixture.state["remote_generation"] = "99"
-            with self.assertRaisesRegex(KeyboardConflict, "changed after keyboard discovery"): keyboard.pair()
-        self.assertNotIn("/api/remotes/pair", [path for path, _ in fixture.calls])
+                self.assertEqual(paths.count("/api/remotes/pair"), int(changed == "repeated"))
 
     def test_unpair_error_or_foreign_generation_does_not_clear_pi_peer_or_start_new_scan(self):
         for changed in ("error", "generation"):
@@ -324,8 +321,9 @@ class PairedKeyboardTests(unittest.TestCase):
             keyboard.unpair()
             self.assertEqual(observed, [True, True, False])
             self.assertIn(("forget_peer",), fixture.worker_calls)
-            keyboard.scan()  # The same advertisement is reusable after both completions.
-        self.assertEqual([path for path, _ in fixture.calls].count("/api/remotes/unpair"), 1)
+            fixture.main.request, fixture.worker.status = original_request, original_status
+            keyboard.pair().assert_paired()  # The same advertisement pairs again.
+        self.assertEqual([path for path, _ in fixture.calls].count("/api/remotes/unpair"), 2)
 
     def test_late_pi_disconnect_wait_retains_boot_generation_and_deadline_fences(self):
         for changed in ("boot", "generation", "deadline"):
@@ -408,30 +406,43 @@ class PairedKeyboardTests(unittest.TestCase):
                 self.assertEqual(fixture.worker_calls, [])
                 self.assertFalse(any(data is not None for _, data in fixture.calls))
 
-    def test_visible_candidate_waits_for_scan_completion_and_uses_its_fresh_review(self):
+    def test_pair_waits_for_the_untargeted_search_without_another_pair(self):
         fixture = Fixture()
-        fixture.scan_reads_remaining = 3
-        fixture.completed_scan_generation = "7"
+        fixture.search_reads = 3
         with fixture.main.pair_ble_keyboard():
-            self.assertEqual([row["scanning"] for row in fixture.scan_statuses], [True, True, True, False])
-            self.assertTrue(all(len(row["devices"]) == 1 for row in fixture.scan_statuses))
+            self.assertEqual([row["pairing"] for row in fixture.pairing_statuses], [True] * 4)
             pairs = [data for path, data in fixture.calls if path == "/api/remotes/pair"]
             self.assertEqual(len(pairs), 1)
-            self.assertEqual(pairs[0]["expected_remote_generation"], "7")
-        self.assertEqual(fixture.state["remote_generation"], "9")
+            self.assertEqual(pairs[0]["expected_remote_generation"], "0")
+        self.assertEqual(fixture.state["remote_generation"], "2")
 
-    def test_completed_scan_without_exact_fixture_fails_without_pair_or_another_scan(self):
+    def test_search_that_finds_no_eligible_keyboard_reports_a_distant_one_without_unpair(self):
+        for too_far in (False, True):
+            with self.subTest(too_far=too_far):
+                fixture = Fixture()
+                fixture.search_reads, fixture.too_far, fixture.terminal_pair_error = 2, too_far, 13
+                keyboard = PairedKeyboard(fixture.main)
+                with self.assertRaisesRegex(KeyboardConflict, "error 13") as raised:
+                    keyboard.create()
+                self.assertEqual("signal strength" in str(raised.exception), too_far)
+                keyboard.close()
+                paths = [path for path, _ in fixture.calls]
+                self.assertEqual(paths.count("/api/remotes/pair"), 1)
+                self.assertNotIn("/api/remotes/unpair", paths)
+                self.assertNotIn("/api/remotes/scan", paths)
+
+    def test_bond_with_another_nearby_remote_is_reported_and_never_removed(self):
         fixture = Fixture()
-        fixture.scan_reads_remaining = 2
-        fixture.omit_candidate = True
+        fixture.other_remote = True
         keyboard = PairedKeyboard(fixture.main)
-        with self.assertRaisesRegex(KeyboardConflict, "completed remote scan"):
+        with self.assertRaisesRegex(KeyboardConflict, "other than the test keyboard"):
             keyboard.create()
-        keyboard.close()
-        paths = [path for path, _ in fixture.calls]
-        self.assertEqual(paths.count("/api/remotes/scan"), 1)
-        self.assertNotIn("/api/remotes/pair", paths)
-        self.assertNotIn("/api/remotes/unpair", paths)
+        self.assertTrue(fixture.state["bonded"])
+        with self.assertRaises((KeyboardConflict, TimeoutError)):
+            keyboard.close()
+        self.assertNotIn("/api/remotes/unpair", [path for path, _ in fixture.calls])
+        self.assertTrue(fixture.state["bonded"])
+        self.assertEqual(fixture.worker_calls[-1], ("close",))
 
     def test_original_main_authority_and_same_boot_are_required(self):
         for mutation in ("authority", "member", "identity", "boot"):

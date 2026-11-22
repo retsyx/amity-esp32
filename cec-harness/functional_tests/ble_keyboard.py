@@ -10,7 +10,7 @@ from amity_harness.ble_keyboard import PairedKeyboard
 
 
 def test_ble_keyboard_lifecycle():
-    """Six UI scans retain one advertisement; pair after the fourth and sixth."""
+    """One advertisement pairs twice through the UI's untargeted Pair remote."""
     main = DUT("amity-dut")
     player = PlaybackComponent(main.tentacle(0).back, "BLE Lifecycle", power=PowerState.OFF,
                                address=CecAddress(4, 0x1000))
@@ -46,69 +46,60 @@ def test_ble_keyboard_lifecycle():
         with PairedKeyboard(main) as keyboard, ExitStack() as activities:
             keyboard.open()
             activity = scan = None
-            for number in range(1, 7):
+            for number in (1, 2):
                 generation = int(before["remote_generation"])
-                check = {"scan": number, "before": before, "passed": False}
+                check = {"pairing": number, "before": before, "passed": False}
                 observation["checks"].append(check)
-                keyboard.scan()
-                scanned = snapshot()
-                check["scanned"] = scanned
-                unpaired(scanned)
-                if scanned["remote_generation"] != str(generation):
-                    raise AssertionError("Scanning changed the reviewed remote generation")
-                if number in (4, 6):
-                    keyboard.pair().assert_paired()
-                    paired = snapshot()
-                    check["paired"] = paired
-                    if (paired["remote_generation"] != str(generation + 1)
-                            or not paired["ready"] or not paired["bonded"] or not paired["connected"]):
-                        raise AssertionError("Pair did not establish the reviewed next remote generation")
-                    if activity is None:
-                        # Preserve the fresh commissioning/remote path before
-                        # claiming CEC addresses or changing activity settings.
-                        player.standby()
-                        scan = main.scan_hdmi()
-                        scan.assert_contains_only(player)
-                        scan.assert_on(player, player.endpoint)
-                        activity = activities.enter_context(main.create_activity(
-                            "Functional BLE lifecycle", display=None, source=player))
-                    rows = main.get_configuration()["activities"]
-                    slots = [index for index, row in enumerate(rows)
-                             if row.get("activity_id") == activity.activity_id]
-                    if len(slots) != 1 or not 0 <= slots[0] <= 3:
-                        raise AssertionError("The lifecycle activity needs a saved F1-F4 shortcut")
-                    target = slots[0]
-                    with keyboard.reports() as reports:
-                        reports.report(keyboard=(0x3A + target,))
-                        # The selector release admits setup and leaves all keys
-                        # up, so this own selection cannot rearm the input gate.
-                        activity._needs_standby = True
-                        activity._last_start_terminal = False
-                        started = reports.all_up()
-                    player.wait_for_power(PowerState.ON, since=started)
+                keyboard.pair().assert_paired()
+                paired = snapshot()
+                check["paired"] = paired
+                if (paired["remote_generation"] != str(generation + 1)
+                        or not paired["ready"] or not paired["bonded"] or not paired["connected"]):
+                    raise AssertionError("Pair did not establish the reviewed next remote generation")
+                if activity is None:
+                    # Preserve the fresh commissioning/remote path before
+                    # claiming CEC addresses or changing activity settings.
+                    player.standby()
+                    scan = main.scan_hdmi()
+                    scan.assert_contains_only(player)
+                    scan.assert_on(player, player.endpoint)
+                    activity = activities.enter_context(main.create_activity(
+                        "Functional BLE lifecycle", display=None, source=player))
+                rows = main.get_configuration()["activities"]
+                slots = [index for index, row in enumerate(rows)
+                         if row.get("activity_id") == activity.activity_id]
+                if len(slots) != 1 or not 0 <= slots[0] <= 3:
+                    raise AssertionError("The lifecycle activity needs a saved F1-F4 shortcut")
+                target = slots[0]
+                with keyboard.reports() as reports:
+                    reports.report(keyboard=(0x3A + target,))
+                    # The selector release admits setup and leaves all keys
+                    # up, so this own selection cannot rearm the input gate.
+                    activity._needs_standby = True
+                    activity._last_start_terminal = False
+                    started = reports.all_up()
+                player.wait_for_power(PowerState.ON, since=started)
 
-                    def selected(state):
-                        if any(state.get(field) != started.state.get(field) for field in
-                               ("expected_boot_id", "expected_config_revision", "expected_presentation_revision")):
-                            raise AssertionError("The lifecycle activity changed while BLE setup completed")
-                        return state.get("current_activity") == target and state.get("activity_settling") is False
+                def selected(state):
+                    if any(state.get(field) != started.state.get(field) for field in
+                           ("expected_boot_id", "expected_config_revision", "expected_presentation_revision")):
+                        raise AssertionError("The lifecycle activity changed while BLE setup completed")
+                    return state.get("current_activity") == target and state.get("activity_settling") is False
 
-                    main.wait_for(selected, timeout=main._runtime.timeout)
-                    activity._last_start_terminal = True
-                    activity.assert_active()
-                    with BLEInputEvidence(main, scan, player) as evidence:
-                        evidence.assert_tap(keyboard, player)
-                    stopped = activity.standby()
-                    player.wait_for_power(PowerState.STANDBY, since=stopped, command="standby")
-                    keyboard.unpair()
-                    after = snapshot()
-                    check["after"] = after
-                    unpaired(after)
-                    if after["remote_generation"] != str(generation + 2):
-                        raise AssertionError("Unpair did not finish the reviewed next remote generation")
-                    before = after
-                else:
-                    before = scanned
+                main.wait_for(selected, timeout=main._runtime.timeout)
+                activity._last_start_terminal = True
+                activity.assert_active()
+                with BLEInputEvidence(main, scan, player) as evidence:
+                    evidence.assert_tap(keyboard, player)
+                stopped = activity.standby()
+                player.wait_for_power(PowerState.STANDBY, since=stopped, command="standby")
+                keyboard.unpair()
+                after = snapshot()
+                check["after"] = after
+                unpaired(after)
+                if after["remote_generation"] != str(generation + 2):
+                    raise AssertionError("Unpair did not finish the reviewed next remote generation")
+                before = after
                 check["passed"] = True
 
 

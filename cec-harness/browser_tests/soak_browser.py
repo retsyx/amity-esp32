@@ -88,7 +88,7 @@ class LocalInterface:
                                 octopuses=[dict(octopus_id=owner, supported_tentacles=1)
                                            for owner in self.identities], activities=[]),
             "/api/system": self.system(),
-            "/api/remotes": dict(devices=[], bonded=False, ready=True),
+            "/api/remotes": dict(bonded=False, ready=True),
             "/api/matter": dict(fabrics=[], commissioning=False),
             "/api/homekit": dict(available=False, paired=False),
         }

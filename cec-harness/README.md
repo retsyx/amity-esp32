@@ -1069,14 +1069,16 @@ default before removing the added member.
 
 ## BLE keyboard input
 
-`--test ble_keyboard` first scans one continuously advertised keyboard six times
-on the same main boot. Scans 1–3 only discover it; scan 4 pairs it and verifies a
-physical CEC key action. After unpairing, scan 5 only discovers it and scan 6
-pairs it and verifies another key action. The group then tests input on the main
-and `amity-dut-2`. The Pi advertises a BLE HID keyboard; pairing and
-unpairing use the shipping authenticated remote settings API. The main must
-have no saved remote. The fixture refuses to replace an existing bond and
-removes only its own new bond during cleanup.
+`--test ble_keyboard` first pairs one continuously advertised keyboard twice on
+the same main boot; each pairing verifies a physical CEC key action and is then
+unpaired. The group then tests input on the main and `amity-dut-2`. The Pi
+advertises a BLE HID keyboard; pairing and unpairing use the shipping remote
+settings operations. Like the UI's Pair remote, pairing names no remote: the
+main bonds the first nearby supported remote it finds, so the Pi keyboard must
+be the only connectable BLE HID device advertising near the main. A bond with
+another remote fails the run and is left in place. The main must have no saved
+remote. The fixture refuses to replace an existing bond and removes only its own
+new bond during cleanup.
 
 The two input cases scan a TV, AVR and two sources, then save both activities before
 sending input. The local case first saturates the CEC FIFO with one ten-key HID
