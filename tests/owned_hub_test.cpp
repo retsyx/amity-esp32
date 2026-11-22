@@ -567,6 +567,62 @@ static std::vector<std::vector<SentFrame>> receiver_transcript(bool remote){
     transcript.push_back(std::move(standby));
     latest_task=primary_task;fixture_send={};fixture_transmit={};return transcript;
 }
+// An explicit scan reaches a member adapter even while the main's own part of
+// the previous activity is still running and the member has already started
+// the next accepted selection.
+static void explicit_scan_reaches_member_during_selection(){
+    fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
+    fixture_peer_address=[](int gpio)->uint8_t{return gpio%2?0:4;};
+    const auto other_boot=*m::BootId::parse("77777777777777777777777777777777");
+    HubService primary;primary.set_system_identity(group,controller);primary.set_boot_identity(boot);
+    assert(fixture_start(primary,1,2)==ESP_OK);auto* primary_task=latest_task;
+    HubService other;other.set_system_identity(group,member);other.set_boot_identity(other_boot);other.set_coordinator_authority(false);
+    assert(fixture_start(other,3,4)==ESP_OK);auto* other_task=latest_task;
+    assert(other.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(other);
+    other.set_owned_observer([&](const auto& report){primary.update_owned_snapshot(report);});
+    struct Delivery{m::OwnedIntentKind kind;m::AdmissionCode code;};std::vector<Delivery> delivered;
+    const auto sender=[&](const m::OwnedIntent& intent){
+        assert(intent.target.port.octopus_id==member);auto* previous=latest_task;latest_task=other_task;
+        m::OwnedAuthorization auth{controller,boot,other_boot,link,1,0};
+        const auto result=(intent.kind==m::OwnedIntentKind::key_edges?other.submit_key_edges(intent.edges,intent.edge_count,intent.generation,link,0):other.submit_owned(intent,auth));
+        latest_task=previous;delivered.push_back({intent.kind,result.code});
+        return result.code==m::AdmissionCode::accepted||result.code==m::AdmissionCode::pending;
+    };
+    latest_task=primary_task;
+    assert(primary.configure_scoped({{"Watch","display","source","source","",0},{"Listen","display","local","local","",0}},
+        {{"display",named(controller,m::Side::front,"TV")},{"local",named(controller,m::Side::back,"Source")},{"source",named(member,m::Side::back,"Source")}},
+        sender,controller,1)==ESP_OK);
+    run_one_command();fixture_finish_discovery(primary);
+    // Only the member's wires complete: the main's own Watch step stays on its
+    // pending TV transmission.
+    fixture_tick=0;fixture_async_autocomplete=false;
+    const auto member_pass=[&]{
+        while(fixture_complete_next(cec::TxResult::Pending,3)||fixture_complete_next(cec::TxResult::Pending,4)){}
+        latest_task=other_task;run_idle(1);latest_task=primary_task;
+    };
+    assert(primary.request_activity(0)==ESP_OK);run_one_command();
+    for(unsigned pass=0;pass<200&&other.activity_setup_in_progress();++pass)member_pass();
+    assert(!other.activity_setup_in_progress()&&primary.activity_setup_in_progress());
+    // The next selection reaches the member at once; the main's own Listen
+    // waits behind its unfinished Watch.
+    assert(primary.request_activity(1)==ESP_OK);run_one_command();
+    assert(!delivered.empty()&&delivered.back().kind==m::OwnedIntentKind::activity&&delivered.back().code==m::AdmissionCode::accepted);
+    const auto report=[&]{
+        for(const auto& r:other.owned_snapshots())if(r.owner==member&&r.adapter==0)return r;
+        assert(false&&"Missing member adapter report");return m::OwnedAdapterSnapshot{};
+    };
+    const auto scanned=report().discovery_generation;assert(!report().discovering);
+    delivered.clear();assert(primary.discover_owned(member,0));run_one_command();
+    assert(delivered.size()==1&&delivered.front().kind==m::OwnedIntentKind::discover&&delivered.front().code==m::AdmissionCode::accepted);
+    fixture_tick=100000;
+    for(unsigned pass=0;pass<400&&report().discovery_generation==scanned;++pass)member_pass();
+    assert(report().discovery_generation>scanned);
+    fixture_async_autocomplete=true;fixture_complete_all();
+    for(unsigned pass=0;pass<200&&(primary.activity_setup_in_progress()||other.activity_setup_in_progress());++pass){
+        latest_task=other_task;run_idle(1);latest_task=primary_task;run_idle(1);
+    }
+    latest_task=primary_task;fixture_peer_address={};fixture_tick=100000;
+}
 static void remote_receiver_parity(){
     const auto local=receiver_transcript(false),remote=receiver_transcript(true);assert(local.size()==remote.size());
     for(size_t phase=0;phase<local.size();++phase){if(local[phase].size()!=remote[phase].size()){for(const auto* trace:{&local[phase],&remote[phase]}){std::fprintf(stderr,"phase=%zu trace=%zu\n",phase,trace->size());for(const auto& f:*trace){std::fprintf(stderr,"gpio%d attempts%u:",f.gpio,f.attempts);for(unsigned j=0;j<f.frame.size;++j)std::fprintf(stderr," %02x",f.frame.data[j]);std::fprintf(stderr,"\n");}}}assert(local[phase].size()==remote[phase].size());for(size_t i=0;i<local[phase].size();++i){const auto& a=local[phase][i];const auto& b=remote[phase][i];assert(a.gpio==b.gpio&&a.attempts==b.attempts&&a.frame.size==b.frame.size);assert(std::memcmp(a.frame.data,b.frame.data,a.frame.size)==0);}}
@@ -1056,4 +1112,4 @@ static void distinct_activity_ids_with_identical_equipment(bool remote){
     if(other)assert(delivered_generations.back()!=second_wire_generation);
     assert(primary.request_activity(-1)==ESP_OK);finish(-1);latest_task=primary_task;fixture_peer_address={};fixture_tick=100000;
 }
-int main(){compact_keys_and_quiet_publication();member_selection_refreshes_projection_without_discovery();scoped_audio_fallback_chooses_display_owner();for(bool remote_owner:{false,true})audio_keys_use_audio_or_display(remote_owner);accepted_reports_count_before_the_owner_merges_them();removed_owner_snapshots_release_capacity();replaced_key_owners_reuse_slots();cold_audio_lookup_precedes_finite_switch_transmission();source_theft_switch_repair_preserves_audio_hold();member_maintenance_finishes_key_cleanup();raw_keys_resolve_current_role_on_sparse_adapter();release_without_binding_is_noop();independent_release_and_link_fencing();for(bool down:{false,true})link_fence_during_key_admission(down);link_fence_discards_pending_key_lookup();pending_new_boot_context_blocks_old_routing();for(bool remote:{false,true})distinct_activity_ids_with_identical_equipment(remote);cold_lookup_waiters_resume_in_arrival_order();transmission_only_rx_does_not_block_a_ready_lookup();local_activity_frames();first_matching_osd();startup_discards_keys();observation_pressure();owner_keys();cec_ack_controls_hold();queued_request_lifetime();every_adapter();remote_receiver_parity();configuration_preserves_discovery();activity_commits_after_source_tx_without_peer_status();for(int next:{-1,0,1})cold_lookup_blocks_following_activity(next);std::puts("FIFO cold-lookup resumption with responsive cached keys/RX, explicit owner start/standby frames, queued request lifetime, CEC ACK-based hold lifecycle, first OSD match, startup taps, observation pressure, removed-owner snapshot cleanup/capacity reuse, independent owner keys, authorization, and all-adapter discovery passed");}
+int main(){compact_keys_and_quiet_publication();member_selection_refreshes_projection_without_discovery();scoped_audio_fallback_chooses_display_owner();for(bool remote_owner:{false,true})audio_keys_use_audio_or_display(remote_owner);accepted_reports_count_before_the_owner_merges_them();removed_owner_snapshots_release_capacity();replaced_key_owners_reuse_slots();cold_audio_lookup_precedes_finite_switch_transmission();source_theft_switch_repair_preserves_audio_hold();member_maintenance_finishes_key_cleanup();raw_keys_resolve_current_role_on_sparse_adapter();release_without_binding_is_noop();independent_release_and_link_fencing();for(bool down:{false,true})link_fence_during_key_admission(down);link_fence_discards_pending_key_lookup();pending_new_boot_context_blocks_old_routing();for(bool remote:{false,true})distinct_activity_ids_with_identical_equipment(remote);cold_lookup_waiters_resume_in_arrival_order();transmission_only_rx_does_not_block_a_ready_lookup();local_activity_frames();first_matching_osd();startup_discards_keys();observation_pressure();owner_keys();cec_ack_controls_hold();queued_request_lifetime();every_adapter();explicit_scan_reaches_member_during_selection();remote_receiver_parity();configuration_preserves_discovery();activity_commits_after_source_tx_without_peer_status();for(int next:{-1,0,1})cold_lookup_blocks_following_activity(next);std::puts("FIFO cold-lookup resumption with responsive cached keys/RX, explicit owner start/standby frames, queued request lifetime, CEC ACK-based hold lifecycle, first OSD match, startup taps, observation pressure, removed-owner snapshot cleanup/capacity reuse, independent owner keys, authorization, and all-adapter discovery passed");}

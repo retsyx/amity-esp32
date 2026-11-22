@@ -1779,6 +1779,9 @@ system::AdmissionResult HubService::Adapter::execute_owned(const system::OwnedIn
             received_controller_boot=auth.controller_boot;received_link=auth.link_id;
             xSemaphoreGive(root.lock);
         }
+        // An explicit scan is not activity input: no selection supersedes it,
+        // and it does not advance the activity input order.
+        if(intent.kind==K::discover){if(!validate_only)requested_scan_sides=3;return {system::AdmissionCode::accepted,{}};}
         if(validate_only){
             if(!local_step&&intent.generation<received_generation)return {system::AdmissionCode::stale,"Activity input was superseded"};
             return {system::AdmissionCode::accepted,{}};
@@ -1798,7 +1801,6 @@ system::AdmissionResult HubService::Adapter::execute_owned(const system::OwnedIn
         }
         struct SettingScope {bool& value;bool previous;~SettingScope(){value=previous;}} setting_scope{setting_activity,setting_activity};
         if(Impl::owner_activity(intent))setting_activity=true;
-        if(intent.kind==K::discover){requested_scan_sides=3;return {system::AdmissionCode::accepted,{}};}
         executing_auth=&auth;executing_activity_step=local_step;executing_activity_instance=instance;
         bool admitted=false;
         if(!input_announced&&hub.source_input_announcement_here(intent))admitted=hub.announce_owned_input();
