@@ -35,7 +35,7 @@ model::BootId boot;uint64_t configuration=1;HostnameRegistry hostnames;std::vect
 struct SavedSettings {model::OctopusId owner;};std::vector<SavedSettings> settings_caches,settings_operations;
 struct {bool local=false;std::weak_ptr<Active> link;}settings_authorization;
 // Diagnostic emission is the only non-storage seam omitted from admission.
-struct LinkTrace {const char* phase="";bool retained=false,has_kind=false;Kind kind{};void queued(const Queued&){}bool fail(const char*){return false;}};
+struct LinkTrace {enum class Recovery{other,terminal,recoverable};const char* phase="";bool retained=false,has_kind=false;Kind kind{};void queued(const Queued&){}bool fail(const char*,Error=Error::none,Recovery=Recovery::other){return false;}};
 struct DeferredLinkTrace {void capture(const Active&,const LinkTrace&,uint64_t){}};
 struct SnapshotRetryBatch {void dropped(const Active&,const Queued&){}};
 template<class... T>void quiet_log(T&&...){}

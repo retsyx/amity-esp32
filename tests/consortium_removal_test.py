@@ -28,7 +28,7 @@ struct Active{Session session;model::OctopusId peer;std::shared_ptr<FakeTls> tls
 std::mutex lock,persistence_lock;Group group;Identity identity;RuntimeStatus status;RuntimeLifecycleHooks lifecycle;RuntimeControlHooks controls;model::BootId boot;uint64_t configuration=1;std::vector<std::shared_ptr<Active>> links;
 // Diagnostics are independently exercised by runtime transport tests. This
 // fixture executes the completion and real roster-removal decisions directly.
-struct LinkTrace{const char* phase="";bool retained=false;bool fail(const char*){return false;}};
+struct LinkTrace{enum class Recovery{other,terminal,recoverable};const char* phase="";bool retained=false;bool fail(const char*,Error=Error::none,Recovery=Recovery::other){return false;}};
 struct DeferredLinkTrace{void capture(const Active&,const LinkTrace&,uint64_t){}};
 unsigned group_saves=0,quiesces=0,markers=0,restarts=0,revocations=0,hash_delay=0;bool disk_ok=true,send_ok=true;unsigned failure=0;std::vector<std::string> events,sent;std::vector<uint32_t> sent_timeouts;
 void gatt_client_disconnect(){}

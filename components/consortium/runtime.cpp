@@ -67,7 +67,11 @@ struct LinkTrace {
     int action_code=-1;
     int socket_error=0;
     platform::TlsReceiveDiagnostic receive;
-    bool fail(const char* why,Error result=Error::none){reason=why;error=result;unexpected=true;return false;}
+    // Whether a fresh logical session may follow, decided where the failure
+    // occurs. Other failures recover only when a restart was already requested.
+    enum class Recovery : uint8_t {other,terminal,recoverable};
+    Recovery recovery=Recovery::other;
+    bool fail(const char* why,Error result=Error::none,Recovery kind=Recovery::other){reason=why;error=result;recovery=kind;unexpected=true;return false;}
     void queued(const Queued& value){kind=value.kind;has_kind=has_queue=true;created=value.created;ttl=value.ttl;queued_revision=value.revision;action_code=value.owned?static_cast<int>(value.owned->kind):-1;}
 };
 static bool pure_key_release(const model::OwnedIntent& intent){return intent.kind==model::OwnedIntentKind::key_edges&&intent.edge_count==1&&!intent.edges[0].down;}
@@ -464,18 +468,10 @@ bool recover_operational_frame(Active& active,bool server,LinkTrace& trace){
     return false;
 }
 bool application_failure_recoverable(const Active& active,const LinkTrace& trace){
-    if(!synchronization_recoverable(active,trace)||trace.error==Error::invalid_message)return false;
-    // These failures concern authenticated protocol/security admission, not
-    // lost ordinary application work. Keep their existing terminal fences.
-    for(const auto* terminal:{"socket_select","envelope_parse","synchronization_control_admit","synchronization_control_parse","stale_frame",
-        "membership_revoked","retirement","retirement_admit",
-        "update_admit","update_authority","control_admit","settings_admit","settings_boot","settings_authority"})
-        if(!strcmp(trace.reason,terminal))return false;
-    if(active.restart_requested)return true;
-    for(const auto* recoverable:{"application_restart_requested","cleanup_queue_full","causal_result_fence","context_recapture_failed",
-        "initial_context","control_dispatch","frame_receive_expired","queued_send","queued_invalid","settings_dispatch","update_not_ready","update_stream"})
-        if(!strcmp(trace.reason,recoverable))return true;
-    return false;
+    // Protocol and security admission failures are terminal; they concern
+    // the authenticated stream itself, not lost ordinary application work.
+    if(!synchronization_recoverable(active,trace)||trace.error==Error::invalid_message||trace.recovery==LinkTrace::Recovery::terminal)return false;
+    return active.restart_requested||trace.recovery==LinkTrace::Recovery::recoverable;
 }
 bool lifecycle_receive(Active &active,Envelope &envelope,uint32_t timeout=5000){
     const auto deadline=now_ms()+timeout;
@@ -834,7 +830,7 @@ void context_capture_completed(const LinkScope& scope,model::OwnedContextResult 
         // actual current context enters the link FIFO. Leave the accepted
         // request parked so an empty capture is not repeated on every operational turn.
         if(result==model::OwnedContextResult::published){if(scope.config_revision==configuration)active->refreshing=false;continue;}
-        LinkTrace trace;trace.phase="owner_context";trace.fail("context_recapture_failed");trace.retained=true;diagnostics.capture(*active,trace,now_ms());
+        LinkTrace trace;trace.phase="owner_context";trace.fail("context_recapture_failed",Error::none,LinkTrace::Recovery::recoverable);trace.retained=true;diagnostics.capture(*active,trace,now_ms());
         request_session_restart(*active);
     }
 }
@@ -881,7 +877,7 @@ void active_loop_work(void *arg){
         poll_release_ack(*active);
         trace=LinkTrace{};trace.phase="operational";
         if(active->log_snapshot&&now_ms()>=active->log_expires)log_snapshot_clear(*active);
-        if(active->restart_requested){trace.fail("application_restart_requested");break;}
+        if(active->restart_requested){trace.fail("application_restart_requested",Error::none,LinkTrace::Recovery::recoverable);break;}
         if(active->retiring&&!receive_until){retirement_attempted=true;finish_retirement(*active);break;}
         if(server&&active->ready&&!active->retiring&&!receive_until){
             uint64_t target;{std::lock_guard<std::mutex> guard(lock);target=configuration;}
@@ -895,7 +891,7 @@ void active_loop_work(void *arg){
             }
         }
         trace.phase="operational";trace.has_kind=trace.has_queue=false;
-        if(server&&!active->retiring&&active->ready&&!receive_until&&!initialize_context(*active)){trace.fail("initial_context");break;}
+        if(server&&!active->retiring&&active->ready&&!receive_until&&!initialize_context(*active)){trace.fail("initial_context",Error::none,LinkTrace::Recovery::recoverable);break;}
         if(!active->retiring&&!report_wifi_signal(*active)){trace.fail("wifi_signal_send");break;}
         if(!active->retiring&&!refresh_local_hostname(*active)){trace.fail("hostname_send");break;}
         Queued queued;std::string payload;bool have=false,invalid=false;if(!active->retiring){std::lock_guard<std::mutex> guard(active->mutex);
@@ -909,7 +905,7 @@ void active_loop_work(void *arg){
         // Admission can add work while this task waits for the queue lock.
         // Expire and budget the observed item against the current clock.
         const auto now=now_ms();
-        if(invalid){trace.fail("queued_invalid");break;}
+        if(invalid){trace.fail("queued_invalid",Error::none,LinkTrace::Recovery::recoverable);break;}
         if(have&&queued_expired(queued,now)){
             if(auto retry=snapshot_retry(*active,queued))notify_snapshot_retry(*retry);
             else log_dropped_intent(queued,now);
@@ -931,9 +927,9 @@ void active_loop_work(void *arg){
                     pure_key_release(intent)?"Key release":"Key transfer",intent.target.port.octopus_id.str().c_str(),static_cast<unsigned>(intent.edges[0].key),static_cast<unsigned long long>(intent.generation),phase,static_cast<unsigned>(intent.edge_count),
                     static_cast<unsigned long long>(write_started>=queued.created?write_started-queued.created:0),static_cast<unsigned long long>(completed>=write_started?completed-write_started:0),sent);
             }
-            if(!sent){trace.queued(queued);trace.fail("queued_send");break;}
+            if(!sent){trace.queued(queued);trace.fail("queued_send",Error::none,LinkTrace::Recovery::recoverable);break;}
         }
-        fd_set reads;FD_ZERO(&reads);FD_SET(active->tls->socket,&reads);timeval wait{0,20000};int ready=::select(active->tls->socket+1,&reads,nullptr,nullptr,&wait);if(ready<0){trace.socket_error=errno;trace.fail("socket_select");break;}
+        fd_set reads;FD_ZERO(&reads);FD_SET(active->tls->socket,&reads);timeval wait{0,20000};int ready=::select(active->tls->socket+1,&reads,nullptr,nullptr,&wait);if(ready<0){trace.socket_error=errno;trace.fail("socket_select",Error::none,LinkTrace::Recovery::terminal);break;}
         // An idle connection has no receive deadline. Input fixes the start;
         // a decoded bulk prefix selects sixty seconds from that same edge.
         // Ordinary input, including an undecoded TLS record, retains five.
@@ -947,16 +943,16 @@ void active_loop_work(void *arg){
         if(input==TlsLink::ReceiveResult::failed){trace.fail("frame_receive");break;}
         receive_until=0;
         if(input==TlsLink::ReceiveResult::expired){
-            trace.fail("frame_receive_expired");
+            trace.fail("frame_receive_expired",Error::none,LinkTrace::Recovery::recoverable);
             break;
         }
-        Envelope envelope;const auto parsed=parse_envelope(text,envelope);if(parsed!=Error::none){trace.fail("envelope_parse",parsed);break;}const auto received=now_ms();trace.kind=envelope.kind;trace.has_kind=true;
+        Envelope envelope;const auto parsed=parse_envelope(text,envelope);if(parsed!=Error::none){trace.fail("envelope_parse",parsed,LinkTrace::Recovery::terminal);break;}const auto received=now_ms();trace.kind=envelope.kind;trace.has_kind=true;
         if(active->tls->received_bulk()!=is_update_kind(envelope.kind)){trace.fail("frame_class",Error::invalid_message);break;}
         if(envelope.kind==Kind::synchronization){
             const auto admitted=active->session.admit(envelope,received,received);
-            if(admitted!=Error::none){trace.fail("synchronization_control_admit",admitted);break;}
+            if(admitted!=Error::none){trace.fail("synchronization_control_admit",admitted,LinkTrace::Recovery::terminal);break;}
             SynchronizationRound round;std::string phase;
-            if(parse_synchronization(envelope.payload,round.id,phase,round.revision)!=Error::none){trace.fail("synchronization_control_parse",Error::invalid_message);break;}
+            if(parse_synchronization(envelope.payload,round.id,phase,round.revision)!=Error::none){trace.fail("synchronization_control_parse",Error::invalid_message,LinkTrace::Recovery::terminal);break;}
             if(!server&&phase=="begin"){
                 active->pending_synchronization=round;
                 if(!synchronize_connection(*active,false,active->execution_supported,round.revision,&trace))break;
@@ -972,10 +968,10 @@ void active_loop_work(void *arg){
         if(envelope.config_revision<active->session.scope().config_revision){
             const auto discarded=active->session.discard_stale(envelope,received,received);
             if(discarded==Error::none)continue;
-            trace.fail("stale_frame",discarded);break;
+            trace.fail("stale_frame",discarded,LinkTrace::Recovery::terminal);break;
         }
-        if(server){bool enrolled=false;{std::lock_guard<std::mutex> guard(lock);for(const auto &peer:group.peers)if(peer.id==active->peer&&peer.active)enrolled=true;}if(!enrolled){if(active->retiring){retirement_attempted=true;finish_retirement(*active);trace.reason="retired";}else trace.fail("membership_revoked");break;}}
-        if(!server&&envelope.kind==Kind::membership_event){const auto admitted=active->session.admit(envelope,received,received);if(admitted!=Error::none){trace.fail("retirement_admit",admitted);break;}trace.phase="retirement";if(!retire_member(*active,envelope))trace.fail("retirement");else trace.reason="retired";break;}
+        if(server){bool enrolled=false;{std::lock_guard<std::mutex> guard(lock);for(const auto &peer:group.peers)if(peer.id==active->peer&&peer.active)enrolled=true;}if(!enrolled){if(active->retiring){retirement_attempted=true;finish_retirement(*active);trace.reason="retired";}else trace.fail("membership_revoked",Error::none,LinkTrace::Recovery::terminal);break;}}
+        if(!server&&envelope.kind==Kind::membership_event){const auto admitted=active->session.admit(envelope,received,received);if(admitted!=Error::none){trace.fail("retirement_admit",admitted,LinkTrace::Recovery::terminal);break;}trace.phase="retirement";if(!retire_member(*active,envelope))trace.fail("retirement",Error::none,LinkTrace::Recovery::terminal);else trace.reason="retired";break;}
 
         if(envelope.kind==Kind::device_status){
             if(!receive_live_device_status(*active,envelope,received)){trace.fail("device_status_admission");break;}
@@ -992,35 +988,35 @@ void active_loop_work(void *arg){
             // helper's boolean result can also represent a raced local reset
             // or failed application delivery on a healthy transport.
             const auto admitted=active->session.admit(envelope,received,received);
-            if(admitted!=Error::none){trace.fail("settings_admit",admitted);break;}
+            if(admitted!=Error::none){trace.fail("settings_admit",admitted,LinkTrace::Recovery::terminal);break;}
             if(envelope.kind==Kind::settings_write){
                 DeviceSettingsWrite write;
-                if(parse_device_settings_write(*envelope.payload.get("settings"),write)!=Error::none){trace.fail("settings_admit",Error::invalid_message);break;}
-                if(write.expected_boot!=boot){trace.fail("settings_boot",Error::stale_boot);break;}
+                if(parse_device_settings_write(*envelope.payload.get("settings"),write)!=Error::none){trace.fail("settings_admit",Error::invalid_message,LinkTrace::Recovery::terminal);break;}
+                if(write.expected_boot!=boot){trace.fail("settings_boot",Error::stale_boot,LinkTrace::Recovery::terminal);break;}
             }else if(envelope.kind==Kind::settings_result&&envelope.payload.get("stage")->string=="applied"&&envelope.payload.get("snapshot")->get("boot_id")->string!=active->session.scope().peer_boot_id.str()){
-                trace.fail("settings_boot",Error::stale_boot);break;
+                trace.fail("settings_boot",Error::stale_boot,LinkTrace::Recovery::terminal);break;
             }
             bool allowed=false;
             {std::lock_guard<std::mutex> guard(lock);allowed=envelope.kind==Kind::settings_result?
                 (original_controller(group,identity.id)&&status.authority_ready&&settings_enrolled(active->peer)):
                 (group.role==Group::member&&group.authority==active->peer&&current_peer_credential(*active,group));}
-            if(!allowed){trace.fail("settings_authority",Error::unauthorized_role);break;}
+            if(!allowed){trace.fail("settings_authority",Error::unauthorized_role,LinkTrace::Recovery::terminal);break;}
             const bool dispatched=settings_dispatch(active,envelope,received);
-            if(active->restart_requested){trace.fail("application_restart_requested");break;}
-            if(!dispatched){trace.fail("settings_dispatch");break;}continue;
+            if(active->restart_requested){trace.fail("application_restart_requested",Error::none,LinkTrace::Recovery::recoverable);break;}
+            if(!dispatched){trace.fail("settings_dispatch",Error::none,LinkTrace::Recovery::recoverable);break;}continue;
         }
         if(is_update_kind(envelope.kind)) {
-            const auto admitted=active->session.admit(envelope,received,received);if(admitted!=Error::none){trace.fail("update_admit",admitted);break;}
-            if(!active->ready&&!active->management_ready){trace.fail("update_not_ready");break;}
+            const auto admitted=active->session.admit(envelope,received,received);if(admitted!=Error::none){trace.fail("update_admit",admitted,LinkTrace::Recovery::terminal);break;}
+            if(!active->ready&&!active->management_ready){trace.fail("update_not_ready",Error::none,LinkTrace::Recovery::recoverable);break;}
             RuntimeUpdateHooks hooks; bool allowed=false;
             {std::lock_guard<std::mutex> guard(lock);hooks=updates;
                 allowed=envelope.kind==Kind::update_result ? (server&&group.role==Group::coordinator&&status.authority_ready) :
                     (!server&&group.role==Group::member&&group.authority==active->peer);}
-            if(!allowed){trace.fail("update_authority",Error::unauthorized_role);break;}
+            if(!allowed){trace.fail("update_authority",Error::unauthorized_role,LinkTrace::Recovery::terminal);break;}
             if(envelope.kind==Kind::update_result) {if(hooks.result) hooks.result(active->peer,envelope.payload);}
             else {
                 const auto handled=hooks.handle?hooks.handle(active->peer,envelope):Error::not_ready;
-                if(envelope.kind==Kind::update_chunk&&handled!=Error::none){trace.fail("update_stream",handled);break;}
+                if(envelope.kind==Kind::update_chunk&&handled!=Error::none){trace.fail("update_stream",handled,LinkTrace::Recovery::recoverable);break;}
                 if(handled==Error::none) {
                     if(envelope.kind==Kind::update_begin) active->update_begin_id=*model::MessageId::parse(envelope.payload.get("request_id")->string);
                     if(envelope.kind==Kind::update_install||envelope.kind==Kind::update_abort) active->update_begin_id={};
@@ -1029,8 +1025,8 @@ void active_loop_work(void *arg){
         }
         else{
             const auto admitted=active->session.admit(envelope,received,received);
-            if(admitted!=Error::none){trace.fail("control_admit",admitted);break;}
-            if(active->restart_requested){trace.fail("application_restart_requested");break;}
+            if(admitted!=Error::none){trace.fail("control_admit",admitted,LinkTrace::Recovery::terminal);break;}
+            if(active->restart_requested){trace.fail("application_restart_requested",Error::none,LinkTrace::Recovery::recoverable);break;}
             RuntimeControlHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=controls;}
             uint64_t deadline=0;bool key_cleanup=false;
             const bool intent=envelope.kind==Kind::scoped_intent;
@@ -1042,11 +1038,11 @@ void active_loop_work(void *arg){
             }
             if(hooks.control){
                 const auto result=hooks.control(active->session.scope(),envelope,deadline);
-                if(active->restart_requested){trace.fail("application_restart_requested");break;}
+                if(active->restart_requested){trace.fail("application_restart_requested",Error::none,LinkTrace::Recovery::recoverable);break;}
                 if(!server&&result==Error::none&&selection){active->context_ready=true;active->refreshing=false;}
-                if(result!=Error::none&&(envelope.kind==Kind::scoped_result||key_cleanup||selection)){trace.fail("control_dispatch",result);break;}
+                if(result!=Error::none&&(envelope.kind==Kind::scoped_result||key_cleanup||selection)){trace.fail("control_dispatch",result,LinkTrace::Recovery::recoverable);break;}
             }else if(envelope.kind==Kind::scoped_result||envelope.kind==Kind::scoped_intent){
-                trace.fail("control_dispatch",Error::not_ready);break;
+                trace.fail("control_dispatch",Error::not_ready,LinkTrace::Recovery::recoverable);break;
             }
         }
       }
@@ -1675,7 +1671,7 @@ static esp_err_t queue_control(model::OctopusId owner,Kind kind,uint32_t ttl,std
         }),active->queue.end());
         const bool cleanup=queued_cleanup({kind,{},ttl,now,revision,owned});
         if(active->queue.size()>=(cleanup?16u:15u)){
-            if(cleanup){LinkTrace trace;trace.phase="queue_admission";trace.kind=kind;trace.has_kind=true;trace.fail("cleanup_queue_full");trace.retained=true;diagnostics.capture(*active,trace,now);request_session_restart(*active);}
+            if(cleanup){LinkTrace trace;trace.phase="queue_admission";trace.kind=kind;trace.has_kind=true;trace.fail("cleanup_queue_full",Error::none,LinkTrace::Recovery::recoverable);trace.retained=true;diagnostics.capture(*active,trace,now);request_session_restart(*active);}
             return ESP_ERR_NO_MEM;
         }
         const bool current_context=owned&&(owned->kind==model::OwnedIntentKind::context||owned->kind==model::OwnedIntentKind::activity)&&owned->config_revision==active->session.scope().config_revision;
@@ -1693,7 +1689,7 @@ void runtime_fence_owned_link(model::OctopusId owner,model::LinkId link){
     DeferredLinkTrace diagnostics;std::lock_guard<std::mutex> guard(lock);
     for(auto& active:links)if(active->peer==owner&&active->session.scope().link_id==link&&!active->execution_fenced&&!active->cancelled&&!active->retiring){
         std::lock_guard<std::mutex> queue(active->mutex);
-        LinkTrace trace;trace.phase="result_delivery";trace.fail("causal_result_fence");trace.retained=true;diagnostics.capture(*active,trace,now_ms());
+        LinkTrace trace;trace.phase="result_delivery";trace.fail("causal_result_fence",Error::none,LinkTrace::Recovery::recoverable);trace.retained=true;diagnostics.capture(*active,trace,now_ms());
         request_session_restart(*active);
     }
 }

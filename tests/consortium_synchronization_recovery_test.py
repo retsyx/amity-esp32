@@ -244,26 +244,26 @@ void application_restart_waits_for_exact_cleanup_before_fresh_scope(){
   return fences>=3;
  };
  ServerScript script{original};on_send=[&](auto& a,const auto& envelope){assert(fences==3&&a.queue.empty()&&abandoned.expired());script(a,envelope);};
- LinkTrace trace;trace.fail("control_dispatch",Error::not_ready);assert(application_failure_recoverable(*active,trace));
+ LinkTrace trace;trace.fail("control_dispatch",Error::not_ready,LinkTrace::Recovery::recoverable);assert(application_failure_recoverable(*active,trace));
  assert(recover_operational_frame(*active,true,trace)&&fences==3&&script.rounds==1&&clock_ms>=2100);
  same_connection(*active,original,tls,7);assert(active->ready&&!active->execution_fenced&&active->queue.empty()&&abandoned.expired()&&disconnects==0&&observations.size()==3);
  assert(active->session.scope().link_id!=original.link_id);
  assert(std::none_of(active->tls->sent.begin(),active->tls->sent.end(),[](const auto& e){return e.kind==Kind::scoped_intent;}));
 }
 void logical_recovery_keeps_security_and_transport_fences(){
+ using Recovery=LinkTrace::Recovery;
  auto active=start(true);credentials_current=true;LinkTrace trace;
- for(const auto* reason:{"cleanup_queue_full","causal_result_fence","context_recapture_failed","queued_send"}){
-  trace=LinkTrace{};trace.fail(reason);assert(application_failure_recoverable(*active,trace));
- }
- trace=LinkTrace{};trace.fail("control_dispatch",Error::not_ready);assert(application_failure_recoverable(*active,trace));
+ trace.fail("queued_send",Error::none,Recovery::recoverable);assert(application_failure_recoverable(*active,trace));
+ trace=LinkTrace{};trace.fail("control_dispatch",Error::not_ready,Recovery::recoverable);assert(application_failure_recoverable(*active,trace));
  for(auto error:{Error::invalid_message,Error::stale_boot,Error::identity_conflict,Error::unauthorized_role,Error::wrong_consortium}){
-  trace=LinkTrace{};trace.fail("control_dispatch",error);assert(!application_failure_recoverable(*active,trace));
+  trace=LinkTrace{};trace.fail("control_dispatch",error,Recovery::recoverable);assert(!application_failure_recoverable(*active,trace));
  }
- active->restart_requested=true;
- for(const auto* reason:{"control_admit","envelope_parse","membership_revoked","retirement"}){
-  trace=LinkTrace{};trace.fail(reason);assert(!application_failure_recoverable(*active,trace));
- }
- trace=LinkTrace{};trace.fail("cleanup_queue_full");active->tls->healthy=false;assert(!application_failure_recoverable(*active,trace));
+ // An unclassified failure recovers only when a restart was already requested;
+ // a terminal one never does. The reason text plays no part.
+ trace=LinkTrace{};trace.fail("queued_send");assert(!application_failure_recoverable(*active,trace));
+ active->restart_requested=true;assert(application_failure_recoverable(*active,trace));
+ trace=LinkTrace{};trace.fail("queued_send",Error::none,Recovery::terminal);assert(!application_failure_recoverable(*active,trace));
+ trace=LinkTrace{};trace.fail("cleanup_queue_full",Error::none,Recovery::recoverable);active->tls->healthy=false;assert(!application_failure_recoverable(*active,trace));
  active->tls->healthy=true;credentials_current=false;assert(!application_failure_recoverable(*active,trace));credentials_current=true;
  active->retiring=true;assert(!application_failure_recoverable(*active,trace));active->retiring=false;
  active->lifecycle_only=true;assert(!application_failure_recoverable(*active,trace));active->lifecycle_only=false;
