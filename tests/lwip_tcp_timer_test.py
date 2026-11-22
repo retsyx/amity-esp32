@@ -171,22 +171,12 @@ def main():
         base = Path(directory)
         source = base / 'test.c'
         source.write_text(PREFIX + actual + SUITE)
-        for tick_ms, legacy in ((250, True), (interval, False)):
-            binary = base / ('legacy' if legacy else 'configured')
-            subprocess.run(shlex.split(os.environ.get('CC', 'cc')) + [
-                '-std=c99', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined',
-                '-DCONFIG_LWIP_TCP_TMR_INTERVAL=' + str(tick_ms),
-                '-DCONFIG_LWIP_TCP_RTO_TIME=' + str(initial_rto), str(source), '-o', str(binary)], check=True)
-            result = subprocess.run([str(binary)], text=True, capture_output=True)
-            if legacy:
-                assert result.returncode != 0 and 'established zero-tick ACK RTO exceeds300ms' in result.stderr, result
-                assert 'Established zero-tick ACK RTO: 1500ms' in result.stdout, result
-                print('Reproduced old250ms timer: established ACK estimator retains1500ms RTO')
-            else:
-                print(result.stdout, end='')
-                if result.returncode:
-                    print(result.stderr, end='')
-                result.check_returncode()
+        binary = base / 'configured'
+        subprocess.run(shlex.split(os.environ.get('CC', 'cc')) + [
+            '-std=c99', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined',
+            '-DCONFIG_LWIP_TCP_TMR_INTERVAL=' + str(interval),
+            '-DCONFIG_LWIP_TCP_RTO_TIME=' + str(initial_rto), str(source), '-o', str(binary)], check=True)
+        subprocess.run([str(binary)], check=True)
 
 
 if __name__ == '__main__':

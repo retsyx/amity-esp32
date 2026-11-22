@@ -3,7 +3,6 @@
 
 The pinned SDK functions are compiled unchanged. Only TLS encryption and the
 allocator/device seams are faked; this is not a measurement of bench free heap.
-The old chunk-framed response is retained only to reproduce its extra records.
 Production linker wrapping is verified separately against the firmware ELF.
 """
 import os
@@ -68,7 +67,7 @@ struct esp_tls_t{int ssl=0,error_handle=0;tls_writer write=nullptr;};
 std::string wire;
 unsigned tls_calls=0,fail_tls_call=0,zero_tls_call=0;
 std::vector<size_t> tls_records;
-bool short_writes=false,want_next=false,bounded_writes=true;
+bool short_writes=false,want_next=false;
 int mbedtls_ssl_write(int*,const unsigned char *data,size_t size){
     ++tls_calls;tls_records.push_back(size);
     if(tls_calls==fail_tls_call)return -0x84;
@@ -108,13 +107,13 @@ esp_err_t httpd_resp_send_chunk(httpd_req_t *request,const char *data,ssize_t si
 }
 esp_tls_t tls;
 int send_fn(void*,int,const char *data,size_t size,int){
-    return static_cast<int>(bounded_writes?__wrap_esp_tls_conn_write(&tls,data,size):__real_esp_tls_conn_write(&tls,data,size));
+    return static_cast<int>(__wrap_esp_tls_conn_write(&tls,data,size));
 }
 struct Request{
     sock_db socket;httpd_req_aux aux;httpd_data server;httpd_req_t request;
     Request(){tls.write=esp_mbedtls_write;socket.send_fn=send_fn;aux.sd=&socket;request.aux=&aux;request.handle=&server;}
 };
-void reset(){wire.clear();tls_calls=fail_tls_call=zero_tls_call=chunk_calls=terminators=dma_failures=0;short_writes=want_next=false;bounded_writes=true;largest_dma_request=dma_peak=dma_live=0;dma_sizes.clear();tls_records.clear();}
+void reset(){wire.clear();tls_calls=fail_tls_call=zero_tls_call=chunk_calls=terminators=dma_failures=0;short_writes=want_next=false;largest_dma_request=dma_peak=dma_live=0;dma_sizes.clear();tls_records.clear();}
 std::string payload(size_t size){std::string data(size,'x');for(size_t i=0;i<size;++i)data[i]=static_cast<char>('a'+i%26);return data;}
 std::string decode(){
     const auto split=wire.find("\r\n\r\n");check(split!=std::string::npos,"missing HTTP headers");
@@ -133,43 +132,15 @@ std::string decode(){
 }
 '''
 
-LEGACY = r'''
-// Previous bounded application response: each body chunk makes three SDK
-// writes (length, body, delimiter), even though the entire body is available.
-namespace legacy {
-esp_err_t json(httpd_req_t *request,const std::string &data){
-    httpd_resp_set_type(request,"application/json");
-    httpd_resp_set_hdr(request,"Cache-Control","no-store");
-    httpd_resp_set_hdr(request,"X-Content-Type-Options","nosniff");
-    for(size_t offset=0;offset<data.size();){
-        const auto count=std::min(size_t{512},data.size()-offset);
-        const auto result=httpd_resp_send_chunk(request,data.data()+offset,count);
-        if(result!=ESP_OK)return result;
-        offset+=count;
-    }
-    return httpd_resp_send_chunk(request,nullptr,0);
-}
-}
-'''
-
 SUITE = r'''
 int main(){try{
-    // The real SDK path reproduces a large record's allocation failure when
-    // the modeled largest available DMA block is 1024 bytes. No heap numbers
+    // The modeled largest available DMA block is 1024 bytes. No heap numbers
     // from this fixture are claimed to describe the physical failure instant.
-    reset();bounded_writes=false;Request old;const auto large=payload(6218);
-    check(httpd_resp_send(&old.request,large.data(),large.size())!=ESP_OK,"legacy whole-body path did not expose DMA pressure");
-    check(dma_failures==1&&largest_dma_request==1600,"failure did not use real SDK AES bounce sizing");
-    std::cout<<"Reproduced SDK whole-body failure: 6218-byte body requests 1600-byte DMA bounce with modeled 1024-byte block limit\n";
-    reset();Request chunked;
-    check(legacy::json(&chunked.request,large)==ESP_OK&&decode()==large,"old chunked response reproduction failed");
-    const auto old_records=tls_calls;
-    check(chunk_calls==14&&terminators==1&&old_records==51,"old chunk framing record multiplier changed");
+    const auto large=payload(6218);
     reset();Request normal;
     check(web::json(&normal.request,large,"200 OK")==ESP_OK&&decode()==large,"normal bounded response failed");
     const auto normal_records=tls_calls;const auto expected=wire;
-    check(normal_records==23&&normal_records<old_records&&chunk_calls==0,"HTTP framing still adds tiny chunk TLS records");
-    std::cout<<"Reproduced/fixed framing amplification: 6218-byte response uses "<<old_records<<" -> "<<normal_records<<" TLS application records\n";
+    check(normal_records==23&&chunk_calls==0,"HTTP framing still adds tiny chunk TLS records");
     for(size_t size:{size_t{6218},size_t{0},size_t{1},size_t{512},size_t{513},size_t{40000}}){
         reset();Request current;const auto data=payload(size);
         check(web::json(&current.request,data,"202 Accepted")==ESP_OK,"bounded response failed under modeled pressure");
@@ -205,7 +176,7 @@ int main(){try{
     reset();Request invalid;
     check(__wrap_esp_tls_conn_write(nullptr,large.data(),large.size())==-1&&__wrap_esp_tls_conn_write(&tls,nullptr,1)==-1&&tls_calls==0,"TLS argument validation changed");
     check(__wrap_esp_tls_conn_write(&tls,large.data(),0)==0&&tls_calls==0,"zero-length TLS write changed");
-    std::cout<<"PASS real HTTPD/TLS dispatch/partial writes and AES sizing: exact Content-Length bodies; fewer TLS records; first/middle/final errors propagate;512-byte app writes preserve full TLS capacities\n";
+    std::cout<<"PASS real HTTPD/TLS dispatch/partial writes and AES sizing: exact Content-Length bodies without chunk framing; first/middle/final errors propagate;512-byte app writes preserve full TLS capacities\n";
     return 0;
 }catch(const std::exception &error){std::cerr<<"FAIL "<<error.what()<<'\n';return 1;}}
 '''
@@ -242,7 +213,7 @@ def main():
     actual_wrapper = function(wrapper, 'extern "C" ssize_t __wrap_esp_tls_conn_write(')
     actual_http = ''.join(function(txrx, name) for name in [
         'static esp_err_t httpd_send_all(', 'esp_err_t httpd_resp_send(', 'esp_err_t httpd_resp_send_chunk('])
-    # Keep the unchanged SDK chunk sender only to reproduce prior framing.
+    # Count SDK chunk sends: bounded responses must not use chunk framing.
     actual_http = actual_http.replace('esp_err_t httpd_resp_send_chunk(', 'esp_err_t sdk_httpd_resp_send_chunk(')
     actual_web = ('namespace web::stall {struct Response {Response(httpd_req_t*,size_t){}};} // web_stall_test.py covers it\n'
                   + 'namespace web {\n'
@@ -251,7 +222,7 @@ def main():
     source = (PREFIX + '\n#define free dma_free\n' + actual_aes + '\n#undef free\n'
               + MIDDLE + actual_tls + actual_dispatch + actual_wrapper
               + '\n#define malloc http_alloc\n' + actual_http
-              + '\n#undef malloc\n' + SUFFIX + actual_web + LEGACY + SUITE)
+              + '\n#undef malloc\n' + SUFFIX + actual_web + SUITE)
     with tempfile.TemporaryDirectory(prefix='amity-https-write-') as directory:
         cpp, binary = Path(directory) / 'test.cpp', Path(directory) / 'test'
         cpp.write_text(source)

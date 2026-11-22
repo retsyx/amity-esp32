@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Check actual task entry wrappers destroy C++ owners before FreeRTOS deletion."""
-import argparse
 import os
 from pathlib import Path
 import shlex
@@ -24,8 +23,7 @@ struct InviteRequest {std::string scan_id;};
 struct AdmissionClient:Tracked {};
 struct Id {std::string str()const{return "public-test-id";}};
 struct TaskDeleted{};
-// Observe BEFORE throwing. Host unwinding only cleans up the deliberately
-// failing baseline afterwards; real FreeRTOS never runs those destructors.
+// Observe BEFORE throwing; real FreeRTOS never runs destructors after deletion.
 [[noreturn]]void vTaskDeleteWithCaps(void*){at_delete=destroyed;throw TaskDeleted{};}
 '''
 SUITE = r'''
@@ -39,10 +37,6 @@ int main(){
         if(at_delete!=1||destroyed!=1){std::cerr<<"FAIL "<<name<<" owners destroyed before task delete="<<at_delete<<'\n';return 1;}
         std::cout<<"PASS actual "<<name<<" task wrapper: owning resource destroyed before task deletion\n";
     }
-    destroyed=0;at_delete=-1;
-    try{auto value=std::make_shared<Active>();auto argument=new std::shared_ptr<Active>(value);value.reset();baseline_link_worker(argument);}catch(const TaskDeleted&){}
-    if(at_delete!=0||destroyed!=1){std::cerr<<"FAIL baseline ownership leak was not reproduced\n";return 1;}
-    std::cout<<"EXPECTED baseline resource declaration/self-delete control: owner still live at task deletion; host-only unwinding cleans it afterwards\n";
 }
 '''
 
@@ -53,9 +47,6 @@ def ownership_prefix(body):
 
 
 def main():
-    parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--baseline-source',type=Path)
-    args=parser.parse_args()
     runtime=(ROOT/'components/consortium/runtime.cpp').read_text()
     active_body=function(runtime,'void active_loop_work(void *arg)')
     invite_body=function(runtime,'void invite_worker_work(void *arg)')
@@ -67,9 +58,6 @@ def main():
     client=client[:client.index(';')+1]
     actual+='void invite_worker_work(void *arg){std::unique_ptr<InviteRequest> invite(static_cast<InviteRequest*>(arg));'+client+'}\n'
     actual+=function(runtime,'void active_loop(void *arg)')+function(runtime,'void invite_worker(void *arg)')
-    baseline=args.baseline_source.read_text() if args.baseline_source else active_body
-    old=function(baseline,'void active_loop(void *arg)') if args.baseline_source else active_body
-    actual+='void baseline_link_worker(void *arg){'+ownership_prefix(old)+'vTaskDeleteWithCaps(nullptr);}\n'
     with tempfile.TemporaryDirectory(prefix='amity-task-lifetime-') as directory:
         cpp=Path(directory)/'test.cpp';binary=Path(directory)/'test'
         cpp.write_text(PREFIX+actual+SUITE)
