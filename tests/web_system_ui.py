@@ -29,8 +29,9 @@ def main(argv=None):
     # The page links its favicon.
     # Errors appear in one closable popup; the activity editor's error line was removed.
     # Changing the password requires entering the new password twice.
+    # The Activities tab shows an HDMI startup failure.
     # Keep the remaining presentation unchanged without requiring that Git object.
-    baseline_sha256 = 'db59f06873bc3b8b1b55c4392be9bbdbdc59362eb21cb01ce150cd63771caa3c'
+    baseline_sha256 = 'b7167e8ad4a8c49682baaace40dfeaa9b8f3465c225c2cf01c46f0f2cfe91d83'
     current = (ROOT/'components/web_admin/assets/index.html').read_text()
     current = current.replace('<script src="/system.js" defer></script>', '').replace('<button data-tab="amityDevices">Amity devices</button>', '')
     current = re.sub(r'<section id="amityDevices".*?</section>', '', current)

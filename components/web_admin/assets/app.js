@@ -495,7 +495,9 @@ async function refreshHomekit(){
 }
 async function refresh(){if(!token||polling||firmwareUpdating||hostnameReconnect)return;polling=true;try{
  const latest=await readStatus();if(firmwareUpdating||hostnameReconnect)return;
- state=latest;if(state.activity_error!==reportedActivityError){reportedActivityError=state.activity_error;if(state.activity_error)message(state.activity_error,true);}renderHostname(state.hostname);if(state.current_activity!==standbyFrom)standbyFrom=null;updateActivityButtons();$('standby').hidden=!(state.current_activity>=0);
+ state=latest;if(state.activity_error!==reportedActivityError){reportedActivityError=state.activity_error;if(state.activity_error)message(state.activity_error,true);}renderHostname(state.hostname);
+ // HDMI startup failures last until restart; keep them on the Activities tab.
+ setText($('hardwareError'),state.hardware_error||'');$('hardwareError').hidden=!state.hardware_error;if(state.current_activity!==standbyFrom)standbyFrom=null;updateActivityButtons();$('standby').hidden=!(state.current_activity>=0);
  await refreshPeerSignals();if(firmwareUpdating||hostnameReconnect)return;
  renderDiagnostics();
  renderDeviceNames();

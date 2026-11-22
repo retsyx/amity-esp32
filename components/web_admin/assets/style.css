@@ -142,6 +142,7 @@ input::file-selector-button:hover { background: #dfeade; }
 /* Errors stay just below the top of the window, above page content and dialogs. */
 #notice.popup { position: fixed; top: 16px; left: 16px; right: 16px; z-index: 10; max-width: 640px; margin: 0 auto; display: flex; align-items: flex-start; gap: 4px; padding: 0 4px 0 16px; background: #fff; border: 1px solid #d9b4af; border-left: 4px solid var(--danger); border-radius: 12px; box-shadow: 0 12px 40px #142b2433; }
 #notice.popup #message { flex: 1; min-width: 0; padding: 11px 0; overflow-wrap: anywhere; }
+#hardwareError { margin: 0 0 16px; padding: 11px 16px; border: 1px solid #d9b4af; border-left: 4px solid var(--danger); border-radius: 12px; color: var(--danger); font-size: .9375rem; }
 #dismissMessage { flex: none; width: 44px; padding: 0; font-size: 1.5rem; line-height: 1; color: var(--muted); }
 #login { max-width: 400px; margin: 16px auto; }
 #login label { margin-top: 0; }

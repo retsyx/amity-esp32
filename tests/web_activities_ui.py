@@ -279,6 +279,20 @@ def main():
                 passed('asynchronous activity failure is visible after admission')
                 fixture['status']['activity_error'] = ''
                 page.evaluate("() => message('')")
+                hardware = page.locator('#hardwareError')
+                expect(hardware).to_be_hidden()
+                fixture['status']['hardware_error'] = 'HDMI control could not start. Check the device wiring or install firmware intended for this hardware. Administration remains available.'
+                page.wait_for_function('() => !polling')
+                page.evaluate('() => refresh()')
+                expect(hardware).to_be_visible();expect(hardware).to_have_text(fixture['status']['hardware_error'])
+                expect(page.locator('#message')).to_have_text('')
+                page.locator('[data-tab=matter]').click();expect(hardware).to_be_hidden()
+                page.locator('[data-tab=activities]').click();expect(hardware).to_be_visible()
+                fixture['status']['hardware_error'] = ''
+                page.wait_for_function('() => !polling')
+                page.evaluate('() => refresh()')
+                expect(hardware).to_be_hidden()
+                passed('an HDMI startup failure stays visible on the Activities tab without a popup')
                 save = page.locator('#saveActivities')
                 discard = page.locator('#discardActivities');expect(discard).to_be_hidden()
                 expect(save).to_be_hidden()

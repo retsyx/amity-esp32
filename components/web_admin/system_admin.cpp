@@ -240,7 +240,6 @@ esp_err_t snapshot(httpd_req_t* req){
     cJSON_AddBoolToObject(result.get(),"ready",state.ready);
     cJSON_AddStringToObject(result.get(),"discovery_revision",m::format_uint64(equipment_revision()).c_str());
     cJSON_AddStringToObject(result.get(),"activity_error",state.activity_error.c_str());
-    cJSON_AddStringToObject(result.get(),"hardware_error",control->hardware_error().c_str());
     auto* capabilities=cJSON_AddObjectToObject(result.get(),"capabilities");
     cJSON_AddNumberToObject(capabilities,"configuration_schema",config_store::current_configuration_version);
     cJSON_AddNumberToObject(capabilities,"supported_tentacles",control->supported_tentacles());
