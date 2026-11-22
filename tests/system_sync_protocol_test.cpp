@@ -257,7 +257,12 @@ void reports_and_exact_disconnect(){
     main.update_result=false;const auto before_overload=main.updates.size();
     assert(deliver(owner,value,100,id<s::LinkId>(1))==c::Error::invalid_message&&main.updates.size()==before_overload+1);
     main.update_result=true;
-    amity::set_owner_maintenance(owner,true);assert(deliver(owner,value,100,id<s::LinkId>(1))==c::Error::invalid_message);assert(amity::discovered_equipment().front().stale);amity::set_owner_maintenance(owner,false);
+    // A valid report from an owner fenced for a firmware update is a current
+    // observation, shown stale until the fence lifts. Refusing it as malformed
+    // would close the authenticated link.
+    amity::set_owner_maintenance(owner,true);const auto fenced=main.updates.size();
+    assert(deliver(owner,value,100,id<s::LinkId>(1))==c::Error::none&&main.updates.size()==fenced+1);
+    assert(amity::discovered_equipment().front().stale);amity::set_owner_maintenance(owner,false);assert(!amity::discovered_equipment().front().stale);
     auto second=first;second.adapter=1;value=report_envelope(second);assert(deliver(owner,value,100,id<s::LinkId>(1))==c::Error::none);
     const auto newboot=id<s::BootId>(29);peers[0].boot_id=newboot;auto fresh=first;fresh.boot=newboot;fresh.devices[0].logical_address=8;value=report_envelope(fresh);assert(deliver(owner,value,100,id<s::LinkId>(2))==c::Error::none);
     const auto oldlink=id<s::LinkId>(70);const auto sent_before=sent.size();const auto updates_before=main.updates.size();

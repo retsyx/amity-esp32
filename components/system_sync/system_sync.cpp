@@ -55,7 +55,6 @@ bool accept_report(const s::OwnedAdapterSnapshot& report){
     std::lock_guard<std::mutex> guard(state.mutex);
     const auto remote=peer(report.owner);
     if(!remote||report.boot!=remote->boot_id||report.adapter>=remote->supported_tentacles)return false;
-    if(state.maintenance.count(report.owner))return false;
     return state.control->update_owned_snapshot(report);
 }
 void publish_configuration_revision(){
