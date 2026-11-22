@@ -123,14 +123,6 @@ ble::GattLayout saved_layout() {
     return result;
 }
 
-void finish_scan() {
-    assert(scanning && scan_callback);
-    scanning = false;
-    ble_gap_event event{};
-    event.type = BLE_GAP_EVENT_DISC_COMPLETE;
-    scan_callback(&event, scan_token);
-}
-
 void run_steps(unsigned count) {
     steps = count;
     try { worker(nullptr); assert(false); }
@@ -303,7 +295,7 @@ int ble_gap_terminate(uint16_t handle, uint8_t) {
 int ble_gap_disc(uint8_t own, int32_t duration, const ble_gap_disc_params *params, ble_gap_event_fn *callback, void *token) {
     assert(own == BLE_OWN_ADDR_PUBLIC && duration > 0);
     assert(params && params->itvl==0x80 && params->window==params->itvl && !params->filter_duplicates);
-    assert(!fake::connecting); // Cancellation must finish before a diagnostic scan.
+    assert(!fake::connecting); // Cancellation must finish before a pairing search.
     ++fake::scans; fake::scanning = true; fake::scan_callback = callback; fake::scan_token = token; return 0;
 }
 int ble_gap_disc_cancel() { fake::scanning = false; return 0; }
@@ -562,53 +554,26 @@ int main(int argc, char **argv) {
         fake::run_steps(60);
         assert(fake::connects.size() == 1 && !fake::security_calls && !fake::persisted);
         assert(!fake::storage_peer && fake::removed_bonds == 1 && !fake::controller_irk);
-    } else if (scenario == "scan-unpair") {
-        fake::run_steps(1);
-        assert(ble_remote_scan(5) == ESP_OK);
-        assert(ble_remote_unpair() == ESP_OK);
-        fake::complete_connect(BLE_HS_EPREEMPTED); // Cancellation completes before queued work.
-        fake::run_steps(2);
-        assert(!fake::scans && !fake::status().scanning && !fake::status().bonded);
-        assert(!fake::status().waiting && !fake::status().unpairing);
-    } else if (scenario == "unpair-scan") {
+    } else if (scenario == "unpair-pairing") {
         fake::run_steps(1);
         const auto stale = fake::connects.back();
         assert(ble_remote_unpair() == ESP_OK);
-        assert(ble_remote_scan(5) == ESP_ERR_INVALID_STATE);
+        assert(ble_remote_start_pairing(20) == ESP_ERR_INVALID_STATE);
         fake::run_steps(1);
         fake::complete_connect(BLE_HS_EPREEMPTED);
         fake::run_steps(1);
         assert(!fake::status().unpairing && !fake::status().bonded);
-        assert(ble_remote_scan(5) == ESP_OK);
+        assert(ble_remote_start_pairing(20) == ESP_OK);
         fake::run_steps(1);
-        assert(fake::scans == 1 && fake::status().scanning);
-        // Allowing a new scan must not revive the cancelled saved-peer attempt.
+        assert(fake::scans == 1 && fake::status().pairing && fake::status().scanning);
+        // Allowing a new search must not revive the cancelled saved-peer attempt.
         fake::complete_connect(0, stale, 77);
         assert(fake::terminations.size() == 1 && fake::terminations.back() == 77);
         fake::disconnect();
         fake::run_steps(10);
         assert(!fake::status().bonded && !fake::status().connected && !fake::status().waiting);
         assert(!fake::security_calls && !fake::discovery_calls && !fake::persisted);
-        fake::finish_scan();
-        fake::run_steps(1);
-        assert(!fake::status().scanning && fake::connects.size() == 1);
-        assert(ble_remote_start_pairing(20) == ESP_OK);
-        fake::run_steps(1);
-        assert(fake::scans == 2 && fake::status().pairing && fake::status().scanning);
-    } else if (scenario == "cancel-error") {
-        fake::run_steps(1);
-        fake::cancel_error = BLE_HS_EBUSY;
-        assert(ble_remote_scan(5) == ESP_OK);
-        fake::run_steps(1);
-        assert(fake::cancellations == 1 && !fake::scans && fake::warnings.size() == 1);
-        fake::cancel_error = 0;
-        fake::run_steps(9);
-        assert(fake::cancellations == 1 && !fake::scans);
-        fake::run_steps(1);
-        assert(fake::cancellations == 2 && !fake::scans);
-        fake::complete_connect(BLE_HS_EPREEMPTED);
-        fake::run_steps(1);
-        assert(fake::scans == 1 && fake::status().scanning);
+        assert(fake::connects.size() == 1 && fake::status().pairing);
     } else if (scenario == "unpair-cancel-error") {
         fake::run_steps(1);
         fake::cancel_error = BLE_HS_EBUSY;
@@ -631,20 +596,6 @@ int main(int argc, char **argv) {
         fake::run_steps(60);
         assert(fake::connects.size() == 1 && !fake::security_calls && !fake::persisted);
         assert(!fake::status().bonded && !fake::status().waiting);
-    } else if (scenario == "scan") {
-        fake::run_steps(1);
-        assert(ble_remote_scan(5) == ESP_OK);
-        fake::run_steps(1);
-        assert(fake::cancellations == 1 && !fake::scans);
-        fake::complete_connect(BLE_HS_EPREEMPTED);
-        fake::run_steps(1);
-        assert(fake::scans == 1 && fake::status().scanning && !fake::status().waiting);
-        fake::run_steps(4);
-        assert(fake::connects.size() == 1);
-        fake::finish_scan();
-        fake::run_steps(1);
-        assert(fake::connects.size() == 2 && fake::status().waiting && !fake::status().last_error);
-        assert(fake::warnings.empty());
     } else if (scenario == "connect-error") {
         fake::connect_error = BLE_HS_EBUSY;
         fake::run_steps(2); // The worker consumes the start error on its next turn and retries at once.

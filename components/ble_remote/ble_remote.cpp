@@ -48,14 +48,14 @@ int ble_hs_pvcy_remove_entry(uint8_t addr_type, const uint8_t *addr);
 namespace {
 constexpr char kTag[] = "ble_remote";
 constexpr size_t kMaxPeers = 16;
-enum class CommandType { Scan, Pair, AutoPair, Unpair, Wake };
+enum class CommandType { AutoPair, Unpair, Wake };
 struct Command {
     CommandType type;
     uint32_t seconds;
-    ble_addr_t address;
 };
 struct Candidate {
-    ble_remote_peer_t peer;
+    ble_addr_t address;
+    int8_t rssi;
     bool hid, connectable, attempted;
     ble::SiriGeneration siri = ble::SiriGeneration::None;
     bool supported() const { return siri != ble::SiriGeneration::Unsupported &&
@@ -153,12 +153,6 @@ public:
 void to_public(ble_remote_peer_t &peer, const ble_addr_t &address) {
     for (size_t i = 0; i < 6; ++i) peer.address[i] = address.val[5 - i];
     peer.address_type = address.type;
-}
-ble_addr_t to_nimble(const uint8_t address[6], uint8_t type) {
-    ble_addr_t result{};
-    result.type = type;
-    for (size_t i = 0; i < 6; ++i) result.val[i] = address[5 - i];
-    return result;
 }
 bool same_address(const ble_addr_t &a, const ble_addr_t &b) {
     // Identity and ordinary addresses share the same public/random low bit.
@@ -442,7 +436,7 @@ int on_gap_event(ble_gap_event *event, void *token) {
         if (reconnect_pending) {
             // Start security/discovery promptly when the remote wakes, without
             // making the host callback perform any blocking GATT operations.
-            const Command wake{CommandType::Wake, 0, {}};
+            const Command wake{CommandType::Wake, 0};
             xQueueSend(commands, &wake, 0);
         }
         break;
@@ -468,7 +462,7 @@ int on_gap_event(ble_gap_event *event, void *token) {
             if (reconnect_pending) state.waiting = false;
             finish_procedure(event->disconnect.reason);
             if (reconnect_pending) {
-                const Command wake{CommandType::Wake, 0, {}};
+                const Command wake{CommandType::Wake, 0};
                 xQueueSend(commands, &wake, 0);
             }
             break;
@@ -504,7 +498,7 @@ int on_gap_event(ble_gap_event *event, void *token) {
         next_reconnect = esp_timer_get_time() + (state.last_error ? reconnect_backoff_us() : 0);
         if (have_saved) {
             // Listen for the remote again without waiting for the worker's next turn.
-            const Command wake{CommandType::Wake, 0, {}};
+            const Command wake{CommandType::Wake, 0};
             xQueueSend(commands, &wake, 0);
         }
         break;
@@ -870,7 +864,7 @@ int on_scan_event(ble_gap_event *event, void *) {
     const bool supported = siri != ble::SiriGeneration::Unsupported &&
         (hid || siri == ble::SiriGeneration::Gen2 || siri == ble::SiriGeneration::Gen3);
     auto found = std::find_if(candidates.begin(), candidates.end(), [&](const Candidate &candidate) {
-        return same_address(to_nimble(candidate.peer.address, candidate.peer.address_type), report.addr);
+        return same_address(candidate.address, report.addr);
     });
     if (found == candidates.end()) {
         if (candidates.size() == kMaxPeers) {
@@ -883,21 +877,13 @@ int on_scan_event(ble_gap_event *event, void *) {
             candidates.push_back(Candidate{});
             found = candidates.end() - 1;
         }
-        to_public(found->peer, report.addr);
+        found->address = report.addr;
     }
     found->hid |= hid;
     if (siri != ble::SiriGeneration::None) found->siri = siri;
     found->connectable |= report.event_type == BLE_HCI_ADV_RPT_EVTYPE_ADV_IND ||
                           report.event_type == BLE_HCI_ADV_RPT_EVTYPE_DIR_IND;
-    found->peer.rssi = report.rssi;
-    if (fields.name && fields.name_len) {
-        const size_t length = std::min<size_t>(fields.name_len, sizeof(found->peer.name) - 1);
-        memcpy(found->peer.name, fields.name, length);
-        found->peer.name[length] = 0;
-    }
-    if (!found->peer.name[0] && (siri == ble::SiriGeneration::Gen2 || siri == ble::SiriGeneration::Gen3))
-        snprintf(found->peer.name, sizeof(found->peer.name), "Siri Remote, Gen %u",
-                 siri == ble::SiriGeneration::Gen2 ? 2 : 3);
+    found->rssi = report.rssi;
     return 0;
 }
 
@@ -1063,7 +1049,7 @@ void open_peer(const ble_addr_t &address) {
         to_public(state.peer, address);
         connect_started_us = esp_timer_get_time();
         for (const auto &candidate : candidates)
-            if (same_address(address, to_nimble(candidate.peer.address, candidate.peer.address_type)))
+            if (same_address(address, candidate.address))
                 advertised = candidate.siri;
     }
     // Use the stable public identity for HID; Matter's commissioning address
@@ -1174,8 +1160,6 @@ void worker(void *) {
         }
         if (xQueueReceive(commands, &command, wait) == pdTRUE) {
             switch (command.type) {
-            case CommandType::Scan: start_scan(command.seconds); break;
-            case CommandType::Pair: open_peer(command.address); break;
             case CommandType::AutoPair: {
                 Guard lock;
                 if (radio_paused.load()||setup_cancelled.load()||forgetting) { state.pairing = false; break; }
@@ -1232,11 +1216,11 @@ void worker(void *) {
                 } else if (connection_handle == BLE_HS_CONN_HANDLE_NONE) {
                     auto found = std::find_if(candidates.begin(), candidates.end(), [](const Candidate &c) {
                         return ble::pairing_candidate(c.supported(), c.connectable, c.attempted,
-                            c.peer.rssi, CONFIG_AMITY_REMOTE_PAIRING_MIN_RSSI);
+                            c.rssi, CONFIG_AMITY_REMOTE_PAIRING_MIN_RSSI);
                     });
                     if (found != candidates.end()) {
                         found->attempted = true;
-                        automatic_peer = to_nimble(found->peer.address, found->peer.address_type);
+                        automatic_peer = found->address;
                         pair_now = true;
                     } else if (!state.scanning) {
                         resume_search = true;
@@ -1325,8 +1309,8 @@ extern "C" esp_err_t ble_remote_start(ble_remote_key_callback_t callback, void *
         if (have_saved) { state.bonded = true; to_public(state.peer, saved); }
     }
     // Atomic has no pairing display or text input. Standard Just Works bonding
-    // matches its firmware; the explicit web pairing action selects the peer.
-    // Avoid IDF HID's keyboard-only default and its fixed input passkey fallback.
+    // matches its firmware. Avoid IDF HID's keyboard-only default and its fixed
+    // input passkey fallback.
     ble_hs_cfg.sm_io_cap = BLE_HS_IO_NO_INPUT_OUTPUT;
     ble_hs_cfg.sm_mitm = 0;
     ble_hs_cfg.sm_bonding = 1;
@@ -1334,23 +1318,6 @@ extern "C" esp_err_t ble_remote_start(ble_remote_key_callback_t callback, void *
     ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
     ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
     return xTaskCreate(worker, "ble_remote", 6144, nullptr, 4, nullptr) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
-}
-
-extern "C" esp_err_t ble_remote_scan(uint32_t seconds) {
-    if (!commands) return ESP_ERR_INVALID_STATE;
-    if (!seconds || seconds > 60) return ESP_ERR_INVALID_ARG;
-    RadioAdmission admission(seconds);if(!admission.accepted)return ESP_ERR_INVALID_STATE;
-    Guard lock;
-    if (!state.ready || state.connecting || state.pairing || state.unpairing) return ESP_ERR_INVALID_STATE;
-    candidates.clear();
-    Command command{CommandType::Scan, seconds, {}};
-    if (xQueueSend(commands, &command, 0) != pdTRUE) return ESP_ERR_TIMEOUT;
-    forgetting = false; // A new operation may start after Unpair has completed.
-    state.scanning = true;
-    setup_cancelled.store(false);
-    pairing_stopped.store(false);
-    admission.commit();
-    return ESP_OK;
 }
 
 extern "C" esp_err_t ble_remote_start_pairing(uint32_t seconds) {
@@ -1361,7 +1328,7 @@ extern "C" esp_err_t ble_remote_start_pairing(uint32_t seconds) {
     if (!state.ready || state.connected || state.connecting || state.scanning ||
         state.pairing || state.unpairing || bond_cleanup_failed || have_saved || connection_handle != BLE_HS_CONN_HANDLE_NONE)
         return ESP_ERR_INVALID_STATE;
-    Command command{CommandType::AutoPair, seconds, {}};
+    Command command{CommandType::AutoPair, seconds};
     if (xQueueSend(commands, &command, 0) != pdTRUE) return ESP_ERR_TIMEOUT;
     candidates.clear();
     forgetting = false;
@@ -1395,43 +1362,11 @@ extern "C" void ble_remote_set_siri_callback(ble_remote_siri_callback_t callback
     }
 }
 
-extern "C" size_t ble_remote_scan_results(ble_remote_peer_t *peers, size_t capacity) {
-    if (!mutex || (!peers && capacity)) return 0;
-    Guard lock;
-    size_t count = 0;
-    for (const auto &candidate : candidates) {
-        if (!candidate.supported()) continue;
-        if (count < capacity) peers[count] = candidate.peer;
-        ++count;
-    }
-    return std::min(count, capacity);
-}
-
-extern "C" esp_err_t ble_remote_pair(const uint8_t address[6], uint8_t address_type) {
-    if (!commands) return ESP_ERR_INVALID_STATE;
-    if (!address || address_type > 3) return ESP_ERR_INVALID_ARG;
-    RadioAdmission admission(60);if(!admission.accepted)return ESP_ERR_INVALID_STATE;
-    Guard lock;
-    if (!state.ready || state.connected || state.connecting || state.pairing || state.unpairing || bond_cleanup_failed || have_saved) return ESP_ERR_INVALID_STATE;
-    const ble_addr_t peer = to_nimble(address, address_type);
-    const bool found = std::any_of(candidates.begin(), candidates.end(), [&](const Candidate &candidate) {
-        return candidate.supported() && same_address(peer, to_nimble(candidate.peer.address, candidate.peer.address_type));
-    });
-    if (!found) return ESP_ERR_NOT_FOUND;
-    Command command{CommandType::Pair, 0, peer};
-    if (xQueueSend(commands, &command, 0) != pdTRUE) return ESP_ERR_TIMEOUT;
-    state.connecting = true;
-    setup_cancelled.store(false);
-    pairing_stopped.store(false);
-    admission.commit();
-    return ESP_OK;
-}
-
 extern "C" esp_err_t ble_remote_unpair(void) {
     if (!commands) return ESP_ERR_INVALID_STATE;
     Guard lock;
     if (state.unpairing) return ESP_ERR_INVALID_STATE;
-    Command command{CommandType::Unpair, 0, {}};
+    Command command{CommandType::Unpair, 0};
     if (xQueueSend(commands, &command, 0) != pdTRUE) return ESP_ERR_TIMEOUT;
     state.unpairing = unpair_cleanup_pending = true;
     unpair_cleanup_started = false;
@@ -1451,11 +1386,11 @@ extern "C" void ble_remote_get_status(ble_remote_status_t *out) {
     out->too_far = state.pairing && state.scanning && !state.connecting &&
         std::any_of(candidates.begin(), candidates.end(), [](const Candidate &c) {
             return c.supported() && !c.attempted &&
-                   c.peer.rssi < CONFIG_AMITY_REMOTE_PAIRING_MIN_RSSI;
+                   c.rssi < CONFIG_AMITY_REMOTE_PAIRING_MIN_RSSI;
         }) &&
         !std::any_of(candidates.begin(), candidates.end(), [](const Candidate &c) {
             return ble::pairing_candidate(c.supported(), c.connectable, c.attempted,
-                c.peer.rssi, CONFIG_AMITY_REMOTE_PAIRING_MIN_RSSI);
+                c.rssi, CONFIG_AMITY_REMOTE_PAIRING_MIN_RSSI);
         });
     const auto battery = ble::reported_battery(out->bonded, out->connected, {out->battery_percent, out->charging});
     out->battery_percent = battery.percent;

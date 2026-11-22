@@ -28,7 +28,7 @@ function fixture({adapter=false}={}){
  const document={getElementById:get,querySelectorAll:()=>[],querySelector:()=>null,createElement:tag=>new Element(tag),createElementNS:(_ns,tag)=>new Element(tag),addEventListener(){},activeElement:null};
  const response=(value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
  const status={hostname:'amity',boot_id:'a'.repeat(32),state_revision:'1',current_activity:-1,devices:[],activity_error:'',wifi_connected:true};
- const values={setup:{required:false,hostname:'amity'},status,remotes:{devices:[]},matter:{fabrics:[]},homekit:{available:true},activity:{ok:true}};
+ const values={setup:{required:false,hostname:'amity'},status,remotes:{},matter:{fabrics:[]},homekit:{available:true},activity:{ok:true}};
  if(adapter){
   values['activity-editor']={version:1,expected_config_revision:'1',expected_presentation_revision:'1',device_choices:[],activities:[{activity_id:'1'.repeat(32),name:'Watch',display:'',source:'',audio:''}]};
   values['activity-editor/status']={...status,expected_boot_id:status.boot_id,expected_state_revision:'1',expected_config_revision:'1'};
@@ -264,7 +264,7 @@ function fixture({adapter=false}={}){
  signals.values.system.membership.peers[0].wifi_rssi=-58;await signals.tick();assert.deepEqual(rows()[5],['','','RSSI -58 dBm',' · ','channel 1']);
  assert.equal(signals.get('diagnostics').children[5].children[2],peerRssi,'A changed value updates its existing cell');
  assert.equal(rows()[9],'Disconnected');
- signals.values.remotes={devices:[],connected:true,bonded:true,rssi:-61,name:'Siri Remote, Gen 3',battery:80,charging:null};await signals.tick();
+ signals.values.remotes={connected:true,bonded:true,rssi:-61,name:'Siri Remote, Gen 3',battery:80,charging:null};await signals.tick();
  assert.deepEqual(rows()[9],['Siri Remote, Gen 3',' · ','RSSI -61 dBm',' · ','80% battery'],'A connected remote shows its name, signal and battery');
  signals.values.remotes.rssi=null;await signals.tick();assert.deepEqual(rows()[9],['Siri Remote, Gen 3',' · ','','','80% battery']);
  signals.fail('system');await signals.tick();assert.deepEqual(rows().filter((_,index)=>index%2===0),['Firmware ','Wi-Fi ','Remote ']);

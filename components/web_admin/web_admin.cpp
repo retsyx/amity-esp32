@@ -101,13 +101,6 @@ esp_err_t remotes(httpd_req_t *req) {
     cJSON_AddBoolToObject(root.get(),"too_far",s.too_far);
     cJSON_AddNumberToObject(root.get(),"battery",s.battery_percent);if(s.charging<0)cJSON_AddNullToObject(root.get(),"charging");else cJSON_AddBoolToObject(root.get(),"charging",s.charging==1);cJSON_AddNumberToObject(root.get(),"last_error",s.last_error);cJSON_AddStringToObject(root.get(),"name",s.peer.name);
     if(s.rssi==127)cJSON_AddNullToObject(root.get(),"rssi");else cJSON_AddNumberToObject(root.get(),"rssi",s.rssi);
-    auto *list=cJSON_AddArrayToObject(root.get(),"devices");ble_remote_peer_t peers[16]{};
-    auto n=ble_remote_scan_results(peers,16);
-    for(size_t i=0;i<n;++i) {
-        auto *o=cJSON_CreateObject();cJSON_AddItemToArray(list,o);char address[18];auto *a=peers[i].address;
-        snprintf(address,sizeof(address),"%02x:%02x:%02x:%02x:%02x:%02x",a[0],a[1],a[2],a[3],a[4],a[5]);
-        cJSON_AddStringToObject(o,"address",address);cJSON_AddStringToObject(o,"name",peers[i].name);cJSON_AddNumberToObject(o,"type",peers[i].address_type);cJSON_AddNumberToObject(o,"rssi",peers[i].rssi);
-    }
     return send(req,root.get());
 }
 esp_err_t matter(httpd_req_t *req) {
@@ -227,7 +220,7 @@ esp_err_t api(httpd_req_t *req) {
         if(path=="/api/firmware")return system_services::upload_firmware(req);
 
         bool supported=false;
-        for(const auto* command:{"/api/remotes/scan","/api/remotes/pair","/api/remotes/unpair","/api/remotes/stop",
+        for(const auto* command:{"/api/remotes/pair","/api/remotes/unpair","/api/remotes/stop",
             "/api/matter/open","/api/matter/close","/api/matter/remove","/api/homekit/open","/api/homekit/close",
             "/api/homekit/remove","/api/factory-reset","/api/password","/api/logout","/api/reboot"})supported|=path==command;
         if(!supported)return web::error(req,"Unknown endpoint","404 Not Found");
@@ -236,14 +229,13 @@ esp_err_t api(httpd_req_t *req) {
         if(!root)return web::error(req,"Invalid JSON");
         esp_err_t e=ESP_OK;
         auto int_arg=[&](const char *key,int low,int high,int &out){auto *v=cJSON_GetObjectItemCaseSensitive(root.get(),key);if(!cJSON_IsNumber(v)||v->valuedouble!=v->valueint||v->valueint<low||v->valueint>high)return false;out=v->valueint;return true;};
-        if(path=="/api/remotes/scan")e=ble_remote_scan(20);
         // TIMEOUT: the abandoned connection is still closing; status reports it.
-        else if(path=="/api/remotes/stop"){e=ble_remote_stop_pairing();if(e==ESP_ERR_TIMEOUT)e=ESP_OK;}
+        if(path=="/api/remotes/stop"){e=ble_remote_stop_pairing();if(e==ESP_ERR_TIMEOUT)e=ESP_OK;}
         else if(path=="/api/remotes/unpair"||path=="/api/remotes/pair") {
             LocalRemoteRequest approval;
             if(!parse_local_remote_request(root.get(),path=="/api/remotes/pair",approval))return web::error(req,"Review the remote's current pairing state before continuing","400 Bad Request");
             const auto boot=amity::system::BootId::parse(system_services::boot_id()).value_or(amity::system::BootId{});
-            const auto admitted=remote_approvals.execute(boot,approval,[&]{return approval.pair?(approval.targeted?ble_remote_pair(approval.address.data(),approval.address_type):ble_remote_start_pairing(20)):ble_remote_unpair();});
+            const auto admitted=remote_approvals.execute(boot,approval,[&]{return approval.pair?ble_remote_start_pairing(20):ble_remote_unpair();});
             if(!admitted.accepted)return web::error(req,"The remote's pairing state changed. Review it before continuing.","409 Conflict");
             e=admitted.result;
             if(e!=ESP_OK)return web::error(req,esp_err_to_name(e),"409 Conflict");

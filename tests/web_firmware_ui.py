@@ -76,7 +76,7 @@ def main():
                           'activity-editor/status': {'version': fixture['current'], 'current_activity': -1, 'devices': [], 'device_choices': []},
                           'system': {'octopus_id': '1'*32, 'hostname': 'amity-dut', 'membership': {'peers': []}},
                           'status': {'version': fixture['current'], 'current_activity': -1, 'devices': []},
-                          'remotes': {'devices': []}, 'matter': {'fabrics': []}}
+                          'remotes': {}, 'matter': {'fabrics': []}}
                 route.fulfill(json=values[path])
 
             page.route('**/api/**', api)

@@ -75,7 +75,7 @@ class Handler(SimpleHTTPRequestHandler):
                                       components=[], activities=[], zones=[]),
                   '/api/system': dict(octopus_id=MAIN, hostname='amity-main', named_devices=[dict(octopus_id=o['octopus_id'], hostname=o['name']) for o in owners],
                                       membership=dict(peers=[dict(octopus_id=o['octopus_id'], enrolled=True, ready=True) for o in owners if o['octopus_id'] != MAIN])),
-                  '/api/remotes': dict(devices=[], bonded=False), '/api/matter': dict(fabrics=[]), '/api/homekit': dict(available=False)}
+                  '/api/remotes': dict(bonded=False), '/api/matter': dict(fabrics=[]), '/api/homekit': dict(available=False)}
         if self.path in values:
             return self.reply(values[self.path])
         return super().do_GET()

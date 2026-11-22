@@ -36,7 +36,7 @@ def main():
                 '/api/activity-editor/status':{'version':'test','ready':True,'current_activity':-1,
                     'devices':[],'device_choices':[],'expected_state_revision':'0','expected_boot_id':'a'*32},
                 '/api/system':{'octopus_id':'1'*32,'hostname':'amity-test','membership':{'peers':[]}},
-                '/api/remotes':{'devices':[]},'/api/matter':{'fabrics':[]},'/api/homekit':deepcopy(state)}
+                '/api/remotes':{},'/api/matter':{'fabrics':[]},'/api/homekit':deepcopy(state)}
             if self.path in fixtures: return self.reply(fixtures[self.path])
             return super().do_GET()
         def do_POST(self):

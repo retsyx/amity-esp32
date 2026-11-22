@@ -18,7 +18,7 @@ const $=id=>document.getElementById(id);
 // Rebuilt nodes carry the identity their handlers act on, so equal nodes act alike.
 function setText(element,text){if(element.textContent!==text)element.textContent=text;}
 function replaceChanged(container,...nodes){if(nodes.length!==container.childNodes.length||nodes.some((node,index)=>!node.isEqualNode(container.childNodes[index])))container.replaceChildren(...nodes);}
-let token=sessionStorage.getItem('amityToken')||'',config={version:1,activities:[]},state={},polling=false,dirty=false,saving=false,persistedActivities='[]',savedActivities=[],scanPending=false,scanAfter=null,scanGeneration=null,recommendations=[],autoRecommend=false,pairingPending=false,matterRemovalPending=false,remotePending=false,remoteState={devices:[]},savedActivityEntries=new Map(),editingActivity=null,activityActionPending=false,standbyFrom=null;
+let token=sessionStorage.getItem('amityToken')||'',config={version:1,activities:[]},state={},polling=false,dirty=false,saving=false,persistedActivities='[]',savedActivities=[],scanPending=false,scanAfter=null,scanGeneration=null,recommendations=[],autoRecommend=false,pairingPending=false,matterRemovalPending=false,remotePending=false,remoteState={},savedActivityEntries=new Map(),editingActivity=null,activityActionPending=false,standbyFrom=null;
 let firmwareUpdating=false,firmwareWaitRunning=false,firmwareUpdateRecord=null;
 let hostnameReconnect=null;
 let homekitPending=false,homekitPolling=false,homekitState={};

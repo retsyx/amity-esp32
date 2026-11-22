@@ -1,6 +1,7 @@
 #include "local_remote_approval.hpp"
 #include "json_input.hpp"
 #include <cassert>
+#include <cstdio>
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -21,7 +22,7 @@ int main(){
     reject("\"expected_remote_generation\":\"0\"","\"expected_remote_generation\":0");reject("\"expected_remote_generation\":\"0\"","\"expected_remote_generation\":\"00\"");reject("\"expected_boot_id\"","\"old_boot_id\"");reject("\"request_id\":", "\"unknown\":1,\"request_id\":");reject("\"expected_remote_generation\":\"0\"","\"expected_remote_generation\":\"0\",\"expected_remote_generation\":\"0\"");
     reject("\"expected_remote_generation\":\"0\"","\"expected_remote_generation\":\"0\\u0000\"");
     auto missing=original;missing.erase(missing.find(",\"expected_boot_id\""),missing.find(",\"expected_remote_generation\"")-missing.find(",\"expected_boot_id\""));assert(!decode(missing,true,altered));
-    auto targeted=body(3,1);targeted.insert(targeted.size()-1,",\"address\":\"01:23:45:67:89:ab\",\"type\":1");assert(decode(targeted,true,altered)&&altered.targeted&&altered.address[5]==0xab);assert(!decode(targeted,false,altered));
+    auto targeted=body(3,1);targeted.insert(targeted.size()-1,",\"address\":\"01:23:45:67:89:ab\",\"type\":1");assert(!decode(targeted,true,altered)&&!decode(targeted,false,altered)); // Pair names no remote.
     assert(decode(body(4,1),false,altered));auto failed=book.execute(boot,altered,[&]{++effects;return 77;});assert(failed.accepted&&failed.result==77&&failed.generation==2&&effects==2);
     assert(book.execute(boot,altered,[&]{++effects;return 0;}).result==77&&effects==2); // Failed owner admission still consumes consent.
     std::vector<LocalRemoteRequest> old{request,altered};

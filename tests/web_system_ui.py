@@ -60,7 +60,7 @@ def main(argv=None):
                   named_devices=[dict(octopus_id=controller, hostname='amity-living-room'),
                                  dict(octopus_id=member, hostname='amity-bedroom')],
                   membership=dict(membership_revision='1', peers=[dict(octopus_id=member, hostname='amity-bedroom', enrolled=True, ready=True, boot_id='b'*32)]))
-    remote = dict(bonded=False, ready=True, devices=[], boot_id='b'*32, remote_generation='1')
+    remote = dict(bonded=False, ready=True, boot_id='b'*32, remote_generation='1')
     fixture = dict(posts=[], operations={}, next_id=100, scans=0, fail_save=False, fail_add=True, config=configuration, remove_mode='scheduled', remove_release=False, admission=dict(scan_id=None, phase='idle', error='', candidates=[], candidate_id=None))
     errors, checks = [], []
     initial_status_requested, initial_status_ready = Event(), Event()

@@ -54,7 +54,7 @@ class Handler(SimpleHTTPRequestHandler):
         if fixture['named']:system['named_devices'].append(dict(octopus_id=MEMBER,hostname=settings[MEMBER]['hostname']))
         values={'/api/setup':dict(required=False,hostname=fixture['hostname']),'/api/activity-editor':editor,
                 '/api/activity-editor/status':status,'/api/config':configuration,'/api/system':system,
-                '/api/remotes':dict(bonded=False,ready=True,devices=[]),'/api/matter':dict(fabrics=[]),'/api/homekit':dict(available=False)}
+                '/api/remotes':dict(bonded=False,ready=True),'/api/matter':dict(fabrics=[]),'/api/homekit':dict(available=False)}
         if self.path in values:return self.reply(deepcopy(values[self.path]))
         if self.path.startswith('/api/devices/') and self.path.endswith('/settings'):
             owner=self.path.removeprefix('/api/devices/').split('/',1)[0];state='ready' if owner==MAIN else fixture['remote_status']

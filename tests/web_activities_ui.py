@@ -21,7 +21,7 @@ def main():
         'remote_unpair_gate': None, 'remote_unpair_async': False,
         'config': {'activities': [{'name': 'TV', 'display': 'TV', 'source': 'Player'},
                                                {'name': 'Music', 'display': '', 'source': 'Player', 'audio': 'Receiver'}]},
-        'config_calls': 0, 'remotes': {'devices': [], 'bonded': False}, 'matter_remove_calls': [], 'fail_matter_remove': False, 'activity_calls': [], 'remote_calls': [], 'remote_pair_gate': None, 'fail_unpair': False, 'setup_error': False, 'configured': True, 'matter': {'fabrics': [], 'commissioning': False}, 'discover_gate': None, 'fail_discover': False, 'fail_save': False, 'save_gate': None, 'defer_standby': False, 'fail_standby': False, 'expired': False, 'logins': 0,
+        'config_calls': 0, 'remotes': {'bonded': False}, 'matter_remove_calls': [], 'fail_matter_remove': False, 'activity_calls': [], 'remote_calls': [], 'remote_pair_gate': None, 'fail_unpair': False, 'setup_error': False, 'configured': True, 'matter': {'fabrics': [], 'commissioning': False}, 'discover_gate': None, 'fail_discover': False, 'fail_save': False, 'save_gate': None, 'defer_standby': False, 'fail_standby': False, 'expired': False, 'logins': 0,
         'status': {'version': 'test', 'hardware': 'Amity Board / Fin', 'free_heap': 200000,
                    'wifi_connected': True, 'wifi_ssid': 'Home', 'wifi_rssi': -45, 'wifi_channel': 6,
                    'ready': True, 'discovering': False, 'discovery_generation': 1,
@@ -209,16 +209,14 @@ def main():
                 return self.reply(dict(operation_id=body['request_id'], stage='applied', saved=True))
             if self.path.startswith('/api/remotes/'):
                 fixture['remote_calls'].append(self.path)
-            if self.path == '/api/remotes/scan':
-                fixture['remotes'] = {'devices': [], 'bonded': False, 'scanning': True}
             if self.path == '/api/remotes/pair':
                 assert body == {}, 'UI must request automatic pairing without selecting an address'
                 if fixture['remote_pair_gate']:
                     assert fixture['remote_pair_gate'].wait(20)
-                fixture['remotes'] = {'devices': [], 'bonded': False, 'pairing': True, 'scanning': True}
+                fixture['remotes'] = {'bonded': False, 'pairing': True, 'scanning': True}
             if self.path == '/api/remotes/stop':
                 assert body == {}
-                fixture['remotes'] = {'devices': [], 'bonded': False}
+                fixture['remotes'] = {'bonded': False}
             if self.path == '/api/remotes/unpair':
                 if fixture['remote_unpair_gate']:
                     assert fixture['remote_unpair_gate'].wait(20)
@@ -227,7 +225,7 @@ def main():
                 if fixture['remote_unpair_async']:
                     fixture['remotes']['unpairing'] = True
                 else:
-                    fixture['remotes'] = {'devices': [], 'bonded': False}
+                    fixture['remotes'] = {'bonded': False}
             if self.path == '/api/matter/remove':
                 if fixture['fail_matter_remove']:
                     return self.reply({'error': 'Could not remove connection'}, 500)
@@ -700,7 +698,7 @@ def main():
                 for bonded in (False, True):
                     for extra, status in [({}, 'Disconnected'), ({'scanning': True}, 'Scanning'),
                                           ({'connecting': True}, 'Connecting'), ({'last_error': 8}, 'Connection failed')]:
-                        fixture['remotes'] = {'devices': [], 'bonded': bonded, **extra}
+                        fixture['remotes'] = {'bonded': bonded, **extra}
                         page.evaluate('() => refresh()')
                         expected_remote_status = 'Paired' if bonded else 'Pairing with remote…' if extra.get('connecting') else 'Looking for a nearby remote… Bring it close and put it in pairing mode.' if extra.get('scanning') else 'Pairing failed. Reset the remote’s pairing and try again.' if extra.get('last_error') else 'Not paired'
                         expect(page.locator('#remoteStatus')).to_have_text(expected_remote_status)
@@ -711,7 +709,7 @@ def main():
                             expect(page.locator('#toggleRemote')).to_have_attribute('aria-busy', 'false')
                         diagnostic_status = 'Waiting for remote' if bonded and not extra else status
                         expect(page.locator('#diagnostics')).to_contain_text('Remote ' + diagnostic_status)
-                fixture['remotes'] = {'devices': [], 'bonded': True, 'connected': True, 'name': 'Atomic', 'rssi': -58, 'battery': 85}
+                fixture['remotes'] = {'bonded': True, 'connected': True, 'name': 'Atomic', 'rssi': -58, 'battery': 85}
                 page.evaluate('() => refresh()')
                 expect(page.locator('#remoteStatus')).to_have_text('Paired')
                 expect(page.locator('#diagnostics')).to_contain_text('Wi-Fi Home · RSSI -45 dBm · channel 6')
@@ -734,7 +732,7 @@ def main():
                 expect(page.locator('#diagnostics')).not_to_contain_text('% battery')
                 expect(page.locator('#diagnostics')).not_to_contain_text('Charging')
                 passed('Diagnostics adds Charging only for an explicitly charging connected remote')
-                fixture['remotes'] = {'devices': [], 'bonded': False}
+                fixture['remotes'] = {'bonded': False}
                 page.evaluate('() => refresh()')
                 page.locator('[data-tab=remotes]').click()
                 expect(page.locator('#remoteStatus')).to_have_text('Not paired')
@@ -753,14 +751,13 @@ def main():
                 expect(page.locator('#toggleRemote')).to_have_text('Stop pairing')
                 expect(page.locator('#toggleRemote')).to_be_enabled()
                 passed('automatic pairing shows text feedback while the start request is pending, then offers Stop pairing, without progress')
-                fixture['remotes']['devices'] = [{'name': 'Test Remote', 'address': '01:02:03:04:05:06', 'type': 0, 'rssi': -40}]
                 page.evaluate('() => refresh()')
                 expect(page.locator('#remotes button')).to_have_count(1)
                 expect(page.locator('#remoteStatus')).to_contain_text('Looking for a nearby remote')
                 expect(page.locator('#remotes progress, #remoteProgress')).to_have_count(0)
                 expect(page.locator('#toggleRemote')).to_have_text('Stop pairing')
                 expect(page.locator('#toggleRemote')).to_be_enabled()
-                passed('nearby devices are not listed and the search offers Stop pairing instead of another pair request')
+                passed('the search offers Stop pairing instead of another pair request')
                 fixture['remotes']['too_far'] = True
                 page.evaluate('() => refresh()')
                 expect(page.locator('#remoteStatus')).to_have_text('Remote detected. Bring it closer to Amity.')
@@ -784,7 +781,7 @@ def main():
                 expect(page.locator('#toggleRemote')).to_be_enabled()
                 passed('search timeout provides a retry instruction without progress')
                 for searching in ({'scanning': True}, {'connecting': True}):
-                    fixture['remotes'] = {'devices': [], 'bonded': False, 'pairing': True, **searching}
+                    fixture['remotes'] = {'bonded': False, 'pairing': True, **searching}
                     page.evaluate('() => refresh()')
                     expect(page.locator('#toggleRemote')).to_have_text('Stop pairing')
                     expect(page.locator('#toggleRemote')).to_be_enabled()
@@ -863,7 +860,7 @@ def main():
                 assert len(fixture['remote_calls']) == before
                 passed('unpairing blocks duplicate remote operations')
                 for connected in (True, False):
-                    fixture['remotes'] = {'devices': [], 'bonded': False, 'connected': connected,
+                    fixture['remotes'] = {'bonded': False, 'connected': connected,
                                           'unpairing': True, 'last_error': 13}
                     page.wait_for_function('() => !polling')
                     page.evaluate('() => refresh()')
@@ -881,7 +878,7 @@ def main():
                 page.locator('[data-tab=remotes]').click()
                 expect_unpairing()
                 passed('reloading during unpair restores its busy state from the device')
-                fixture['remotes'] = {'devices': [], 'bonded': False, 'unpairing': False}
+                fixture['remotes'] = {'bonded': False, 'unpairing': False}
                 page.wait_for_function('() => !polling')
                 page.evaluate('() => refresh()')
                 expect(page.locator('#toggleRemote')).to_have_text('Pair remote')

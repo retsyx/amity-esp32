@@ -113,7 +113,7 @@ def main():
                 values = {'config': config, 'activity-editor': editor,
                           'activity-editor/status': dict(version=fixture['version'], current_activity=-1, devices=[], device_choices=[],
                               expected_boot_id=fixture['boot'], expected_state_revision='1', hostname='amity-main'),
-                          'remotes': dict(devices=[]), 'matter': dict(fabrics=[]), 'homekit': dict(available=False)}
+                          'remotes': dict(), 'matter': dict(fabrics=[]), 'homekit': dict(available=False)}
                 return route.fulfill(json=deepcopy(values[path]))
 
             def open_page(**values):

@@ -58,11 +58,8 @@ esp_err_t ble_remote_start(ble_remote_key_callback_t callback, void *context);
 // on link loss/unpair, so consumers can cancel pending power/activity gestures.
 void ble_remote_set_disconnect_callback(ble_remote_disconnect_callback_t callback, void *context);
 void ble_remote_set_siri_callback(ble_remote_siri_callback_t callback, void *context);
-esp_err_t ble_remote_scan(uint32_t seconds); // 1..60 seconds, supported remotes only.
 // Search for a nearby HID or Gen 2/3 Siri Remote accepting a bond; skip rejected peers.
 esp_err_t ble_remote_start_pairing(uint32_t seconds);
-size_t ble_remote_scan_results(ble_remote_peer_t *peers, size_t capacity);
-esp_err_t ble_remote_pair(const uint8_t address[6], uint8_t address_type);
 // Unpair only the HID remote; never clears Matter fabrics or other BLE bonds.
 esp_err_t ble_remote_unpair(void);
 void ble_remote_get_status(ble_remote_status_t *status);
