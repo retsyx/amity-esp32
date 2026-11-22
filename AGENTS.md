@@ -28,7 +28,7 @@ is implied by the CEC line never going high when idle. An absent adapter produce
 - **Current means current.** An activity in flight is not active.
 - **Discovery is independent of configuration.** Announcements populate the device cache. Editing activities must neither clear it nor disconnect member links.
 - **Device lookup has one path.** Every caller uses `find_device()`. Only that function knows about caching and the two-minute scan cooldown.
-- **Scans have exactly three triggers:** boot, an explicit UI request, or a required-device cache miss.
+- **Scans have exactly three triggers:** boot, an explicit UI request, or a required-device cache miss in `find_device()`, including the incoming-traffic checks listed under HDMI-CEC.
 - **Activity steps are sequential per Amity.** Different Amities may progress concurrently. User presses during setup are discarded through the input gate.
 - **Distribution delivers ownership and messages.** It should not introduce another activity planner or source policy.
 - **Tests should expose problems, not conceal them.** Verify fresh physical commands and resulting state without adding workarounds for legitimate timing differences.
@@ -76,8 +76,13 @@ with no selected equipment.
   saved activity. Learn the announcing address and reported information and query
   that peer for missing identity metadata without requiring a full bus scan.
 - HDMI device enumeration is permitted for exactly three reasons: board boot,
-an explicit scan requested by the user in the UI, or an actual communication
-attempt whose target device is missing from the cache. That's it!
+an explicit scan requested by the user in the UI, or a `find_device()` lookup
+whose device is missing from the cache. Such a lookup is legitimate for an
+actual communication attempt with that device and for these checks of incoming
+traffic: answering Give Device Power Status (the current source), handling
+Report Audio Status (the audio device), applying an owned context on a member
+(its source) and the held-volume check before a finite key press (the audio
+device). That's it!
 - Cache-miss lookup scans have a 120-second cooldown independently for every
 Amity / tentacle / CEC side. Scan only the missing recipient's side and preserve
 the opposite side's cache. Repeated misses during cooldown remain unresolved;
