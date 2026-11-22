@@ -28,6 +28,7 @@
 #include <hap.h>
 
 typedef struct {
+    char instance[64];
     char type[32];
     char proto[32];
 } hap_mdns_handle_t;
