@@ -491,6 +491,70 @@ static void deferred_power_press_while_audio_key_held(){
     std::puts("A deferred recipe press to the audio recipient keeps a held audio key pressed");
 }
 
+// The main's first context after boot waits for its source's lookup scan, and
+// two presses for the source wait behind it. Another task changes the input
+// epoch after this owner pass released stale input: a long-Power repair as the
+// scan ends, or a selection while the resumed context is being admitted.
+// Resuming the context establishes the input context, which releases the
+// stale presses while resume_discovered() still walks the deferred FIFO. They
+// must not transmit, and the walk must stay valid. With no epoch change both
+// presses transmit after the lookup.
+static void stale_input_behind_resumed_context(const std::string& bump){
+    const auto named=[](m::Side side,const char* name){return m::QualifiedDeviceName{{group,controller,0,side},name};};
+    const auto stream_path=[]{
+        return std::any_of(fixture_pending.begin(),fixture_pending.end(),[](const auto& tx){return tx.gpio==2&&tx.frame.size>1&&tx.frame.data[1]==0x86;});
+    };
+    // Complete every pending frame except discovery polls, which stay on the wire.
+    const auto complete_frames=[]{
+        for(;;){
+            const auto next=std::find_if(fixture_pending.begin(),fixture_pending.end(),[](const auto& tx){return tx.frame.size>1;});
+            if(next==fixture_pending.end())return;
+            const auto tx=*next;fixture_pending.erase(next);fixture_completed.push_back(tx.frame);
+            tx.completion->result.store(cec::TxResult::Success,std::memory_order_release);
+        }
+    };
+    fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
+    HubService hub;hub.set_system_identity(group,controller);hub.set_boot_identity(boot);
+    assert(fixture_start(hub,1,2)==ESP_OK);
+    assert(hub.configure_scoped({{"Watch","display","source","","",0}},
+        {{"display",named(m::Side::front,"TV")},{"source",named(m::Side::back,"Source")}},{},controller,1)==ESP_OK);
+    run_one_command();fixture_finish_discovery(hub);
+    // Past the boot scan's lookup cooldown, in the first activity of this boot.
+    fixture_tick=0;fixture_time+=130000000;fixture_async_autocomplete=false;fixture_sent.clear();
+    assert(hub.request_activity(0)==ESP_OK);run_one_command();
+    for(unsigned pass=0;pass<64&&!stream_path();++pass){complete_frames();run_idle(2);}
+    assert(stream_path()&&hub.activity_setup_in_progress());
+    // While Set Stream Path is on the wire the source re-announces from logical
+    // address 8 with the same physical address, so "Source" is not cached at
+    // Commit and the context waits for a back-side lookup scan.
+    fixture_incoming.push_back({2,{{0x8f,0x84,0x10,0x00,0x04},5}});run_idle(1);
+    for(unsigned pass=0;pass<64&&hub.activity_setup_in_progress();++pass){complete_frames();run_idle(2);}
+    assert(!hub.activity_setup_in_progress()&&hub.snapshot().current_activity==0&&hub.snapshot().discovering);
+    const auto scan=hub.snapshot().discovery_generation;
+    assert(hub.press_key_for_activity(0x01,hub.activity_generation(),true));run_one_command();
+    assert(hub.press_key_for_activity(0x02,hub.activity_generation(),true));run_one_command();
+    run_idle(2);assert(count(2,{0x44,0x01})==0&&count(2,{0x44,0x02})==0);
+    bool bumped=false;
+    const auto scan_done=[&]{const auto state=hub.snapshot();return !state.discovering&&state.discovery_generation>scan;};
+    if(bump=="repair")hub.on_change([&](const Snapshot&){
+        if(!bumped&&scan_done()){bumped=true;assert(hub.repair_activity()==ESP_OK);}
+    });
+    if(bump=="selection")hub.set_owned_authorizer([&](const m::OwnedAuthorization&){
+        if(!bumped&&scan_done()){bumped=true;assert(hub.request_activity(0)==ESP_OK);}
+        return true;
+    });
+    fixture_async_autocomplete=true;fixture_complete_all();
+    fixture_finish_discovery(hub,scan);run_idle(8);
+    std::printf("bump=%s bumped=%d presses 0x01=%zu 0x02=%zu\n",bump.c_str(),bumped,count(2,{0x44,0x01}),count(2,{0x44,0x02}));
+    if(bump=="keys")assert(!bumped&&count(2,{0x44,0x01})>0&&count(2,{0x44,0x02})>0);
+    else assert(bumped&&count(2,{0x44,0x01})==0&&count(2,{0x44,0x02})==0);
+    hub.on_change({});hub.set_owned_authorizer({});
+    for(const uint8_t key:{0x01,0x02})hub.release_key(key);
+    run_idle(8);fixture_complete_all();run_idle(8);
+    fixture_tick=100000;
+    std::puts("Presses waiting behind the first context are dropped without disturbing the deferred FIFO when the input epoch changes");
+}
+
 int main(int argc,char** argv){
     const std::string scenario=argc>1?argv[1]:"";
     if(scenario=="settings-commit")step_during_settings_commit();
@@ -508,5 +572,8 @@ int main(int argc,char** argv){
     else if(scenario=="audio-key-released")power_press_after_audio_key_released();
     else if(scenario=="audio-key-held")power_press_while_audio_key_held();
     else if(scenario=="audio-key-held-deferred")deferred_power_press_while_audio_key_held();
+    else if(scenario=="context-lookup-keys")stale_input_behind_resumed_context("keys");
+    else if(scenario=="context-lookup-repair")stale_input_behind_resumed_context("repair");
+    else if(scenario=="context-lookup-selection")stale_input_behind_resumed_context("selection");
     else{std::fprintf(stderr,"unknown scenario '%s'\n",scenario.c_str());return 2;}
 }

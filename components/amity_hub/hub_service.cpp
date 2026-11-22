@@ -533,6 +533,10 @@ struct HubService::Impl : Adapter {
             else stop_key(static_cast<uint8_t>(raw));
             keys[raw].release_generation=released;
         }
+        // resume_discovered() holds an iterator into deferred across execute().
+        // Stale input it reaches is discarded by execute(); the next owner pass
+        // erases the rest.
+        if(resuming)return;
         for(auto i=deferred.begin();i!=deferred.end();){
             const bool input=(*i)->kind==Kind::Key||(*i)->kind==Kind::KeyRepeat||
                 ((*i)->kind==Kind::KeyEdges);
@@ -1044,7 +1048,9 @@ struct HubService::Impl : Adapter {
         free_reservation(*command);splice_staged_step();
     }
 
+    bool resuming=false;
     bool resume_discovered() {
+        resuming=true;struct Resumed{bool& value;~Resumed(){value=false;}} resumed{resuming};
         bool changed = false,owner_blocked=false,activity_blocked=false,lookup_blocked=false;
         for (auto i = deferred.begin(); i != deferred.end();) {
             if((*i)->activity_canceled){free_reservation(**i);i=deferred.erase(i);changed=true;continue;}
