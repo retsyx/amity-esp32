@@ -1495,7 +1495,9 @@ RuntimeAdmissionStatus runtime_admission_status(){
 esp_err_t runtime_scan_admission(model::MessageId scan){
     if(!scan)return ESP_ERR_INVALID_ARG;
     std::lock_guard<std::mutex> guard(lock);
-    if(!status.initialized||!status.credential_ready||group.role!=Group::coordinator||!status.authority_ready||group.join_id||group.peers.size()>=maximum_roster_peers||!radio.reserve)return ESP_ERR_INVALID_STATE;
+    if(!status.initialized||!status.credential_ready||group.role!=Group::coordinator||!status.authority_ready||group.join_id||!radio.reserve)return ESP_ERR_INVALID_STATE;
+    // A full roster stays full until an Amity is removed.
+    if(group.peers.size()>=maximum_roster_peers)return ESP_ERR_INVALID_SIZE;
     if(invitation_running.exchange(true))return ESP_ERR_INVALID_STATE;
     admission={};admission.view.scan_id=scan;admission.view.phase="scanning";
     invitation_cancelled=false;status.last_error.clear();

@@ -426,6 +426,7 @@ bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
     }
     if(path=="/api/membership/scan"){
         const auto e=amity::consortium::runtime_scan_admission(*m::MessageId::parse(id));
+        if(e==ESP_ERR_INVALID_SIZE){result=error(req,"capacity_reached","Up to "+std::to_string(amity::consortium::maximum_roster_peers+1)+" Amity devices are supported. Remove one before adding another.","409 Conflict");return true;}
         if(e!=ESP_OK){result=error(req,"scan_unavailable","The search could not start. Close this window and try again.","409 Conflict",true);return true;}
         finish();return true;
     }

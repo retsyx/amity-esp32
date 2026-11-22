@@ -156,7 +156,7 @@ void roster_capacity(){
     during_wait=select;run();
     assert(group.peers.size()==3&&saves==1&&wifi_exports==1&&admission.view.phase=="finishing");
     group.join_id={};group.joining_id={};group.join_digest.clear();group.join_hostname.clear();group.join_revision=0;
-    assert(runtime_scan_admission(ident<model::MessageId>(2))==ESP_ERR_INVALID_STATE&&!invitation_running);
+    assert(runtime_scan_admission(ident<model::MessageId>(2))==ESP_ERR_INVALID_SIZE&&!invitation_running);
     assert(reservations==1&&saves==1&&wifi_exports==1); // A fourth Add never starts radio or transfers credentials.
 
     reset();assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_OK);
