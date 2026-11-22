@@ -344,6 +344,11 @@ if(AMITY_HOST_TESTS MATCHES "^(all|standalone)$")
         LIBS amity_model amity_consortium OpenSSL::Crypto
         ARGS "${CMAKE_BINARY_DIR}/release-manifest.json"
         FIXTURES release_manifest)
+    amity_test(firmware_maintenance_test
+        SOURCES "${C}/system_services/firmware_update.cpp" "${C}/system_services/peer_firmware_update.cpp"
+            "${T}/firmware_maintenance_test.cpp"
+        INCLUDES "${T}/firmware_maintenance_fakes" "${C}/system_services/include" "${C}/config_store/include"
+            "${C}/amity_system/include")
     amity_python_tests(release_hardware_test.py update_bundle_test.py production_profile_test.py
         release_scripts_test.py)
 

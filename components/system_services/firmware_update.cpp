@@ -53,7 +53,9 @@ esp_err_t validate_release(std::string_view bytes,std::string_view proof,Release
 esp_err_t enter_maintenance(std::string& error){
     std::function<esp_err_t()> begin;{std::lock_guard<std::mutex> lock(mutex);begin=begin_hook;}
     const auto entered=begin?begin():ESP_ERR_INVALID_STATE;
-    if(entered!=ESP_OK)error="Amity is busy. Try the update again shortly.";
+    // The hook can pause control before its drain wait gives up. A refused
+    // entry leaves control running; nothing else would end that pause.
+    if(entered!=ESP_OK){error="Amity is busy. Try the update again shortly.";leave_maintenance();}
     return entered;
 }
 void leave_maintenance(){std::function<void()> end;{std::lock_guard<std::mutex> lock(mutex);end=end_hook;}if(end)end();}
