@@ -9,6 +9,7 @@
 #include "homekit.hpp"
 #include "device_settings.hpp"
 #include "config_store.hpp"
+#include "amity/system_sync.hpp"
 #include "ble_remote.h"
 #include "esp_app_desc.h"
 #include "esp_random.h"
@@ -59,8 +60,6 @@ hap_char_t *active, *active_input, *tv_name, *remote_key, *speaker_active, *mute
 hap_char_t *battery_level, *battery_low, *battery_charging;
 struct Input {
     hap_char_t *name=nullptr,*label=nullptr,*configured=nullptr,*visible=nullptr,*target_visible=nullptr;
-    std::string activity,alias;
-    bool hidden=false;
 };
 std::array<Input,16> inputs;
 // TLV8 list of every input Identifier (type 1, one byte), separated by empty type-0 items.
@@ -77,11 +76,23 @@ void update_string(hap_char_t *hc,const std::string &value){
     if(value==hap_char_get_val(hc)->s)return;
     hap_val_t v{};v.s=text(value.c_str());hap_char_update_val(hc,&v);
 }
-std::string input_key(unsigned index){return "hap_input_"+std::to_string(index);}
-esp_err_t save_input(unsigned index){
-    const auto &in=inputs[index];
-    std::string record=in.activity;record+='\0';record+=in.hidden?'1':'0';record+=in.alias;
-    return config_store::write(input_key(index).c_str(),record);
+// Input names and visibility live only in the saved configuration, which Matter
+// and backups share. A Home app edit is saved like any other configuration change.
+esp_err_t save_input(unsigned slot,const char *name,int hidden){
+    const auto configuration=hub->active_configuration();
+    if(!configuration)return ESP_ERR_INVALID_STATE;
+    auto candidate=*configuration;
+    const auto *activity=config_store::activity_for_slot(candidate,slot);
+    const auto entry=std::find_if(candidate.external_slots.begin(),candidate.external_slots.end(),[&](const auto &value){return value.slot==slot;});
+    if(!activity||activity->zone_id!=candidate.primary_zone_id||entry==candidate.external_slots.end())return ESP_ERR_INVALID_ARG;
+    // An alias equal to the activity name is not kept, so a later activity rename still shows.
+    if(name)entry->alias=activity->label==name?std::string{}:std::string(name);
+    if(hidden>=0)entry->hidden=hidden!=0;
+    const auto &previous=configuration->external_slots[entry-candidate.external_slots.begin()];
+    if(entry->alias==previous.alias&&entry->hidden==previous.hidden)return ESP_OK;
+    const auto request=amity::system::MessageId::generate([](uint8_t *data,size_t size){esp_fill_random(data,size);return true;});
+    if(!request)return ESP_ERR_NO_MEM;
+    return amity::activate_distributed_configuration(std::move(candidate),configuration->revisions(),*request);
 }
 void refresh_remote_battery(){
     ble_remote_status_t remote{};ble_remote_get_status(&remote);
@@ -110,34 +121,18 @@ void refresh_inputs(){
     const auto presentation=configuration?configuration->presentation_revision:0;
     if(!inputs_dirty&&revision==input_config_revision&&presentation==input_presentation_revision)return;
     std::vector<amity::system::ActivityId> order;
-    if(configuration)order=config_store::ordered_activities(*configuration);
+    std::vector<config_store::ExternalInput> saved;
+    if(configuration){order=config_store::ordered_activities(*configuration);saved=config_store::external_inputs(*configuration);}
     // Inputs follow the activity order; unused identifiers follow in ascending order.
     std::array<size_t,inputs.size()> rank{};
     for(unsigned i=0;i<inputs.size();++i){
-        const auto* activity=configuration?config_store::activity_for_slot(*configuration,i):nullptr;
-        if(activity&&activity->zone_id!=configuration->primary_zone_id)activity=nullptr;
-        const config_store::ExternalSlot* slot=nullptr;
-        if(configuration)for(const auto& value:configuration->external_slots)if(value.slot==i){slot=&value;break;}
-        auto &in=inputs[i];const bool exists=activity!=nullptr;
-        const std::string name=exists?activity->label:"Unused "+std::to_string(i+1);
-        const std::string identity=exists?hub->octopus_id().str()+":"+activity->activity_id.str():"tombstone:"+std::to_string(i);
-        if(in.activity!=identity){
-            in.activity=identity;in.alias=slot?slot->alias:std::string{};in.hidden=slot&&slot->hidden;
-            std::string record;
-            if(config_store::read(input_key(i).c_str(),record)==ESP_OK){
-                const auto split=record.find('\0');
-                if(split!=std::string::npos&&record.size()>split+1&&(record[split+1]=='0'||record[split+1]=='1')&&record.size()-split-2<=63&&record.find('\0',split+1)==std::string::npos){
-                    const auto guard=record.substr(0,split);
-                    const bool legacy=activity&&guard==activity->generated_label&&guard.size()<=63;
-                    if(guard==identity||legacy){in.hidden=record[split+1]=='1';in.alias=record.substr(split+2);if(legacy)save_input(i);}
-                }
-            }
-        }
-        update_string(in.name,in.alias.empty()?name:in.alias);
-        update_string(in.label,in.alias.empty()?name:in.alias);
-        update(in.configured,exists?1:0);update(in.visible,(!exists||in.hidden)?1:0);
-        update(in.target_visible,(!exists||in.hidden)?1:0);
-        rank[i]=exists?static_cast<size_t>(std::find(order.begin(),order.end(),activity->activity_id)-order.begin()):order.size()+i;
+        const auto input=std::find_if(saved.begin(),saved.end(),[&](const auto &value){return value.slot==i;});
+        const bool exists=input!=saved.end(),hidden=!exists||input->hidden;
+        const std::string name=exists?input->name:"Unused "+std::to_string(i+1);
+        auto &in=inputs[i];
+        update_string(in.name,name);update_string(in.label,name);
+        update(in.configured,exists?1:0);update(in.visible,hidden?1:0);update(in.target_visible,hidden?1:0);
+        rank[i]=exists?static_cast<size_t>(std::find(order.begin(),order.end(),input->activity_id)-order.begin()):order.size()+i;
     }
     refresh_display_order(rank);
     input_config_revision=revision;input_presentation_revision=presentation;inputs_dirty=false;
@@ -182,14 +177,9 @@ int write(hap_write_data_t data[],int count,void *,void *){
         else if(d.hc==tv_name&&d.val.s&&strlen(d.val.s)>0&&strlen(d.val.s)<=63)
             result=config_store::write("hap_name",d.val.s);
         else for(unsigned n=0;n<inputs.size();++n){
-            auto &in=inputs[n];
-            if(configuration&&!hub->external_activity(n))continue;
-            if(d.hc==in.name&&d.val.s&&strlen(d.val.s)>0&&strlen(d.val.s)<=63){
-                const auto old=in.alias;in.alias=d.val.s;result=save_input(n);if(result!=ESP_OK)in.alias=old;else inputs_dirty=true;break;
-            }
-            if(d.hc==in.target_visible&&(d.val.i==0||d.val.i==1)){
-                const bool old=in.hidden;in.hidden=d.val.i==1;result=save_input(n);if(result!=ESP_OK)in.hidden=old;else inputs_dirty=true;break;
-            }
+            const auto &in=inputs[n];
+            if(d.hc==in.name){if(d.val.s&&strlen(d.val.s)>0&&strlen(d.val.s)<=63)result=save_input(n,d.val.s,-1);break;}
+            if(d.hc==in.target_visible){if(d.val.i==0||d.val.i==1)result=save_input(n,nullptr,d.val.i);break;}
         }
         *d.status=result==ESP_OK?HAP_STATUS_SUCCESS:result==ESP_ERR_INVALID_ARG?HAP_STATUS_VAL_INVALID:HAP_STATUS_COMM_ERR;
         // Power/input/mute report observed hub state, not optimistic acknowledgements.
