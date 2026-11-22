@@ -1,6 +1,5 @@
 // Copyright 2026. SPDX-License-Identifier: GPL-3.0-or-later
 #include "amity/consortium/runtime.hpp"
-#include "config_store.hpp"
 #include "device_settings.hpp"
 #include "esp_wifi.h"
 #include "esp_netif.h"
@@ -8,7 +7,6 @@
 #include "esp_timer.h"
 #include "esp_matter.h"
 #include "platform/ESP32/NetworkCommissioningDriver.h"
-#include "platform/KeyValueStoreManager.h"
 #include "platform/PlatformManager.h"
 #include "esp_memory_utils.h"
 #include "freertos/FreeRTOS.h"
@@ -20,7 +18,6 @@
 #include <mbedtls/platform_util.h>
 namespace {
 namespace nc=chip::DeviceLayer::NetworkCommissioning;
-namespace model=amity::system;
 SemaphoreHandle_t transaction=nullptr,completed=nullptr;
 std::atomic_bool pending{false};bool staged=false;
 class Callback final:public nc::Internal::WirelessDriver::ConnectCallback {

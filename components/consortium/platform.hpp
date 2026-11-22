@@ -11,7 +11,6 @@
 #include <atomic>
 #include <mutex>
 namespace amity::consortium::platform {
-inline constexpr std::string_view origin_record_prefix="1:unprovisioned:";
 std::string hex(std::string_view);
 bool unhex(std::string_view,std::string &,size_t limit);
 std::string sha256(std::string_view);
