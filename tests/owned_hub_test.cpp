@@ -395,6 +395,7 @@ static void scoped_audio_fallback_chooses_display_owner(){
     std::vector<m::OwnedIntent> edges;
     hub.scoped_transport({{"display",display},{"source",source},{"receiver",receiver}},
         [&](auto& intent){if(intent.kind==m::OwnedIntentKind::key_edges)edges.push_back(intent);return m::OwnedDispatchResult{true,true};});
+    hub.scoped_owner(controller);
     assert(hub.configure_scoped({{"TV audio","display","source","","",0},
         {"Receiver audio","display","source","receiver","",0},{"Source only","","source","","",0}}));
     for(int phase=0;phase<3;++phase){

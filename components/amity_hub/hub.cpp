@@ -525,7 +525,7 @@ bool ActivityHub::publish_owned_context(bool source_changed,system::OctopusId ow
     const auto activity = current(); std::vector<system::CecPortRef> ports;
     for (const auto& selector : scoped_selectors_) {
         if(owner&&selector.target.port.octopus_id!=owner)continue;
-        if(scoped_owner_&&!owner&&selector.target.port.octopus_id!=scoped_owner_)continue;
+        if(!owner&&selector.target.port.octopus_id!=scoped_owner_)continue;
         auto port = selector.target.port; port.side = system::Side::front;
         if (std::find(ports.begin(), ports.end(), port) != ports.end()) continue;
         ports.push_back(port);
@@ -580,9 +580,10 @@ bool ActivityHub::select_activity(int index, ActionReady ready) {
     if(!activity_execution_){
         ActivityExecution execution;execution.before=current();execution.after=index<0?Activity{}:activities_[index];
         execution.before_names=names(execution.before);execution.after_names=names(execution.after);
-        if(scoped_owner_){const auto foreign=[&](const auto& name){const auto ref=target(name);return !ref||ref->port.octopus_id!=scoped_owner_;};
-            execution.before_names.erase(std::remove_if(execution.before_names.begin(),execution.before_names.end(),foreign),execution.before_names.end());
-            execution.after_names.erase(std::remove_if(execution.after_names.begin(),execution.after_names.end(),foreign),execution.after_names.end());}
+        // Each owner powers only its own devices; the others run their part.
+        const auto foreign=[&](const auto& name){const auto ref=target(name);return !ref||ref->port.octopus_id!=scoped_owner_;};
+        execution.before_names.erase(std::remove_if(execution.before_names.begin(),execution.before_names.end(),foreign),execution.before_names.end());
+        execution.after_names.erase(std::remove_if(execution.after_names.begin(),execution.after_names.end(),foreign),execution.after_names.end());
         execution.target=index;execution.repair=index==selected_;
         execution.step=execution.repair?ActivityExecution::Step::On:ActivityExecution::Step::Release;
         if(execution.repair)execution.before_names.clear();
@@ -617,7 +618,7 @@ bool ActivityHub::select_activity(int index, ActionReady ready) {
         execution.cursor=0;execution.step=on?Step::Announce:Step::On;break;
     }
     case Step::Source:
-        if(scoped_owner_)if(const auto source=target(execution.after.source);source&&source->port.octopus_id!=scoped_owner_){
+        if(const auto source=target(execution.after.source);source&&source->port.octopus_id!=scoped_owner_){
             const auto sw=target(execution.after.switch_device);
             execution.step=sw&&sw->port.octopus_id==scoped_owner_?Step::Switch:Step::Commit;break;
         }
@@ -634,7 +635,7 @@ bool ActivityHub::select_activity(int index, ActionReady ready) {
         execution.step=execution.source_present&&!*execution.source_present?Step::Switch:Step::Commit;
         break;
     case Step::Switch:
-        if(scoped_owner_)if(const auto sw=target(execution.after.switch_device);sw&&sw->port.octopus_id!=scoped_owner_){execution.step=Step::Commit;break;}
+        if(const auto sw=target(execution.after.switch_device);sw&&sw->port.octopus_id!=scoped_owner_){execution.step=Step::Commit;break;}
         if(!execution.switch_started){
             execution.switch_started=true;
             if(!execution.after.switch_device.empty())owned(system::OwnedIntentKind::switch_input,execution.after.switch_device,false,execution.after.switch_input);
@@ -649,7 +650,7 @@ bool ActivityHub::select_activity(int index, ActionReady ready) {
             // Do this before requesting the source, so its immediate reply
             // follows the final routing step and sees the committed activity.
             // The source owner must not claim an unselected display adapter.
-            if(!scoped_owner_||(display&&display->port.octopus_id==scoped_owner_))active_source(execution.after.display);
+            if(display&&display->port.octopus_id==scoped_owner_)active_source(execution.after.display);
         }
         execution.step=Step::Source;if(pause_after_step())return false;break;
     case Step::Commit:
@@ -674,7 +675,7 @@ bool ActivityHub::select_activity(int index, ActionReady ready) {
 
 void ActivityHub::request_audio_status() {
     const auto recipient=key_name(0x41);
-    if(scoped_owner_){const auto audio=target(recipient);if(!audio||audio->port.octopus_id!=scoped_owner_)return;}
+    if(const auto audio=target(recipient);!audio||audio->port.octopus_id!=scoped_owner_)return;
     owned(system::OwnedIntentKind::query_audio,recipient);
 }
 
@@ -682,7 +683,7 @@ bool ActivityHub::standby(ActionReady ready) {
     if(activity_execution_&&activity_execution_->target!=-1)return false;
     if (selected_ < 0 && !activity_execution_) {
         ActivityExecution execution;execution.target=-1;execution.step=ActivityExecution::Step::ForceOwned;
-        for(const auto& selector:scoped_selectors_)if(!scoped_owner_||selector.target.port.octopus_id==scoped_owner_)for(const auto side:{system::Side::front,system::Side::back}){auto port=selector.target.port;port.side=side;if(std::find(execution.force_ports.begin(),execution.force_ports.end(),port)==execution.force_ports.end())execution.force_ports.push_back(port);}
+        for(const auto& selector:scoped_selectors_)if(selector.target.port.octopus_id==scoped_owner_)for(const auto side:{system::Side::front,system::Side::back}){auto port=selector.target.port;port.side=side;if(std::find(execution.force_ports.begin(),execution.force_ports.end(),port)==execution.force_ports.end())execution.force_ports.push_back(port);}
         for(auto port:scoped_owner_ports_)for(const auto side:{system::Side::front,system::Side::back}){port.side=side;if(std::find(execution.force_ports.begin(),execution.force_ports.end(),port)==execution.force_ports.end())execution.force_ports.push_back(port);}
         if(next_owned_generation_){owned_generation_=*next_owned_generation_;next_owned_generation_.reset();}
         activity_execution_=std::move(execution);if(ready)ready();
