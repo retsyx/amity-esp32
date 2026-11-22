@@ -1,7 +1,8 @@
 // Copyright 2026. SPDX-License-Identifier: GPL-3.0-or-later
 // Real recipe steps on the owner that runs them: admission, IPC capacity,
-// per-Amity sequencing across adapters, authority loss, resolver FIFO order
-// and the source context commit. Each scenario runs in its own process.
+// per-Amity sequencing across adapters, authority loss, resolver FIFO order,
+// the source context commit and the key holds a recipe press sees. Each
+// scenario runs in its own process.
 #include "cec_hub_fixture.hpp"
 #include <string>
 using namespace amity;
@@ -31,6 +32,19 @@ static bool pending(int gpio,std::initializer_list<uint8_t> data){
 static void finish_recipe(HubService& hub,int target){
     fixture_complete_all();fixture_async_autocomplete=true;
     for(unsigned pass=0;pass<64&&(hub.snapshot().current_activity!=target||hub.activity_setup_in_progress()||!fixture_pending.empty());++pass)run_idle(1);
+}
+// The payloads sent on one wire since a point in the sent log.
+using Payloads=std::vector<std::vector<uint8_t>>;
+static Payloads wire_since(int gpio,size_t from){
+    Payloads frames;
+    for(size_t i=from;i<fixture_sent.size();++i)if(fixture_sent[i].gpio==gpio)
+        frames.emplace_back(fixture_sent[i].frame.data+1,fixture_sent[i].frame.data+fixture_sent[i].frame.size);
+    return frames;
+}
+static void print_wire(const char* label,const Payloads& frames){
+    std::printf("%s:",label);
+    for(const auto& frame:frames){std::printf(" [");for(size_t i=0;i<frame.size();++i)std::printf("%s%02x",i?" ":"",frame[i]);std::printf("]");}
+    std::printf("\n");
 }
 
 // A settings commit closes ordinary owner IPC until the owner rejects it. The
@@ -341,6 +355,142 @@ static void route_completion_commits_before_policy(){
     std::puts("A policy continuation created during the new route does not restore the previous source");
 }
 
+// A repair leaves button input open. Volume Up is pressed while the repair
+// waits for Volume Down's key cleanup, so it is held on the audio recipient,
+// Source, when the repair starts. The repair releases it and, in the same
+// owner pass, powers Source on. No key remains pressed there, so that finite
+// press must end with a release.
+static void power_press_after_audio_key_released(){
+    fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
+    LocalHubService hub;assert(fixture_start(hub,1,2)==ESP_OK);
+    assert(fixture_configure(hub,{{"Watch","TV","Source","Source","",0}}));run_one_command();fixture_finish_discovery(hub);
+    assert(hub.request_activity(0)==ESP_OK);run_one_command();finish_recipe(hub,0);
+    assert(hub.press_key(0x42,true));run_one_command();run_idle(2);
+    assert(count(2,{0x44,0x42})>=1);
+    const auto from=fixture_sent.size();
+    assert(hub.repair_activity()==ESP_OK);
+    assert(hub.press_key(0x41,true));
+    run_idle(8);
+    for(unsigned pass=0;pass<32&&(hub.snapshot().activity_settling||hub.activity_setup_in_progress());++pass)run_idle(1);
+    run_idle(4);
+    const auto source=wire_since(2,from);print_wire("source wire",source);
+    const Payloads::value_type press{0x44,0x6d},release{0x45},volume_up{0x44,0x41};
+    const auto at=std::find(source.begin(),source.end(),press);
+    std::printf("current=%d setup=%d powered=%d\n",hub.snapshot().current_activity,hub.activity_setup_in_progress(),at!=source.end());
+    assert(hub.snapshot().current_activity==0&&!hub.activity_setup_in_progress());
+    assert(std::count(source.begin(),source.end(),press)==1);
+    // The repair released Volume Up before the press, and nothing repeats it.
+    assert(std::find(source.begin(),at,release)!=at&&std::find(at,source.end(),volume_up)==source.end());
+    assert(at+1!=source.end()&&*(at+1)==release);
+    std::puts("After a repair releases a held audio key, its recipe press to that recipient ends with a release");
+}
+
+// A repair leaves button input open. Its TV power TX completes while the
+// owner answers the TV, between the two resume_discovered() calls of one
+// owner pass, and the same pass then takes Volume Up, held on the audio
+// recipient, Source. The next pass's first resume_discovered() continues the
+// repair with Source's finite power press. Volume Up is still pressed there,
+// so that press must not end with a release: the hold goes on until Volume
+// Up's own key-up releases it.
+static void power_press_while_audio_key_held(){
+    fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
+    LocalHubService hub;assert(fixture_start(hub,1,2)==ESP_OK);
+    assert(fixture_configure(hub,{{"Watch","TV","Source","Source","",0}}));run_one_command();fixture_finish_discovery(hub);
+    assert(hub.request_activity(0)==ESP_OK);run_one_command();finish_recipe(hub,0);
+    const auto front=fixture_adapter(hub).front_address;assert(front<15);
+    fixture_tick=0;fixture_async_autocomplete=false;
+    const auto from=fixture_sent.size();
+    assert(hub.repair_activity()==ESP_OK);run_one_command();run_idle(2);
+    assert(fixture_pending.size()==1&&pending(1,{0x04}));
+    bool answered=false;
+    fixture_send=[&](int gpio,const cec::Frame& frame){
+        if(!answered&&gpio==1&&frame.size>1&&frame.data[1]==0x84){
+            // The TV power TX completes now; the answer completes at once.
+            answered=true;assert(fixture_complete_next(cec::TxResult::Success,1));fixture_async_autocomplete=true;
+        }
+        return true;
+    };
+    fixture_incoming.push_back({1,{{static_cast<uint8_t>(front),0x83},2}});
+    assert(hub.press_key(0x41,true));
+    run_one_command();
+    fixture_send={};
+    for(unsigned pass=0;pass<16;++pass){fixture_complete_all();run_idle(1);}
+    auto source=wire_since(2,from);print_wire("source wire while held",source);
+    const Payloads::value_type press{0x44,0x6d},release{0x45},volume_up{0x44,0x41};
+    const auto at=std::find(source.begin(),source.end(),press);
+    std::printf("answered=%d current=%d powered=%d releases=%zu\n",answered,hub.snapshot().current_activity,at!=source.end(),
+        static_cast<size_t>(std::count(source.begin(),source.end(),release)));
+    assert(answered&&hub.snapshot().current_activity==0&&!hub.activity_setup_in_progress());
+    assert(at!=source.end()&&std::count(source.begin(),source.end(),press)==1);
+    // Volume Up was already held on Source, and its repeats go on after the press.
+    assert(std::find(source.begin(),at,volume_up)!=at&&std::find(at,source.end(),volume_up)!=source.end());
+    assert(std::count(source.begin(),source.end(),release)==0);
+    const auto held=source.size();
+    assert(hub.release_key(0x41));run_one_command();run_idle(4);
+    source=wire_since(2,from);print_wire("after key-up",Payloads(source.begin()+held,source.end()));
+    assert(std::count(source.begin(),source.end(),release)==1&&std::find(source.begin(),source.end(),release)>=source.begin()+held);
+    assert(std::find(std::find(source.begin(),source.end(),release),source.end(),volume_up)==source.end());
+    fixture_tick=100000;
+    std::puts("A recipe press to the audio recipient keeps a held audio key pressed until its key-up");
+}
+
+// A repair's Source power step waits behind adapter 1's answer to its TV, an
+// activity-paced frame. Volume Up is pressed and held on Source meanwhile.
+// The answer's TX completes as Volume Up's press is sent, so the step resumes
+// from the deferred FIFO in the next owner pass's first resume_discovered().
+// Volume Up is still pressed on Source, so the power press must not end with
+// a release.
+static void deferred_power_press_while_audio_key_held(){
+    fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
+    fixture_peer_address=[](int gpio)->uint8_t{return gpio%2?0:4;};
+    LocalHubService hub;assert(fixture_start(hub,two_adapters)==ESP_OK);
+    const auto group=fixture_local::group();const auto owner=fixture_local::owner();
+    assert(hub.configure_scoped({{"Watch","display","source","source","",0,fixture_local::id<m::ActivityId>(100)}},
+        {{"display",{{group,owner,0,m::Side::front},"TV"}},{"source",{{group,owner,0,m::Side::back},"Source"}}},{},owner,1)==ESP_OK);
+    run_one_command();fixture_finish_discovery(hub);
+    assert(hub.request_activity(0)==ESP_OK);run_one_command();finish_recipe(hub,0);
+    uint8_t front=15;for(const auto& report:hub.owned_snapshots())if(report.owner==owner&&report.adapter==1)front=report.front_address;
+    assert(front<15);
+    fixture_tick=0;fixture_async_autocomplete=false;
+    const auto from=fixture_sent.size();
+    const Payloads::value_type press{0x44,0x6d},release{0x45},volume_up{0x44,0x41};
+    assert(hub.repair_activity()==ESP_OK);run_one_command();run_idle(2);
+    assert(fixture_pending.size()==1&&pending(1,{0x04}));
+    // The TV power TX completes as adapter 1's TV asks for its physical address.
+    assert(fixture_complete_next(cec::TxResult::Success,1));
+    fixture_incoming.push_back({5,{{static_cast<uint8_t>(front),0x83},2}});
+    run_idle(1);
+    const auto answering=std::any_of(fixture_pending.begin(),fixture_pending.end(),[](const auto& tx){return tx.gpio==5&&tx.frame.data[1]==0x84;});
+    const auto waiting=wire_since(2,from);
+    std::printf("answer_pending=%d power_presses=%zu\n",answering,static_cast<size_t>(std::count(waiting.begin(),waiting.end(),press)));
+    assert(answering&&std::count(waiting.begin(),waiting.end(),press)==0); // The answer holds the Source power step.
+    bool completed=false;
+    fixture_send=[&](int gpio,const cec::Frame& frame){
+        if(!completed&&gpio==2&&frame_is(frame,{0x44,0x41})){completed=true;assert(fixture_complete_next(cec::TxResult::Success,5));}
+        return true;
+    };
+    assert(hub.press_key(0x41,true));
+    run_one_command();
+    fixture_send={};
+    fixture_async_autocomplete=true;
+    for(unsigned pass=0;pass<16;++pass){fixture_complete_all();run_idle(1);}
+    auto source=wire_since(2,from);print_wire("source wire while held",source);
+    const auto at=std::find(source.begin(),source.end(),press);
+    std::printf("completed=%d current=%d powered=%d releases=%zu\n",completed,hub.snapshot().current_activity,at!=source.end(),
+        static_cast<size_t>(std::count(source.begin(),source.end(),release)));
+    assert(completed&&hub.snapshot().current_activity==0&&!hub.activity_setup_in_progress());
+    assert(at!=source.end()&&std::count(source.begin(),source.end(),press)==1);
+    assert(std::find(source.begin(),at,volume_up)!=at&&std::find(at,source.end(),volume_up)!=source.end());
+    assert(std::count(source.begin(),source.end(),release)==0);
+    const auto held=source.size();
+    assert(hub.release_key(0x41));run_one_command();run_idle(4);
+    source=wire_since(2,from);print_wire("after key-up",Payloads(source.begin()+held,source.end()));
+    assert(std::count(source.begin(),source.end(),release)==1&&std::find(source.begin(),source.end(),release)>=source.begin()+held);
+    assert(std::find(std::find(source.begin(),source.end(),release),source.end(),volume_up)==source.end());
+    fixture_peer_address={};fixture_tick=100000;
+    std::puts("A deferred recipe press to the audio recipient keeps a held audio key pressed");
+}
+
 int main(int argc,char** argv){
     const std::string scenario=argc>1?argv[1]:"";
     if(scenario=="settings-commit")step_during_settings_commit();
@@ -355,5 +505,8 @@ int main(int argc,char** argv){
     else if(scenario=="lookup-waiter-first")lookup_fifo(false);
     else if(scenario=="lookup-step-first")lookup_fifo(true);
     else if(scenario=="route-commit")route_completion_commits_before_policy();
+    else if(scenario=="audio-key-released")power_press_after_audio_key_released();
+    else if(scenario=="audio-key-held")power_press_while_audio_key_held();
+    else if(scenario=="audio-key-held-deferred")deferred_power_press_while_audio_key_held();
     else{std::fprintf(stderr,"unknown scenario '%s'\n",scenario.c_str());return 2;}
 }

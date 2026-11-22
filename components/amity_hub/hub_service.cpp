@@ -789,6 +789,10 @@ struct HubService::Impl : Adapter {
                 }
                 complete_owned(command,command.action().owned_result);return true;
             }
+            // A recipe press ends with a release unless an audio key is held
+            // on its recipient now. A step can run before this owner pass
+            // refreshes that hold, right after a key edge changed it.
+            if(command.local_activity_step)refresh_audio_hold();
             const auto result=engine?engine->execute_owned(command.action().owned,command.action().auth,false,command.owned_input_announced,command.action().activity_instance,command.local_activity_step):
                 system::AdmissionResult{system::AdmissionCode::invalid,"Unknown HDMI adapter"};
 
