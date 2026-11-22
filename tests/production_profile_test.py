@@ -40,11 +40,11 @@ with tempfile.TemporaryDirectory() as directory:
     root=bytes(range(64));source=path/'root-nvs.bin';source.write_bytes(root+zlib.crc32(root,0xffffffff).to_bytes(4,'little')+b'\xff'*(4096-68))
     try:
         files=profile.storage_keys(source,path/'private-keys')
-        expected=('d18780a0fe11189ccfcb13b418ac3801db33224df7aa339024bd03b8c07199d089606d9e434526e9c2ad8e5820e7bf2fbc3d5d2733b509c38314620687ddc76b','e1b5a4d51e255acdb0be4899a6edbe9bf958094a47aa4262eb42a272590f5eecb19b1aef0a36fd157ab223d7c3e44f5ee9d663653c8b705096c8749d1fa6152e')
-        for target,vector in zip(files,expected):
-            data=target.read_bytes();assert data[:64].hex()==vector and len(data)==4096 and zlib.crc32(data[:64],0xffffffff)==int.from_bytes(data[64:68],'little')
-            assert target.stat().st_mode&0o777==0o600
-        assert files[0].read_bytes()!=files[1].read_bytes()
+        assert [target.name for target in files]==['amity_cfg.nvs-key.bin']
+        data=files[0].read_bytes()
+        assert data[:64].hex()=='d18780a0fe11189ccfcb13b418ac3801db33224df7aa339024bd03b8c07199d089606d9e434526e9c2ad8e5820e7bf2fbc3d5d2733b509c38314620687ddc76b'
+        assert len(data)==4096 and zlib.crc32(data[:64],0xffffffff)==int.from_bytes(data[64:68],'little')
+        assert files[0].stat().st_mode&0o777==0o600 and data[:64]!=root
         source.write_bytes(b'\x00'*4096)
         try:profile.storage_keys(source,path/'bad')
         except ValueError:pass

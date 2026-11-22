@@ -34,11 +34,9 @@ static esp_err_t init_direct() {
     static_assert(sizeof(nvs_sec_cfg_t)==64,"NVS key derivation requires the pinned 64-byte XTS key layout");
     nvs_sec_cfg_t scoped{};
     if(result==ESP_OK)result=nvs_flash_secure_init_partition("nvs",&cfg);
-    for(const auto* partition:{"amity_cfg","fctry"}){
-        if(result==ESP_OK&&!derive_production_storage_key(partition,reinterpret_cast<const uint8_t*>(&cfg),reinterpret_cast<uint8_t*>(&scoped)))result=ESP_FAIL;
-        if(result==ESP_OK)result=nvs_flash_secure_init_partition(partition,&scoped);
-        volatile uint8_t* key=reinterpret_cast<volatile uint8_t*>(&scoped);for(size_t n=0;n<sizeof(scoped);++n)key[n]=0;
-    }
+    if(result==ESP_OK&&!derive_production_storage_key(reinterpret_cast<const uint8_t*>(&cfg),reinterpret_cast<uint8_t*>(&scoped)))result=ESP_FAIL;
+    if(result==ESP_OK)result=nvs_flash_secure_init_partition("amity_cfg",&scoped);
+    volatile uint8_t* key=reinterpret_cast<volatile uint8_t*>(&scoped);for(size_t n=0;n<sizeof(scoped);++n)key[n]=0;
     volatile uint8_t* bytes=reinterpret_cast<volatile uint8_t*>(&cfg);for(size_t n=0;n<sizeof(cfg);++n)bytes[n]=0;
     return result;
 #else

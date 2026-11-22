@@ -34,7 +34,7 @@ func fixture() (manifest, map[string][]byte) {
 		{"esp_secure_cert", 0x3f, 6, 0xd000, 0x2000, 1}, {"amity_factory", 1, 0x40, 0xf000, 0x1000, 0},
 		{"nvs", 1, 2, 0x10000, 0x10000, 0}, {"nvs_keys", 1, 4, 0x20000, 0x1000, 1}, {"otadata", 1, 0, 0x21000, 0x2000, 0},
 		{"phy_init", 1, 1, 0x23000, 0x1000, 0}, {"amity_cfg", 1, 2, 0x24000, 0x1c000, 0},
-		{"ota_0", 0, 0x10, 0x40000, 0x3d0000, 0}, {"ota_1", 0, 0x11, 0x410000, 0x3d0000, 0}, {"fctry", 1, 2, 0x7e0000, 0x20000, 0},
+		{"ota_0", 0, 0x10, 0x40000, 0x3d0000, 0}, {"ota_1", 0, 0x11, 0x410000, 0x3d0000, 0},
 	} {
 		row := make([]byte, 32)
 		binary.LittleEndian.PutUint16(row, 0x50aa)
@@ -110,7 +110,7 @@ func TestBundleRejections(t *testing.T) {
 	cases := map[string]func(*manifest, map[string][]byte){
 		"old layout":             func(m *manifest, f map[string][]byte) { f["partition-table.bin"][32] = 0xff },
 		"encrypted factory":      func(m *manifest, f map[string][]byte) { f["partition-table.bin"][60] = 1 },
-		"bad partition checksum": func(m *manifest, f map[string][]byte) { f["partition-table.bin"][340] ^= 1 },
+		"bad partition checksum": func(m *manifest, f map[string][]byte) { f["partition-table.bin"][308] ^= 1 },
 		"wrong chip":             func(m *manifest, f map[string][]byte) { f["amity.bin"][12] = 5 },
 		"overlap":                func(m *manifest, f map[string][]byte) { m.Images[3].Offset = 0xf000 },
 		"unsupported format":     func(m *manifest, f map[string][]byte) { m.Version = 4 },

@@ -65,9 +65,9 @@ def audit(config,table,key):
         if any(current[field]!=entry[field] for field in ('type','subtype','offset','size')):errors.append('Unsupported partition geometry: '+name)
     for name in ('amity_factory','nvs_keys','esp_secure_cert'):
         if not table.get(name,{}).get('encrypted'):errors.append('Flash encryption flag required: '+name)
-    for name in ('amity_cfg','nvs','fctry'):
+    for name in ('amity_cfg','nvs'):
         if table.get(name,{}).get('encrypted'):errors.append('NVS uses its own secure initialization, not raw flash encryption: '+name)
-    return dict(profile_valid=not errors,errors=errors,security_profile='production',hardware_profile=hardware_profile,hardware_mapping_sha256=hardware_mapping,publisher_key_id=hashlib.sha256(key).hexdigest(),native_boot_verification='requires signed-image and provisioned-device evidence',nvs_key_policy='existing SDK NVS root; HKDF-SHA256 v1 per-partition keys for amity_cfg/fctry; no automatic replacement',production_qualified=False,device_mutations=False)
+    return dict(profile_valid=not errors,errors=errors,security_profile='production',hardware_profile=hardware_profile,hardware_mapping_sha256=hardware_mapping,publisher_key_id=hashlib.sha256(key).hexdigest(),native_boot_verification='requires signed-image and provisioned-device evidence',nvs_key_policy='existing SDK NVS root; HKDF-SHA256 v1 partition key for amity_cfg; no automatic replacement',production_qualified=False,device_mutations=False)
 
 
 def prepare(key,native_reference,out,board_config=None):
@@ -102,7 +102,7 @@ def storage_keys(partition_file,out):
         raise ValueError('Expected the pinned SDK 4096-byte NVS keys partition with valid CRC')
     out.mkdir(parents=True,exist_ok=True);os.chmod(out,0o700)
     paths=[]
-    for name in ('amity_cfg','fctry'):
+    for name in ('amity_cfg',):
         key=HKDF(algorithm=hashes.SHA256(),length=64,salt=b'Amity production NVS v1',info=('amity/nvs/partition/'+name).encode()).derive(data[:64])
         value=key+zlib.crc32(key,0xffffffff).to_bytes(4,'little')+b'\xff'*(4096-68)
         target=out/(name+'.nvs-key.bin')

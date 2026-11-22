@@ -143,7 +143,7 @@ func loadBundle(path string) (*bundle, error) {
 }
 func validatePartitions(data []byte) error {
 	// Only the supported layout can be provisioned. Verify the table's own checksum as well.
-	expected := map[string][4]uint32{"esp_secure_cert": {0x3f, 6, 0xd000, 0x2000}, "amity_factory": {1, 0x40, 0xf000, 0x1000}, "nvs": {1, 2, 0x10000, 0x10000}, "nvs_keys": {1, 4, 0x20000, 0x1000}, "otadata": {1, 0, 0x21000, 0x2000}, "phy_init": {1, 1, 0x23000, 0x1000}, "amity_cfg": {1, 2, 0x24000, 0x1c000}, "ota_0": {0, 0x10, 0x40000, 0x3d0000}, "ota_1": {0, 0x11, 0x410000, 0x3d0000}, "fctry": {1, 2, 0x7e0000, 0x20000}}
+	expected := map[string][4]uint32{"esp_secure_cert": {0x3f, 6, 0xd000, 0x2000}, "amity_factory": {1, 0x40, 0xf000, 0x1000}, "nvs": {1, 2, 0x10000, 0x10000}, "nvs_keys": {1, 4, 0x20000, 0x1000}, "otadata": {1, 0, 0x21000, 0x2000}, "phy_init": {1, 1, 0x23000, 0x1000}, "amity_cfg": {1, 2, 0x24000, 0x1c000}, "ota_0": {0, 0x10, 0x40000, 0x3d0000}, "ota_1": {0, 0x11, 0x410000, 0x3d0000}}
 	for i := 0; i+32 <= len(data); i += 32 {
 		row := data[i : i+32]
 		magic := binary.LittleEndian.Uint16(row)
