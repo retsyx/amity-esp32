@@ -90,7 +90,6 @@ struct Bus::Impl::Runtime {
     gptimer_handle_t timer = nullptr;
     bool enabled = false, running = false;
     RuntimeStatistics stats;
-    uint64_t previous_tick = 0;
     TaskHandle_t task = nullptr;
 
     static void run(void* context) {
@@ -142,7 +141,6 @@ struct Bus::Impl::Runtime {
         running = enabled = false;
         timer = nullptr;
         portENTER_CRITICAL(&lock);
-        previous_tick = 0;
         stats.timer_instances = 0;
         portEXIT_CRITICAL(&lock);
     }
@@ -207,16 +205,6 @@ bool Bus::Impl::Runtime::tick(gptimer_handle_t, const gptimer_alarm_event_data_t
             if (status == TxResult::LineError) ++p->stats.line_errors;
         }
     }
-    ++r.stats.ticks;
-    if (r.previous_tick) {
-        const uint64_t gap = now - r.previous_tick;
-        const uint32_t bounded = gap > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(gap);
-        if (bounded > r.stats.max_tick_gap_us) r.stats.max_tick_gap_us = bounded;
-        if (gap > 200) ++r.stats.late_ticks;
-    }
-    r.previous_tick = now;
-    const uint32_t duration = static_cast<uint32_t>(esp_timer_get_time() - now);
-    if (duration > r.stats.max_isr_us) r.stats.max_isr_us = duration;
     portEXIT_CRITICAL_ISR(&r.lock);
     return wake == pdTRUE;
 }

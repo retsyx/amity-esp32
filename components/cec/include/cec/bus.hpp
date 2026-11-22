@@ -17,7 +17,6 @@ struct Statistics {
     uint32_t tx_queue_high_water = 0, arbitration_losses = 0, line_errors = 0, retries = 0, cancelled = 0;
 };
 struct RuntimeStatistics {
-    uint32_t ticks = 0, late_ticks = 0, max_tick_gap_us = 0, max_isr_us = 0;
     uint8_t active_ports = 0;
     uint8_t timer_instances = 0;
 };

@@ -109,7 +109,8 @@ static unsigned task_notifications = 0;
 uint32_t ulTaskNotifyTake(BaseType_t, uint32_t ticks) { vTaskDelay(ticks); return 0; }
 void xTaskNotifyGive(TaskHandle_t) { ++task_notifications; }
 void vTaskNotifyGiveFromISR(TaskHandle_t, BaseType_t *) { ++task_notifications; }
-int64_t esp_timer_get_time() { return now; }
+static unsigned clock_reads = 0;
+int64_t esp_timer_get_time() { ++clock_reads; return now; }
 esp_err_t gpio_config(const gpio_config_t *) { return ESP_OK; }
 void gpio_ll_set_level(Gpio *, gpio_num_t pin, int high) {
     const uint64_t mask = uint64_t{1} << pin;
@@ -531,6 +532,23 @@ static void independent_epoch_fence_tests() {
     assert(!timer&&tasks.empty()&&!output_low);
 }
 
+// The shared 50 us timer ISR samples the clock once for every engine in the
+// bank and keeps no bookkeeping that nothing reads.
+static void timer_tick_clock_tests() {
+    cec::Bus idle_line, busy_line;
+    assert(idle_line.start(33) == ESP_OK && busy_line.start(34) == ESP_OK);
+    for (unsigned pass = 0; pass < 4; ++pass) {
+        const auto before = clock_reads; step(); assert(clock_reads - before == 1);
+    }
+    cec::TxCompletion completion;
+    assert(busy_line.send_async_guarded({{0x4f, 0x36}, 2}, {}, completion, 1));
+    for (unsigned pass = 0; pass < 4000 && completion.result.load() == cec::TxResult::Pending; ++pass) {
+        const auto before = clock_reads; step(); assert(clock_reads - before == 1);
+        if (pass % 20 == 0) pump();
+    }
+    finish(completion);
+    assert(completion.result.load() == cec::TxResult::Success);
+}
 int main() {
     std::atomic<uint32_t> generation{7};
     std::atomic<uint32_t> key_generation{3};
@@ -655,6 +673,7 @@ int main() {
     receive_fifo_tests();
     full_fifo_tests();
     independent_epoch_fence_tests();
+    timer_tick_clock_tests();
     std::puts("Real Bus shared-timer lifecycle, queued/start-edge cancellation and in-flight completion passed");
     std::puts("Real Bus sole FIFO8, logged full drops, copied frames, caller budgets and independent completions passed");
 }
