@@ -38,7 +38,7 @@ function fixture(options={}){
   membership:{membership_revision:'11',peers:options.savedOnly?[]:[{octopus_id:member,enrolled:true,ready:true,boot_id:'c'.repeat(32)}]}};
  if(options.metadataOnly){configuration.octopuses=configuration.octopuses.slice(0,1);configuration.components=[];configuration.activities=configuration.activities.slice(-1);}
  const previous={consortium_id:'d'.repeat(32),octopus_id:member,tentacle_id:0,side:'front',osd_name:'Display'},soundbar={...previous,osd_name:'Soundbar'};
- const admission={scan_id:null,phase:'scanning',error:'',requires_setup_code:false,candidates:[],candidate_id:null};let generation=1;
+ const admission={scan_id:null,phase:'scanning',error:'',candidates:[],candidate_id:null};let generation=1;
  const observed=()=>({resolved:true,title:'Display',qualified_name:{...previous,octopus_id:other,side:options.moved?'back':'front'}});
  const join=()=>{
   configuration.octopuses.push({octopus_id:other,supported_tentacles:1});system.named_devices.push({octopus_id:other,hostname:'amity-replacement'});

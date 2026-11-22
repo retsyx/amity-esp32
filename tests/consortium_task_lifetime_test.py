@@ -21,9 +21,7 @@ bool invitation_running=true;
 struct Tracked {~Tracked(){++destroyed;}};
 struct Active:Tracked{};
 struct InviteRequest {std::string scan_id;};
-enum class AdmissionMode {button};
-AdmissionMode configured_admission_mode(){return AdmissionMode::button;}
-struct AdmissionClient:Tracked {AdmissionClient(AdmissionMode,uint32_t){}};
+struct AdmissionClient:Tracked {};
 struct Id {std::string str()const{return "public-test-id";}};
 struct TaskDeleted{};
 // Observe BEFORE throwing. Host unwinding only cleans up the deliberately
@@ -65,9 +63,9 @@ def main():
         if 'vTaskDelete' in body:
             raise AssertionError('An owning worker still bypasses C++ return/destruction')
     actual='void active_loop_work(void *arg){'+ownership_prefix(active_body)+'}\n'
-    client=invite_body[invite_body.index('AdmissionClient client('):]
+    client=invite_body[invite_body.index('AdmissionClient client'):]
     client=client[:client.index(';')+1]
-    actual+='void invite_worker_work(void *arg){std::unique_ptr<InviteRequest> invite(static_cast<InviteRequest*>(arg));uint32_t pin=0;'+client+'}\n'
+    actual+='void invite_worker_work(void *arg){std::unique_ptr<InviteRequest> invite(static_cast<InviteRequest*>(arg));'+client+'}\n'
     actual+=function(runtime,'void active_loop(void *arg)')+function(runtime,'void invite_worker(void *arg)')
     baseline=args.baseline_source.read_text() if args.baseline_source else active_body
     old=function(baseline,'void active_loop(void *arg)') if args.baseline_source else active_body

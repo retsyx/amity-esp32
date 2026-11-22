@@ -3,7 +3,6 @@
 #include "platform.hpp"
 #include "amity/consortium/bootstrap.hpp"
 #include "admission_crypto.hpp"
-#include "device_settings.hpp"
 #include "platform/CHIPDeviceLayer.h"
 #include "platform/internal/BLEManager.h"
 #include "freertos/FreeRTOS.h"
@@ -40,7 +39,7 @@ QueueHandle_t create_work_queue(){return xQueueCreateStatic(work_queue_capacity,
 std::mutex state_mutex;
 uint64_t generation=0,deadline=0,server_session=0;
 uint16_t server_connection=BLE_HS_CONN_HANDLE_NONE,attribute_handle=0;
-std::string srv_response,advertised_name,server_id;uint32_t server_pin=0,server_callback_cookie=0;
+std::string srv_response,advertised_name,server_id;uint32_t server_callback_cookie=0;
 BootstrapHandler server_handler;
 bool server_open=false,server_sealed=false,registered=false;
 std::atomic_uint failed_proofs{0};
@@ -73,10 +72,10 @@ void worker(void*){
         }
         processing_record=true;WorkFinished finished;
         if(work.close){close_channel();continue;}
-        std::string own_id;uint32_t pin=0;
+        std::string own_id;
         {std::lock_guard<std::mutex> guard(state_mutex);
             if(!server_open||generation!=work.generation||server_session!=work.session||server_connection!=work.connection||now_ms()>=deadline||failed_proofs>=5)continue;
-            own_id=server_id;pin=server_pin;
+            own_id=server_id;
         }
         if(channel_live&&(channel_generation!=work.generation||channel_session!=work.session))close_channel();
         if(!channel_live){
@@ -100,7 +99,7 @@ void worker(void*){
                 if(tested_generation!=work.generation){
                     // Run only after a complete handshake request in the user's
                     // physical window, outside runtime/transport locks.
-                    self_test_passed=admission_crypto_self_test(configured_admission_mode());
+                    self_test_passed=admission_crypto_self_test();
                     tested_generation=work.generation;
                 }
                 bool current=false;{std::lock_guard<std::mutex> guard(state_mutex);
@@ -109,7 +108,7 @@ void worker(void*){
                 if(!current){close_channel();continue;}
                 if(!self_test_passed)failure=BootstrapFailure::crypto_self_test_failed;
                 else{
-                    if(!server_channel)server_channel=std::make_unique<AdmissionServer>(configured_admission_mode(),own_id,pin);
+                    if(!server_channel)server_channel=std::make_unique<AdmissionServer>(own_id);
                     good=server_channel->handshake(request,response);
                 }
             }
@@ -266,9 +265,7 @@ esp_err_t gatt_register(){if(registered)return ESP_ERR_INVALID_STATE;work_queue=
 esp_err_t gatt_server_open(uint64_t gen,model::OctopusId own_id,BootstrapHandler handler){
     std::lock_guard<std::mutex> guard(state_mutex);
     if(!registered||server_open||!gen||!own_id||!handler||server_callback_cookie==UINT32_MAX)return ESP_ERR_INVALID_STATE;
-    const auto* factory=device_settings::factory();
-    if(configured_admission_mode()==AdmissionMode::setup_code&&(!factory||!amity::valid_setup_pin(factory->passcode)))return ESP_ERR_INVALID_STATE;
-    generation=gen;deadline=now_ms()+180000;server_sealed=false;server_id=own_id.str();server_pin=factory?factory->passcode:0;server_handler=std::move(handler);
+    generation=gen;deadline=now_ms()+180000;server_sealed=false;server_id=own_id.str();server_handler=std::move(handler);
     server_connection=BLE_HS_CONN_HANDLE_NONE;failed_proofs=0;response_status=response_record=0;response_failure=BootstrapFailure::none;srv_response.clear();++server_callback_cookie;
     advertised_name="A-"+server_id.substr(26);
     ble_hs_adv_fields fields{};fields.flags=BLE_HS_ADV_F_DISC_GEN|BLE_HS_ADV_F_BREDR_UNSUP;fields.uuids128=const_cast<ble_uuid128_t*>(&service_uuid);fields.num_uuids128=1;fields.uuids128_is_complete=1;
@@ -278,7 +275,7 @@ esp_err_t gatt_server_open(uint64_t gen,model::OctopusId own_id,BootstrapHandler
     result=ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC,nullptr,180000,&params,server_gap,reinterpret_cast<void*>(static_cast<uintptr_t>(server_callback_cookie)));
     if(result){server_open=false;return ESP_FAIL;}return ESP_OK;
 }
-void gatt_server_close(){std::lock_guard<std::mutex> guard(state_mutex);const bool was_open=server_open;server_open=false;server_pin=0;if(was_open)ble_gap_adv_stop();if(server_connection!=BLE_HS_CONN_HANDLE_NONE){cancelled_server=server_connection;ble_gap_terminate(server_connection,BLE_ERR_REM_USER_CONN_TERM);}server_connection=BLE_HS_CONN_HANDLE_NONE;if(was_open||channel_live){Work work;work.close=true;post_work(work);}srv_response.clear();server_handler={};}
+void gatt_server_close(){std::lock_guard<std::mutex> guard(state_mutex);const bool was_open=server_open;server_open=false;if(was_open)ble_gap_adv_stop();if(server_connection!=BLE_HS_CONN_HANDLE_NONE){cancelled_server=server_connection;ble_gap_terminate(server_connection,BLE_ERR_REM_USER_CONN_TERM);}server_connection=BLE_HS_CONN_HANDLE_NONE;if(was_open||channel_live){Work work;work.close=true;post_work(work);}srv_response.clear();server_handler={};}
 void gatt_server_seal(){std::lock_guard<std::mutex> guard(state_mutex);server_sealed=true;if(ble_gap_adv_active())ble_gap_adv_stop();}
 esp_err_t gatt_client_candidates(uint64_t gen,std::vector<RuntimeAdmissionCandidate>& output){
     output.clear();std::lock_guard<std::mutex> guard(client_mutex);

@@ -45,7 +45,6 @@ struct RuntimeAdmissionCandidate { std::string token,label; };
 struct RuntimeAdmissionStatus {
     model::MessageId scan_id;
     std::string phase="idle",error;
-    bool requires_setup_code=false;
     std::vector<RuntimeAdmissionCandidate> candidates;
     model::OctopusId candidate_id;
 };
@@ -55,7 +54,7 @@ RuntimeAdmissionStatus runtime_admission_status();
 esp_err_t runtime_scan_admission(model::MessageId scan_id);
 esp_err_t runtime_cancel_admission(model::MessageId scan_id);
 esp_err_t runtime_add_octopus(model::MessageId scan_id,const std::string &candidate_token,
-                             const std::string &hostname,const std::string &setup_code={});
+                             const std::string &hostname);
 esp_err_t runtime_remove_octopus(model::OctopusId,model::MessageId request_id,uint64_t expected_membership_revision,std::optional<model::BootId> expected_target_boot);
 // Complete means local roster removal. scheduled confirms only a durable reset marker.
 std::string runtime_removal_operation(model::OctopusId,model::MessageId request_id);

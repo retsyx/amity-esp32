@@ -143,6 +143,4 @@ Technical references: [hardware pins](main/board_pins.h), [Matter](components/am
 
 ## Adding Amity devices
 
-The default build adds a physically authorized unclaimed board through **Amity devices → Add** on the main. It uses ephemeral key exchange and encrypted messages; no separate Add code is generated or provisioned.
-
-For installations that require code possession as well as the physical setup window, enable **Amity admission → Require the printed setup code when adding Amity** in `idf.py menuconfig` (`CONFIG_AMITY_ADMISSION_REQUIRE_SETUP_CODE=y`). Build both main and candidate with the same setting. A mismatch rejects admission without fallback. This mode accepts the candidate's existing printed Matter manual code or QR payload through PAKE to authenticate fresh Amity session keys; it does not perform Matter commissioning or create a fabric. Factory Matter/admin provisioning and the setup card are unchanged.
+**Amity devices → Add** on the main adds a physically authorized unclaimed board. It uses ephemeral key exchange and encrypted messages; no separate Add code is generated or provisioned.

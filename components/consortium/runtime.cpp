@@ -162,7 +162,6 @@ struct Admission {
     RuntimeAdmissionStatus view;
     uint64_t generation=0,deadline=0;
     std::string selected_token,hostname;
-    uint32_t pin=0;
     bool submitted=false;
 } admission;
 model::ConsortiumId singleton;
@@ -1435,11 +1434,11 @@ void admission_failed(model::MessageId scan,const std::string& failure){
     if(prepared||committed){
         admission.view.phase="finishing";
         admission.view.error="Setup could not be confirmed yet. Check the Amity devices list before trying again.";
-        admission.deadline=0;admission.pin=0;status.phase="finishing_enrollment";
+        admission.deadline=0;status.phase="finishing_enrollment";
         return;
     }
     admission.view.phase=invitation_cancelled?"cancelled":"failed";
-    admission.view.error=failure;admission.pin=0;
+    admission.view.error=failure;
     status.phase="enrollment_failed";status.last_error=failure;
 
 }
@@ -1463,26 +1462,26 @@ void invite_worker_work(void *arg){
         {std::lock_guard<std::mutex> guard(lock);if(admission.view.scan_id!=scan||invitation_cancelled)return;admission.view.candidates=std::move(candidates);admission.view.phase="found";}
         break;
     }
-    std::string token,hostname;uint32_t pin=0;bool submitted=false;
+    std::string token,hostname;bool submitted=false;
     while(current()){
         std::vector<RuntimeAdmissionCandidate> candidates;
         if(gatt_client_candidates(generation,candidates)!=ESP_OK)break;
-        {std::lock_guard<std::mutex> guard(lock);if(admission.view.scan_id!=scan)return;if(admission.submitted){token=admission.selected_token;hostname=admission.hostname;pin=admission.pin;admission.pin=0;submitted=true;break;}if(invitation_cancelled)break;admission.view.candidates=std::move(candidates);admission.view.phase="found";}
+        {std::lock_guard<std::mutex> guard(lock);if(admission.view.scan_id!=scan)return;if(admission.submitted){token=admission.selected_token;hostname=admission.hostname;submitted=true;break;}if(invitation_cancelled)break;admission.view.candidates=std::move(candidates);admission.view.phase="found";}
         vTaskDelay(pdMS_TO_TICKS(100));
     }
     if(!submitted){admission_failed(scan,invitation_cancelled?"Adding this Amity was cancelled.":"No Amity was added before setup expired. Open Add Amity and try again.");return;}
     const auto selected=timing.begin("worker_selected");timing.finish(selected,true);timing.begin("selected_total");
     // Admission diagnostics belong to this user-requested Add attempt, never
     // boot/Matter readiness or ordinary authenticated operation.
-    const bool checked=current()&&timing.step("admission_selftest",[&]{return admission_crypto_self_test(configured_admission_mode());});
+    const bool checked=current()&&timing.step("admission_selftest",[&]{return admission_crypto_self_test();});
     if(!current()){
-        pin=0;admission_failed(scan,invitation_cancelled?"Adding this Amity was cancelled.":"No Amity was added before setup expired. Open Add Amity and try again.");return;
+        admission_failed(scan,invitation_cancelled?"Adding this Amity was cancelled.":"No Amity was added before setup expired. Open Add Amity and try again.");return;
     }
     if(!checked){
-        pin=0;admission_failed(scan,"This Amity failed its setup security check. Restart it and try again.");return;
+        admission_failed(scan,"This Amity failed its setup security check. Restart it and try again.");return;
     }
     bool good=current()&&timing.step("gatt_connect",[&]{return gatt_client_connect_candidate(token,generation)==ESP_OK;});
-    AdmissionClient client(configured_admission_mode(),pin);pin=0;
+    AdmissionClient client;
     BootstrapFailure bootstrap_failure=BootstrapFailure::none;
     good=good&&timing.step("crypto_handshake",[&]{return client.handshake([&](std::string_view bytes,std::string& reply){return current()&&gatt_client_exchange(false,bytes,reply,&bootstrap_failure)&&current();});});
     auto secure=[&](std::string_view plain,std::string& result){std::string encrypted,reply;return current()&&client.encrypt(plain,encrypted)&&gatt_client_exchange(true,encrypted,reply)&&current()&&client.decrypt(reply,result);};
@@ -1667,7 +1666,6 @@ bool runtime_cancel_radio_workflows(){
         invitation_cancelled=true;
         if(group.join_id&&group.joining_id==admission.view.candidate_id){admission.view.phase="finishing";admission.view.error="Setup could not be confirmed yet. Check the Amity devices list before trying again.";}
         else if(admission.view.phase=="scanning"||admission.view.phase=="found"||admission.view.phase=="connecting"){admission.view.phase="cancelled";admission.view.error="Adding this Amity was cancelled.";}
-        admission.pin=0;
     }
     runtime_close_enrollment();gatt_client_disconnect();
     return !invitation_running&&gatt_quiescent();
@@ -1691,7 +1689,7 @@ esp_err_t runtime_scan_admission(model::MessageId scan){
     std::lock_guard<std::mutex> guard(lock);
     if(!status.initialized||!status.credential_ready||group.role!=Group::coordinator||!status.authority_ready||group.join_id||group.peers.size()>=maximum_roster_peers||!radio.reserve)return ESP_ERR_INVALID_STATE;
     if(invitation_running.exchange(true))return ESP_ERR_INVALID_STATE;
-    admission={};admission.view.scan_id=scan;admission.view.phase="scanning";admission.view.requires_setup_code=configured_admission_mode()==AdmissionMode::setup_code;
+    admission={};admission.view.scan_id=scan;admission.view.phase="scanning";
     invitation_cancelled=false;status.last_error.clear();
     auto* request=new InviteRequest{scan};
     if(xTaskCreateWithCaps(invite_worker,"group_join",16384,request,2,nullptr,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS){delete request;invitation_running=false;admission.view.phase="failed";admission.view.error="Setup could not start.";return ESP_ERR_NO_MEM;}
@@ -1704,16 +1702,13 @@ esp_err_t runtime_cancel_admission(model::MessageId scan){
         // A prepared enrollment is reconciled by its durable transaction. It
         // cannot be undone by closing the browser or by clearing radio state.
         if(group.join_id||admission.view.phase=="finishing"||admission.view.phase=="complete")return ESP_ERR_INVALID_STATE;
-        invitation_cancelled=true;admission.pin=0;admission.view.phase="cancelled";admission.view.error="Adding this Amity was cancelled.";
+        invitation_cancelled=true;admission.view.phase="cancelled";admission.view.error="Adding this Amity was cancelled.";
     }
     gatt_client_disconnect();return ESP_OK;
 }
-esp_err_t runtime_add_octopus(model::MessageId scan,const std::string& token,const std::string& hostname,const std::string& setup_code){
+esp_err_t runtime_add_octopus(model::MessageId scan,const std::string& token,const std::string& hostname){
     BoundedSetupTimings<1> timing("admission",now_ms);timing.scan=scan;const auto selected=timing.begin("selected");
     if(!scan||token.empty()||token.size()>128||!valid_hostname(hostname))return ESP_ERR_INVALID_ARG;
-    uint32_t pin=0;
-    if(configured_admission_mode()==AdmissionMode::setup_code){if(!parse_admission_setup_code(setup_code,pin))return ESP_ERR_INVALID_ARG;}
-    else if(!setup_code.empty())return ESP_ERR_INVALID_ARG;
     std::lock_guard<std::mutex> guard(lock);
     if(group.role!=Group::coordinator||!status.authority_ready||group.join_id||group.peers.size()>=maximum_roster_peers||!invitation_running||invitation_cancelled||admission.view.scan_id!=scan||admission.view.phase!="found"||!admission.deadline||now_ms()>=admission.deadline)return ESP_ERR_INVALID_STATE;
     if(std::none_of(admission.view.candidates.begin(),admission.view.candidates.end(),[&](const auto& item){return item.token==token;}))return ESP_ERR_INVALID_ARG;
@@ -1723,7 +1718,7 @@ esp_err_t runtime_add_octopus(model::MessageId scan,const std::string& token,con
         if(name==hostname)return ESP_ERR_INVALID_ARG;
     }
     settings_expire(now_ms());if(settings_hostname_pending({},hostname))return ESP_ERR_INVALID_ARG;
-    admission.selected_token=token;admission.hostname=hostname;admission.pin=pin;admission.submitted=true;admission.view.phase="connecting";timing.finish(selected,true);
+    admission.selected_token=token;admission.hostname=hostname;admission.submitted=true;admission.view.phase="connecting";timing.finish(selected,true);
     return ESP_OK;
 }
 esp_err_t runtime_remove_octopus(model::OctopusId id,model::MessageId request,uint64_t expected_revision,std::optional<model::BootId> expected_target_boot){

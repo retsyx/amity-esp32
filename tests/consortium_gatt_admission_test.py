@@ -36,16 +36,12 @@ int ble_gap_adv_stop();
 uint64_t clock_ms=100;
 uint64_t now_ms(){return clock_ms;}
 enum class BootstrapFailure : uint8_t { none=0, crypto_self_test_failed=1 };
-enum class AdmissionMode { button,setup_code };
-AdmissionMode mode=AdmissionMode::button;
-AdmissionMode configured_admission_mode(){return mode;}
 using BootstrapHandler=std::function<esp_err_t(std::string_view,std::string&)>;
 unsigned checks=0,constructors=0,handshakes=0,decryptions=0,handlers=0,terminations=0,advert_stops=0;
 bool crypto_ok=true;
 std::function<void()>during_check;
 extern std::mutex state_mutex;
-bool admission_crypto_self_test(AdmissionMode chosen){
-    if(chosen!=mode)throw std::runtime_error("wrong admission profile");
+bool admission_crypto_self_test(){
     bool unlocked=false;
     std::thread probe([&]{if(state_mutex.try_lock()){state_mutex.unlock();unlocked=true;}});probe.join();
     if(!unlocked)throw std::runtime_error("self-test ran under transport lock");
@@ -55,8 +51,8 @@ bool admission_crypto_self_test(AdmissionMode chosen){
 class AdmissionServer {
     bool ready_=false;
 public:
-    AdmissionServer(AdmissionMode chosen,std::string,uint32_t){
-        if(chosen!=mode||!checks||!crypto_ok)throw std::runtime_error("crypto used before successful test");
+    explicit AdmissionServer(std::string){
+        if(!checks||!crypto_ok)throw std::runtime_error("crypto used before successful test");
         ++constructors;
     }
     bool authenticated()const{return ready_;}
@@ -99,7 +95,7 @@ void submit(uint32_t rid,uint8_t endpoint,std::string_view bytes,size_t total=0,
 void reset(){
     close_channel();fail_queue_creation=false;work_queue=create_work_queue();tested_generation=0;self_test_passed=false;
     generation=7;server_session=9;server_connection=31;server_open=true;server_sealed=false;deadline=180100;
-    server_id="00000000000000000000000000000001";server_pin=20202021;
+    server_id="00000000000000000000000000000001";
     clock_ms=100;failed_proofs=0;outstanding_work=0;processing_record=false;
     response_record=response_offset=response_endpoint=response_status=0;response_failure=BootstrapFailure::none;srv_response.clear();
     checks=constructors=handshakes=decryptions=handlers=terminations=advert_stops=0;crypto_ok=true;during_check={};
@@ -129,8 +125,8 @@ void queue_storage_and_capacity(){
     fail_queue_creation=false;work_queue=create_work_queue();
 }
 void lazy_success(){
-    for(auto profile:{AdmissionMode::button,AdmissionMode::setup_code}){
-        reset();mode=profile;run();check(!checks&&!constructors,"idle boot executed admission crypto");
+    {
+        reset();run();check(!checks&&!constructors,"idle boot executed admission crypto");
         submit(1,0,"pub",6);run();check(!checks&&!constructors&&channel_live,"incomplete request ran crypto or lost assembly");
         submit(1,0,"lic",6,3);run();
         check(checks==1&&constructors==1&&handshakes==1&&response_status==1&&response_failure==BootstrapFailure::none,"complete handshake skipped selected test");
@@ -142,8 +138,8 @@ void lazy_success(){
     }
 }
 void diagnostic_failure(){
-    for(auto profile:{AdmissionMode::button,AdmissionMode::setup_code}){
-    reset();mode=profile;crypto_ok=false;submit(1,0,"public");run();
+    {
+    reset();crypto_ok=false;submit(1,0,"public");run();
     check(checks==1&&!constructors&&!handshakes&&!decryptions&&!handlers,"failed check reached admission crypto/credentials");
     check(server_open&&!failed_proofs&&!advert_stops&&!terminations&&response_status==2&&response_failure==BootstrapFailure::crypto_self_test_failed&&response_record==1&&response_endpoint==0&&srv_response.empty(),"failed check did not leave bounded diagnostic available");
     ++server_session;++server_connection;submit(2,0,"public");run();

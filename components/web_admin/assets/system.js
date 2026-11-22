@@ -358,20 +358,18 @@ window.amityInterface=(()=>{
  // Replace opens Add with a note on where to connect the new Amity, and
  // continues with the added Amity once it is confirmed.
  function add(options={}){
-  const d=dialog('Add Amity'),scanId=identifier(),name=field('Name'),code=field('Matter setup code'),status=text('Searching for Amity devices…');
+  const d=dialog('Add Amity'),scanId=identifier(),name=field('Name'),status=text('Searching for Amity devices…');
   const selection=document.createElement('label'),select=document.createElement('select'),found=text('');selection.textContent='Amity device';selection.append(select);selection.hidden=true;
   name.input.required=true;name.input.maxLength=32;name.input.pattern='[A-Za-z0-9]((?:[A-Za-z0-9]|-){0,30}[A-Za-z0-9])?';name.input.title='Use 1–32 letters, digits or hyphens, beginning and ending with a letter or digit.';name.input.autocomplete='off';name.input.spellcheck=false;
-  code.input.type='password';code.input.maxLength=256;code.input.autocomplete='off';code.input.spellcheck=false;code.input.placeholder='Printed Matter setup code';code.input.title='Enter the printed Matter setup code or the text from its Matter QR code.';
-  name.label.hidden=code.label.hidden=true;found.hidden=true;
+  name.label.hidden=true;found.hidden=true;
   if(options.note)d.append(text(options.note));
-  d.append(text('Hold the Reset button on the new Amity for 3 seconds. Keep it powered on and nearby.'),status,found,selection,name.label,code.label);
-  let closed=false,timer=null,polling=false,candidates=[],selected='',requiresCode=false,adding=false,admitted=false,finished=false,ended=false,operationId=null,phase='scanning';
+  d.append(text('Hold the Reset button on the new Amity for 3 seconds. Keep it powered on and nearby.'),status,found,selection,name.label);
+  let closed=false,timer=null,polling=false,candidates=[],selected='',adding=false,admitted=false,finished=false,ended=false,operationId=null,phase='scanning';
   const live=()=>!closed&&openDialog===d&&d.isConnected;
   const fail=text=>{status.textContent='';message(text,true);};
   const controls=()=>{
    const choose=phase==='found'&&!!selected&&!adding&&!ended;name.label.hidden=!selected;name.input.disabled=!choose;
-   code.label.hidden=!selected||!requiresCode;code.input.disabled=!choose;code.input.required=requiresCode;
-   select.disabled=adding||ended;start.disabled=!choose||(requiresCode&&!code.input.value);
+   select.disabled=adding||ended;start.disabled=!choose;
   };
   const showCandidates=state=>{
    const next=Array.isArray(state.candidates)?state.candidates:[];
@@ -388,7 +386,7 @@ window.amityInterface=(()=>{
    catch(error){try{const state=await request('membership/admission');if(state.scan_id===scanId&&['connecting','finishing'].includes(state.phase))message('Adding Amity is still finishing. Check the Amity devices list shortly.');else if(state.scan_id===scanId&&state.phase==='complete')message('Amity was added. Check the Amity devices list.');}catch(ignored){}}
   };
   d.addEventListener('close',()=>{
-   closed=true;if(timer!==null)clearTimeout(timer);code.input.value='';
+   closed=true;if(timer!==null)clearTimeout(timer);
    if(!finished&&!admitted)void cancelSearch();
    else if(admitted&&!finished&&!ended)message('Adding Amity continues. Check the Amity devices list shortly.');
   });
@@ -400,11 +398,11 @@ window.amityInterface=(()=>{
      const operation=await request('operations/'+operationId);if(!live())return;
      if(['failed','rejected','cancelled','unknown'].includes(operation.stage)){ended=true;adding=false;fail(operation.message||'The result could not be confirmed. Check the Amity devices list before trying again.');controls();return;}
      if(operation.stage==='complete'){
-      finished=true;ended=true;code.input.value='';await refresh();if(live()){d.close();message('Amity added.');if(options.added&&state.candidate_id)options.added(state.candidate_id);}return;
+      finished=true;ended=true;await refresh();if(live()){d.close();message('Amity added.');if(options.added&&state.candidate_id)options.added(state.candidate_id);}return;
      }
     }
     if(state.scan_id!==scanId){ended=true;fail('The search changed. Check the Amity devices list before trying again.');controls();return;}
-    phase=state.phase;requiresCode=state.requires_setup_code===true;if(!requiresCode)code.input.value='';
+    phase=state.phase;
     showCandidates(state);
     if(['failed','cancelled'].includes(state.phase)){ended=true;adding=false;fail(state.error||'The search ended. Close this window and try again.');controls();return;}
     setText(status,state.phase==='found'?(candidates.length>1?'Choose the Amity you want to add, then give it a name.':candidates.length===1?'Give this Amity a name.':'No Amity was found. Close this window and try again.'):state.phase==='connecting'?'Connecting to Amity…':state.phase==='finishing'||state.phase==='complete'?'Finishing setup…':'Searching for Amity devices…');
@@ -413,18 +411,15 @@ window.amityInterface=(()=>{
    }catch(error){if(live()){ended=true;fail(error.message||'The search status is unavailable. Close this window and try again.');controls();}}
    finally{polling=false;if(live()&&!ended)timer=setTimeout(poll,400);}
   }
-  select.addEventListener('change',()=>{selected=select.value;controls();if(selected)name.input.focus();});code.input.addEventListener('input',controls);
+  select.addEventListener('change',()=>{selected=select.value;controls();if(selected)name.input.focus();});
   const start=button('Add',async()=>{
    if(adding||ended||phase!=='found'||!selected)return;
    const hostname=name.input.value.trim().toLowerCase();name.input.value=hostname;if(!name.input.reportValidity())return;
-   if(requiresCode&&!code.input.reportValidity())return;
-   adding=true;status.textContent='Connecting to Amity…';controls();let secret=code.input.value;code.input.value='';
+   adding=true;status.textContent='Connecting to Amity…';controls();
    try{
-    const body={scan_id:scanId,candidate_token:selected,name:hostname};if(requiresCode)body.setup_code=secret;
-    const result=await mutation('membership/add',body);secret='';admitted=true;operationId=result.operation_id;
+    const result=await mutation('membership/add',{scan_id:scanId,candidate_token:selected,name:hostname});admitted=true;operationId=result.operation_id;
     if(live()){closeButton.textContent='Close';status.textContent='Connecting to Amity…';if(timer!==null)clearTimeout(timer);void poll();}
-   }catch(error){secret='';if(!live())throw error;adding=false;ended=!error.status||error.status>=500;fail(ended?'The result could not be confirmed. Check the Amity devices list before trying again.':error.message);controls();}
-   finally{secret='';}
+   }catch(error){if(!live())throw error;adding=false;ended=!error.status||error.status>=500;fail(ended?'The result could not be confirmed. Check the Amity devices list before trying again.':error.message);controls();}
   });
   const closeButton=button('Cancel',()=>d.close()),actions=document.createElement('div');start.className='primary';closeButton.className='quiet';
   actions.className='actions';actions.append(closeButton,start);d.className='add-amity';d.append(actions);controls();

@@ -29,10 +29,6 @@ namespace web_admin {
 namespace {
 namespace m=amity::system;
 using Json=std::unique_ptr<cJSON,decltype(&cJSON_Delete)>;
-void wipe(std::string& value){volatile char* bytes=value.empty()?nullptr:&value[0];for(size_t n=0;n<value.size();++n)bytes[n]=0;}
-void wipe_json(cJSON* value){if(!value)return;for(auto* child=value->child;child;child=child->next)wipe_json(child);if(value->valuestring){volatile char* p=value->valuestring;for(size_t n=strlen(value->valuestring);n;--n)*p++=0;}}
-struct SensitiveRequest {std::string& body;cJSON* json;bool enabled;~SensitiveRequest(){if(enabled){wipe(body);wipe_json(json);}}};
-struct SensitiveString {std::string& value;~SensitiveString(){wipe(value);}};
 amity::SystemControl* control=nullptr;
 config_store::RevisionPair published_input_revisions;
 bool configuration_passive=false;
@@ -113,21 +109,16 @@ bool parse_port_value(cJSON* value,m::CecPortRef& port){
 }
 struct AdmissionSelection {
     m::MessageId scan_id;
-    std::string candidate_token,name,setup_code;
+    std::string candidate_token,name;
 };
-bool admission_selection(cJSON* root,bool requires_code,AdmissionSelection& out,std::string& message){
+bool admission_selection(cJSON* root,AdmissionSelection& out,std::string& message){
     const auto fail=[&](const char* reason){message=reason;return false;};
-    if(!object_fields(root,{"request_id","scan_id","candidate_token","name"},{"setup_code"}))return fail("Choose an Amity from the current search and give it a name.");
-    AdmissionSelection value;SensitiveString clear_code{value.setup_code};
+    if(!object_fields(root,{"request_id","scan_id","candidate_token","name"}))return fail("Choose an Amity from the current search and give it a name.");
+    AdmissionSelection value;
     for(const auto* key:{"scan_id","candidate_token","name"})if(!cJSON_IsString(cJSON_GetObjectItemCaseSensitive(root,key)))return fail("Choose an Amity from the current search and give it a name.");
-    auto* code=cJSON_GetObjectItemCaseSensitive(root,"setup_code");
-    if(code&&!cJSON_IsString(code))return fail("The Matter setup code must be text.");
     const auto scan=m::MessageId::parse(string(root,"scan_id"));
-    value.candidate_token=string(root,"candidate_token");value.name=string(root,"name");value.setup_code=code?string(root,"setup_code"):std::string{};
+    value.candidate_token=string(root,"candidate_token");value.name=string(root,"name");
     if(!scan||value.candidate_token.empty()||value.candidate_token.size()>128||std::any_of(value.candidate_token.begin(),value.candidate_token.end(),[](unsigned char byte){return byte<32||byte==127;}))return fail("Choose an Amity from the current search.");
-    if(value.setup_code.size()>256)return fail("The Matter setup code is too long.");
-    if(!requires_code&&!value.setup_code.empty())return fail("A setup code is not used when adding this Amity.");
-    if(requires_code&&value.setup_code.empty())return fail("Enter the Matter setup code printed on the added Amity.");
     const auto first=value.name.find_first_not_of(" \t\r\n");
     value.name=first==std::string::npos?std::string{}:value.name.substr(first,value.name.find_last_not_of(" \t\r\n")-first+1);
     if(!device_settings::normalize_hostname(value.name))return fail("Use a name of 1–32 letters, digits or hyphens, beginning and ending with a letter or digit.");
@@ -138,7 +129,6 @@ esp_err_t admission_response(httpd_req_t* req){
     Json result(cJSON_CreateObject(),cJSON_Delete);
     if(state.scan_id)cJSON_AddStringToObject(result.get(),"scan_id",state.scan_id.str().c_str());else cJSON_AddNullToObject(result.get(),"scan_id");
     cJSON_AddStringToObject(result.get(),"phase",state.phase.c_str());cJSON_AddStringToObject(result.get(),"error",state.error.c_str());
-    cJSON_AddBoolToObject(result.get(),"requires_setup_code",state.requires_setup_code);
     if(state.candidate_id)cJSON_AddStringToObject(result.get(),"candidate_id",state.candidate_id.str().c_str());else cJSON_AddNullToObject(result.get(),"candidate_id");
     auto* candidates=cJSON_AddArrayToObject(result.get(),"candidates");
     for(const auto& candidate:state.candidates){auto* item=cJSON_CreateObject();cJSON_AddItemToArray(candidates,item);cJSON_AddStringToObject(item,"token",candidate.token.c_str());cJSON_AddStringToObject(item,"label",candidate.label.c_str());}
@@ -157,7 +147,7 @@ std::optional<std::vector<std::string>> request_fields(const std::string& path){
     else if(path=="/api/replacements/preview"||path=="/api/replacements/apply")allowed.insert(allowed.end(),{"expected_config_revision","expected_presentation_revision","expected_membership_revision","expected_target_boot_id","previous_octopus_id","replacement_octopus_id","old_hardware_isolated","ports","equipment"});
     else if(path=="/api/membership/scan"){}
     else if(path=="/api/membership/cancel")allowed.push_back("scan_id");
-    else if(path=="/api/membership/add")allowed.insert(allowed.end(),{"scan_id","candidate_token","setup_code","name"});
+    else if(path=="/api/membership/add")allowed.insert(allowed.end(),{"scan_id","candidate_token","name"});
     else if(path=="/api/membership/remove")allowed.insert(allowed.end(),{"octopus_id","confirm","expected_membership_revision","expected_target_boot_id","expected_config_revision","expected_presentation_revision","affected_activity_ids"});
     else if(device_settings_target(path))allowed.insert(allowed.end(),{"expected_boot_id","expected_settings_revision","expected_hostname_revision","hostname","changes"});
     else return {};
@@ -429,7 +419,6 @@ bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
     const auto fields=request_fields(path);if(!fields){result=error(req,"not_found","Unknown operation.","404 Not Found");return true;}
     std::string data;if(!web::body(req,data)){result=ESP_FAIL;return true;}
     Json root(parse_json_input(data),cJSON_Delete);
-    SensitiveRequest sensitive{data,root.get(),path=="/api/membership/add"};
     if(!root||!cJSON_IsObject(root.get())||!unique_keys(root.get())){result=error(req,"invalid_json","Expected an object with unique, supported fields.");return true;}
     for(auto* field=root->child;field;field=field->next)if(std::find(fields->begin(),fields->end(),field->string)==fields->end()){result=error(req,"invalid_json","Expected supported fields only.");return true;}
     const auto id=string(root.get(),"request_id");
@@ -546,12 +535,11 @@ bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
     if(path=="/api/membership/add"){
         AdmissionSelection selection;std::string message;
         const auto state=amity::consortium::runtime_admission_status();
-        if(!admission_selection(root.get(),state.requires_setup_code,selection,message)){result=error(req,"invalid_addition",message);return true;}
-        SensitiveString clear_code{selection.setup_code};
+        if(!admission_selection(root.get(),selection,message)){result=error(req,"invalid_addition",message);return true;}
         if(state.scan_id!=selection.scan_id){result=error(req,"stale_scan","The search changed. Close this window and try again.","409 Conflict");return true;}
         if(selection.name==device_settings::hostname()){result=error(req,"name_in_use","That name belongs to this Amity. Choose another name.","409 Conflict");return true;}
         for(const auto& peer:amity::consortium::runtime_peers())if((peer.enrolled||peer.provisional)&&peer.hostname==selection.name){result=error(req,"name_in_use","That name is already used by an added Amity. Choose another name.","409 Conflict");return true;}
-        const auto e=amity::consortium::runtime_add_octopus(selection.scan_id,selection.candidate_token,selection.name,selection.setup_code);
+        const auto e=amity::consortium::runtime_add_octopus(selection.scan_id,selection.candidate_token,selection.name);
         if(e!=ESP_OK){result=error(req,"enrollment_unavailable","Adding this Amity could not start. Check the selected device and its setup window, then try again.","409 Conflict",true);return true;}
         operation.scan_id=selection.scan_id;operation.name=selection.name;operation.status="admitted";finish();return true;
     }

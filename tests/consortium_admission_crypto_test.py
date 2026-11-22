@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Run actual admission code with real OpenSSL-backed PSA primitives.
-
-The existing ESP Security2/protocomm and CHIP parsers are explicit host seams;
-this checks the NEW strict transcript-binding state machine, not SRP/CHIP itself.
-Firmware admission_crypto_self_test uses the actual pinned SDK implementations.
-"""
+"""Run actual admission code with real OpenSSL-backed PSA primitives."""
 import argparse
 import os
 from pathlib import Path
@@ -15,7 +10,6 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = r'''
 #include "admission_crypto.hpp"
-#include "factory_credentials.hpp"
 #include <openssl/core_names.h>
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
@@ -39,8 +33,8 @@ struct psa_key_attributes_t{int type=0;};
 struct psa_key_derivation_operation_t{std::string salt,secret,info;};
 #define PSA_KEY_DERIVATION_OPERATION_INIT {}
 struct Key{EVP_PKEY* ec=nullptr;std::vector<unsigned char> aes;};
-std::map<unsigned,Key> key_store;unsigned next_key=0,srp_verifier_calls=0;
-bool fail_key_generation=false,fail_srp=false;
+std::map<unsigned,Key> key_store;unsigned next_key=0;
+bool fail_key_generation=false;
 int psa_crypto_init(){return 0;}
 void psa_set_key_type(psa_key_attributes_t* a,int type){a->type=type;}
 void psa_set_key_bits(psa_key_attributes_t*,int){}
@@ -76,78 +70,18 @@ int psa_aead_decrypt(unsigned id,int,const uint8_t* nonce,size_t nonce_size,cons
  bool good=context&&EVP_DecryptInit_ex(context,EVP_aes_256_gcm(),nullptr,key_store.at(id).aes.data(),nonce)>0&&EVP_DecryptUpdate(context,nullptr,&used,aad,aad_size)>0&&EVP_DecryptUpdate(context,output,&used,input,input_size-16)>0&&EVP_CIPHER_CTX_ctrl(context,EVP_CTRL_GCM_SET_TAG,16,const_cast<uint8_t*>(input+input_size-16))>0&&EVP_DecryptFinal_ex(context,output+used,&tail)>0;EVP_CIPHER_CTX_free(context);*size=used+tail;return good?0:-1;
 }
 void mbedtls_platform_zeroize(void* p,size_t n){OPENSSL_cleanse(p,n);}
-constexpr int ESP_OK=0,ESP_ERR_INVALID_ARG=-1,ESP_ERR_NO_MEM=-2,CHIP_NO_ERROR=0;
-using esp_err_t=int;
-namespace chip{
-struct SetupPayload{uint32_t setUpPINCode=0;};
-struct ManualSetupPayloadParser{std::string input;explicit ManualSetupPayloadParser(std::string s):input(std::move(s)){}int populatePayload(SetupPayload& out){if(input!="3497-011-2332"&&input!="34970112332")return -1;out.setUpPINCode=20202021;return 0;}};
-struct QRCodeSetupPayloadParser{std::string input;explicit QRCodeSetupPayloadParser(std::string s):input(std::move(s)){}int populatePayload(SetupPayload& out){if(input!="MT:Y.K9042C00KA0648G00")return -1;out.setUpPINCode=20202021;return 0;}};
-}
-// Explicit PAKE host seam: authenticates a mock exchange under the supplied
-// PIN-derived secret. The production source uses actual ESP SRP/protocomm.
-std::string mock_hash(std::string_view in){std::string out(32,0);size_t size=0;psa_hash_compute(1,reinterpret_cast<const uint8_t*>(in.data()),in.size(),reinterpret_cast<uint8_t*>(out.data()),32,&size);return out;}
-std::string mock_mac(std::string_view key,std::string_view text){std::string out(32,0);size_t size=0;auto* mac=EVP_Q_mac(nullptr,"HMAC",nullptr,"SHA256",nullptr,key.data(),key.size(),reinterpret_cast<const unsigned char*>(text.data()),text.size(),reinterpret_cast<unsigned char*>(out.data()),out.size(),&size);assert(mac&&size==32);return out;}
-bool mock_equal(std::string_view a,std::string_view b){return a.size()==b.size()&&CRYPTO_memcmp(a.data(),b.data(),a.size())==0;}
-std::string mock_protect(std::string_view key,std::string_view text){return std::string(text)+mock_mac(key,text);}
-bool mock_unprotect(std::string_view key,std::string_view input,std::string& out){if(input.size()<32||!mock_equal(input.substr(input.size()-32),mock_mac(key,input.substr(0,input.size()-32))))return false;out=input.substr(0,input.size()-32);return true;}
-using Endpoint=esp_err_t(*)(uint32_t,const uint8_t*,ssize_t,uint8_t**,ssize_t*,void*);
-struct protocomm_security2_params_t{const char* salt;uint16_t salt_len;const char* verifier;uint16_t verifier_len;};int protocomm_security2=0;
-struct protocomm_t{std::string key,transcript,challenge;Endpoint endpoint=nullptr;void* context=nullptr;bool authenticated=false;};
-protocomm_t* protocomm_new(){return new protocomm_t;}
-void protocomm_delete(protocomm_t* pc){delete pc;}
-int protocomm_close_session(protocomm_t*,int){return 0;}int protocomm_open_session(protocomm_t*,int){return 0;}
-int protocomm_set_security(protocomm_t* pc,const char*,const void*,const protocomm_security2_params_t* p){pc->key.assign(p->verifier,32);return 0;}
-int protocomm_add_endpoint(protocomm_t* pc,const char*,Endpoint endpoint,void* context){pc->endpoint=endpoint;pc->context=context;return 0;}
-int esp_srp_gen_salt_verifier(const char*,int,const char* password,int count,char** salt,int salt_size,char** verifier,int* verifier_size){++srp_verifier_calls;if(fail_srp)return -1;*salt=static_cast<char*>(malloc(salt_size));RAND_bytes(reinterpret_cast<unsigned char*>(*salt),salt_size);*verifier_size=384;*verifier=static_cast<char*>(calloc(1,384));auto key=mock_hash(std::string_view(password,count));std::memcpy(*verifier,key.data(),32);return 0;}
-int protocomm_req_handle(protocomm_t* pc,const char* endpoint,int,const uint8_t* bytes,size_t count,uint8_t** out,ssize_t* size){
- std::string_view input(reinterpret_cast<const char*>(bytes),count);std::string response;
- if(std::string(endpoint)=="session"){
-  if(input.substr(0,2)=="C0"){pc->transcript=input;pc->challenge.resize(16);RAND_bytes(reinterpret_cast<unsigned char*>(pc->challenge.data()),16);response="R0"+pc->challenge;}
-  else if(input.substr(0,2)=="C1"&&mock_equal(input.substr(2),mock_mac(pc->key,pc->transcript+pc->challenge))){pc->authenticated=true;response="R1"+mock_mac(pc->key,pc->transcript+pc->challenge+"server");}
-  else return -1;
- }else{
-  std::string plain;if(!pc->authenticated||!mock_unprotect(pc->key,input,plain))return -1;uint8_t* answer=nullptr;ssize_t length=0;
-  auto result=pc->endpoint(1,reinterpret_cast<const uint8_t*>(plain.data()),plain.size(),&answer,&length,pc->context);if(result!=0){free(answer);return result;}response=mock_protect(pc->key,std::string_view(reinterpret_cast<char*>(answer),length));free(answer);
- }
- *size=response.size();*out=static_cast<uint8_t*>(malloc(*size));std::memcpy(*out,response.data(),*size);return 0;
-}
-constexpr int SEC_SCHEME_VERSION__SecScheme2=2,SEC2_MSG_TYPE__S2Session_Response0=0,SEC2_MSG_TYPE__S2Session_Response1=1,STATUS__Success=0;
-struct Status{int status=0;};struct Sec2{int msg=0;Status* sr0=nullptr;Status* sr1=nullptr;};struct SessionData{int sec_ver=2;Sec2* sec2=nullptr;};
-SessionData* session_data__unpack(void*,size_t count,const uint8_t* bytes){if(count<2||bytes[0]!='R')return nullptr;auto* value=new SessionData;value->sec2=new Sec2;value->sec2->msg=bytes[1]=='0'?0:1;if(bytes[1]=='0')value->sec2->sr0=new Status;else value->sec2->sr1=new Status;return value;}
-void session_data__free_unpacked(SessionData* value,void*){delete value->sec2->sr0;delete value->sec2->sr1;delete value->sec2;delete value;}
-namespace amity::consortium::platform{
-class Security2Client{
- std::string user,key,transcript,challenge_bytes;bool ready=false;
-public:
- Security2Client(std::string name,std::string password):user(std::move(name)),key(mock_hash(password)){}
- bool begin(std::string& out){std::string nonce(16,0);RAND_bytes(reinterpret_cast<unsigned char*>(nonce.data()),16);transcript="C0"+user+nonce;out=transcript;return true;}
- bool challenge(std::string_view input,std::string& out){if(input.size()!=18||input.substr(0,2)!="R0")return false;challenge_bytes=input.substr(2);out="C1"+mock_mac(key,transcript+challenge_bytes);return true;}
- bool verify(std::string_view input){ready=input.substr(0,2)=="R1"&&mock_equal(input.substr(2),mock_mac(key,transcript+challenge_bytes+"server"));return ready;}
- bool encrypt(std::string_view input,std::string& out){if(!ready)return false;out=mock_protect(key,input);return true;}
- bool decrypt(std::string_view input,std::string& out){return ready&&mock_unprotect(key,input,out);}
-};
-}
 '''
 
 SUITE = r'''
 using namespace amity::consortium::platform;
 int main(){
  assert(admission_crypto_self_test());
- assert(srp_verifier_calls==3); // Explicit diagnostics keep the full PAKE suite.
- srp_verifier_calls=0;
- assert(admission_crypto_self_test(configured_admission_mode()));
- assert(srp_verifier_calls==(CONFIG_AMITY_ADMISSION_REQUIRE_SETUP_CODE?3u:0u));
- assert(!admission_crypto_self_test(static_cast<AdmissionMode>(99)));
- fail_srp=true;srp_verifier_calls=0;
- assert(admission_crypto_self_test(AdmissionMode::button)&&srp_verifier_calls==0);
- assert(!admission_crypto_self_test(AdmissionMode::setup_code));
- assert(!admission_crypto_self_test()); // An explicit full check cannot skip strict failure.
- fail_srp=false;fail_key_generation=true;
- assert(!admission_crypto_self_test(configured_admission_mode()));fail_key_generation=false;
+ fail_key_generation=true;
+ assert(!admission_crypto_self_test());fail_key_generation=false;
  const std::string id="00000000000000000000000000000001";
- for(auto mode:{AdmissionMode::button,AdmissionMode::setup_code}){
+ {
   for(int attack=0;attack<6;++attack){
-   AdmissionServer server(mode,id,20202021);AdmissionClient client(mode,20202021);
+   AdmissionServer server(id);AdmissionClient client;
    assert(client.handshake([&](auto in,auto& out){return server.handshake(in,out);}));
    std::string packet,plain;assert(client.encrypt("command",packet));
    if(attack==0)packet[3]^=1; // reflected direction
@@ -155,14 +89,14 @@ int main(){
    if(attack==2)packet[12]^=1; // ciphertext
    if(attack==3)packet.back()^=1; // tag
    if(attack==4)packet.erase(0,1); // malformed header
-   if(attack==5){AdmissionServer fresh(mode,id,20202021);AdmissionClient next(mode,20202021);assert(next.handshake([&](auto in,auto& out){return fresh.handshake(in,out);}));assert(!fresh.decrypt(packet,plain));continue;}
+   if(attack==5){AdmissionServer fresh(id);AdmissionClient next;assert(next.handshake([&](auto in,auto& out){return fresh.handshake(in,out);}));assert(!fresh.decrypt(packet,plain));continue;}
    assert(!server.decrypt(packet,plain)&&plain.empty()&&!server.authenticated());
   }
-  AdmissionServer edited(mode,id,20202021);AdmissionClient denied(mode,20202021);
-  assert(!denied.handshake([&](auto in,auto& out){if(!edited.handshake(in,out))return false;if(out.size()==139&&out.substr(0,8)=="AMADMIT3")out.back()^=1;return true;}));
+  AdmissionServer edited(id);AdmissionClient denied;
+  assert(!denied.handshake([&](auto in,auto& out){if(!edited.handshake(in,out))return false;if(out.size()==138&&out.substr(0,8)=="AMADMIT4")out.back()^=1;return true;}));
  }
  assert(key_store.empty());
- std::cout<<"PASS actual admission handshake/AEAD both modes and selected-profile self-tests: transcript, direction, sequence, replay, cross-session, tamper, failure gates; unused PAKE absent from normal-profile checks, full explicit PAKE retained; PIN-PAKE seam mocked, PSA uses OpenSSL"<<std::endl;
+ std::cout<<"PASS actual admission handshake/AEAD and self-test: transcript, direction, sequence, replay, cross-session, tamper, failure gates; PSA uses OpenSSL"<<std::endl;
 }
 '''
 
@@ -171,10 +105,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, default=ROOT / 'components/consortium/admission_crypto.cpp')
     source = parser.parse_args().source.read_text()
-    if 'bool admission_crypto_self_test(AdmissionMode mode)' not in source:
-        # Exercise the prior actual full self-test through the startup-profile
-        # seam so before-source failure is a behavioral assertion, not missing API.
-        source = source.replace('} // namespace amity::consortium::platform', 'bool admission_crypto_self_test(AdmissionMode){return admission_crypto_self_test();}\n} // namespace amity::consortium::platform')
     # Replace SDK adapter headers, not any production algorithm or state logic.
     source = '\n'.join(line for line in source.splitlines()
                        if not line.startswith('#include "'))
@@ -182,14 +112,11 @@ def main():
     with tempfile.TemporaryDirectory(prefix='amity-admission-crypto-') as temp:
         cpp = Path(temp) / 'actual.cpp'
         cpp.write_text(PREFIX + source + SUITE)
-        for strict in (0, 1):
-            binary = Path(temp) / ('strict' if strict else 'button')
-            subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) + [
-                '-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined',
-                '-DESP_PLATFORM=1', f'-DCONFIG_AMITY_ADMISSION_REQUIRE_SETUP_CODE={strict}',
-                '-I' + str(ROOT / 'components/consortium'),
-                '-I' + str(ROOT / 'components/device_settings/include'), str(cpp), *flags, '-o', str(binary)], check=True)
-            subprocess.run([str(binary)], check=True)
+        binary = Path(temp) / 'admission'
+        subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) + [
+            '-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined',
+            '-DESP_PLATFORM=1', '-I' + str(ROOT / 'components/consortium'), str(cpp), *flags, '-o', str(binary)], check=True)
+        subprocess.run([str(binary)], check=True)
 
 
 if __name__ == '__main__':

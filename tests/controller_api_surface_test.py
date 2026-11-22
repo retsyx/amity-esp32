@@ -55,7 +55,7 @@ int main(){
     assert(std::find(replacement->begin(),replacement->end(),"remote_pairing_acknowledged")==replacement->end());
     const auto addition=request_fields("/api/membership/add");
     assert(std::find(addition->begin(),addition->end(),"name")!=addition->end());
-    assert(addition->size()==5&&std::find(addition->begin(),addition->end(),"scan_id")!=addition->end()&&std::find(addition->begin(),addition->end(),"candidate_token")!=addition->end());
+    assert(addition->size()==4&&std::find(addition->begin(),addition->end(),"scan_id")!=addition->end()&&std::find(addition->begin(),addition->end(),"candidate_token")!=addition->end());
     assert(request_fields("/api/membership/scan")->size()==1&&request_fields("/api/membership/cancel")->size()==2);
     assert(std::find(addition->begin(),addition->end(),"location")==addition->end());
     const auto settings=request_fields("/api/devices/0123456789abcdef0123456789abcdef/settings");

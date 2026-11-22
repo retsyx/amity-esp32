@@ -27,7 +27,7 @@ const flush=async()=>{for(let n=0;n<8;n++)await new Promise(resolve=>setImmediat
 function fixture(options={}){
  const document={createElement(tag){return new Element(tag,this);}};document.body=new Element('body',document);const addButton=document.createElement('button');addButton.id='addAmity';document.body.append(addButton);
  let now=0,nextTimer=0;const timers=new Map(),posts=[],messages=[],errors=[],held=[],heldScans=[];
- const state={scan_id:null,phase:'idle',error:'',requires_setup_code:!!options.strict,candidates:options.candidates??[{token:'opaque-one',label:'Amity A1B2'}],candidate_id:null};
+ const state={scan_id:null,phase:'idle',error:'',candidates:options.candidates??[{token:'opaque-one',label:'Amity A1B2'}],candidate_id:null};
  let operationStage='admitted',operationId=null,holdStatus=!!options.holdStatus,admissionReads=0;
  const main='1'.repeat(32),member='2'.repeat(32),management=document.createElement('div');management.id='managedAmityList';document.body.append(management);
  const request=async(path,data)=>{
@@ -37,7 +37,7 @@ function fixture(options={}){
   if(path==='membership/scan'){const activate=()=>{state.scan_id=data.request_id;state.phase=options.scanning?'scanning':'found';return {operation_id:data.request_id,stage:'complete'};};if(options.holdScanStart)return new Promise(resolve=>heldScans.push(()=>resolve(activate())));return activate();}
   if(path==='membership/admission'){admissionReads++;const copy=structuredClone(state);if(holdStatus)return new Promise(resolve=>held.push(()=>resolve(copy)));return copy;}
   if(path==='membership/cancel'){if(data.scan_id!==state.scan_id)throw Object.assign(Error('This search is no longer active.'),{status:409});state.phase='cancelled';return {stage:'complete'};}
-  if(path==='membership/add'){if(options.failAdd)throw Object.assign(Error('The setup code could not be verified'),{status:409});state.phase='connecting';operationId=data.request_id;return {operation_id:operationId,stage:'admitted'};}
+  if(path==='membership/add'){if(options.failAdd)throw Object.assign(Error('Adding this Amity could not start.'),{status:409});state.phase='connecting';operationId=data.request_id;return {operation_id:operationId,stage:'admitted'};}
   if(path==='operations/'+operationId)return {operation_id:operationId,stage:operationStage,status:operationStage,message:state.error};
   throw Error('Unexpected HTTP request '+path);
  };
@@ -59,17 +59,16 @@ function fixture(options={}){
 }
 (async()=>{
  const normal=fixture();await normal.open();assert.match(normal.dialog().textContent,/Hold the Reset button on the new Amity for 3 seconds\./);
- const scan=normal.posts[0][1].request_id;assert.equal(normal.posts[0][0],'membership/scan');assert.equal(scan.length,32);assert.equal(normal.label('Matter setup code').hidden,true);assert.equal(normal.label('Name').hidden,false);
+ const scan=normal.posts[0][1].request_id;assert.equal(normal.posts[0][0],'membership/scan');assert.equal(scan.length,32);assert.equal(normal.label('Matter setup code'),undefined);assert.equal(normal.label('Name').hidden,false);
  for(const bad of ['', 'bad name','-bad','bad-','café']){await normal.fill(normal.input('Name'),bad);await normal.click(normal.button('Add'));assert.equal(normal.posts.filter(([path])=>path.endsWith('/add')).length,0);}
  await normal.fill(normal.input('Name'),'  AMITY-OFFICE  ');await normal.click(normal.button('Add'));
  const addition=normal.posts.find(([path])=>path.endsWith('/add'))[1];assert.equal(addition.scan_id,scan);assert.equal(addition.candidate_token,'opaque-one');assert.equal(addition.name,'amity-office');assert.equal(Object.hasOwn(addition,'setup_code'),false);
  assert.notEqual(addition.request_id,scan);normal.state.phase='finishing';await normal.tick();assert.match(normal.dialog().textContent,/Finishing setup/);assert.equal(normal.button('Add').disabled,true);
  normal.state.phase='complete';normal.setStage('complete');await normal.tick();assert.equal(normal.dialog(),undefined);assert.equal(normal.posts.filter(([path])=>path.endsWith('/cancel')).length,0);assert.equal(normal.messages.at(-1)[0],'Amity added.');
- const strict=fixture({strict:true});await strict.open();assert.equal(strict.label('Matter setup code').hidden,false);assert.equal(strict.button('Add').disabled,true);
- await strict.fill(strict.input('Name'),'bedroom');await strict.fill(strict.input('Matter setup code'),' 1234-567-8901 ');await strict.click(strict.button('Add'));
- assert.equal(strict.posts.find(([path])=>path.endsWith('/add'))[1].setup_code,' 1234-567-8901 ');assert.equal(strict.input('Matter setup code').value,'');await strict.click(strict.button('Close'));
- assert.equal(strict.posts.filter(([path])=>path.endsWith('/cancel')).length,0);assert.match(strict.messages.at(-1)[0],/continues/);
- const refused=fixture({strict:true,failAdd:true});await refused.open();await refused.fill(refused.input('Name'),'office');await refused.fill(refused.input('Matter setup code'),'MT:WRONG-CODE');await refused.click(refused.button('Add'));assert.equal(refused.input('Matter setup code').value,'');assert.equal(refused.button('Add').disabled,true);assert.deepEqual(refused.errors,[]);assert.deepEqual(refused.messages.at(-1),['The setup code could not be verified',true]);await refused.fill(refused.input('Matter setup code'),'1234-567-8901');assert.equal(refused.button('Add').disabled,false);
+ const admitted=fixture();await admitted.open();
+ await admitted.fill(admitted.input('Name'),'bedroom');await admitted.click(admitted.button('Add'));await admitted.click(admitted.button('Close'));
+ assert.equal(admitted.posts.filter(([path])=>path.endsWith('/cancel')).length,0);assert.match(admitted.messages.at(-1)[0],/continues/);
+ const refused=fixture({failAdd:true});await refused.open();await refused.fill(refused.input('Name'),'office');await refused.click(refused.button('Add'));assert.deepEqual(refused.errors,[]);assert.deepEqual(refused.messages.at(-1),['Adding this Amity could not start.',true]);assert.equal(refused.button('Add').disabled,false);
  const multiple=fixture({candidates:[{token:'first-token',label:'Amity A1B2'},{token:'second-token',label:'Amity C3D4'}]});await multiple.open();assert.equal(multiple.button('Add').disabled,true);assert.equal(multiple.label('Name').hidden,true);
  const select=walk(multiple.dialog()).find(node=>node.tag==='select');assert.deepEqual(select.children.map(option=>option.textContent),['Choose an Amity','Amity A1B2','Amity C3D4']);select.value='second-token';await select.dispatch('change');await multiple.fill(multiple.input('Name'),'den');await multiple.click(multiple.button('Add'));assert.equal(multiple.posts.find(([path])=>path.endsWith('/add'))[1].candidate_token,'second-token');
  const cancel=fixture({scanning:true});await cancel.open();const cancelled=cancel.state.scan_id;await cancel.click(cancel.button('Cancel'));assert.equal(cancel.posts.find(([path])=>path.endsWith('/cancel'))[1].scan_id,cancelled);await cancel.tick();assert.equal(cancel.dialog(),undefined);
@@ -92,6 +91,6 @@ function fixture(options={}){
  liveSelect.value='later-board';await liveSelect.dispatch('change');await liveChoices.click(liveChoices.button('Add'));assert.equal(liveChoices.posts.find(([path])=>path==='membership/add')[1].candidate_token,'later-board');assert.ok(liveChoices.clock()<20000);
  const ongoing=fixture({scanning:true,candidates:[]});await ongoing.open();ongoing.state.phase='found';ongoing.state.candidates=[{token:'first',label:'Amity A1B2'}];await ongoing.tick();const initialPolls=ongoing.pollCount();for(let n=0;n<51;n++)await ongoing.tick();assert.ok(ongoing.pollCount()>initialPolls+49);assert.equal(ongoing.dialog().open,true);
  ongoing.state.candidates.push({token:'second',label:'Amity C3D4'});await ongoing.tick();assert.equal(walk(ongoing.dialog()).find(node=>node.tag==='select').children.length,3);await ongoing.click(ongoing.button('Cancel'));ongoing.state.phase='found';ongoing.state.candidates.push({token:'late-after-close',label:'Amity E5F6'});await ongoing.tick();assert.equal(ongoing.dialog(),undefined);assert.equal(ongoing.posts.filter(([path])=>path==='membership/add').length,0);assert.equal(ongoing.posts.filter(([path])=>path==='membership/cancel').length,1);
- assert.deepEqual([...normal.errors,...strict.errors,...multiple.errors,...cancel.errors,...stale.errors,...collecting.errors,...unknown.errors,...listed.errors,...lateScan.errors,...liveChoices.errors,...ongoing.errors],[]);
- console.log('PASS actual admission UI: immediate scan/early selection, live later candidates throughout the bounded search, normal/strict code profile, validated names, scoped cancel, late/stale dialogs, and admitted connection cleanup');
+ assert.deepEqual([...normal.errors,...admitted.errors,...multiple.errors,...cancel.errors,...stale.errors,...collecting.errors,...unknown.errors,...listed.errors,...lateScan.errors,...liveChoices.errors,...ongoing.errors],[]);
+ console.log('PASS actual admission UI: immediate scan/early selection, live later candidates throughout the bounded search, validated names, scoped cancel, late/stale dialogs, and admitted connection cleanup');
 })().catch(error=>{console.error(error);process.exitCode=1;});

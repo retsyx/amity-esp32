@@ -24,7 +24,7 @@ def block(source, marker):
 def main():
     source = (ROOT / 'components/web_admin/system_admin.cpp').read_text()
     settings = (ROOT / 'components/device_settings/device_settings.cpp').read_text()
-    helpers = function(source, 'void wipe(') + function(source, 'std::string string(') + function(source, 'bool unique_keys(') + source[source.index('bool object_fields('):source.index('bool parse_port_value(')]
+    helpers = function(source, 'std::string string(') + function(source, 'bool unique_keys(') + source[source.index('bool object_fields('):source.index('bool parse_port_value(')]
     selection = source[source.index('struct AdmissionSelection {'):source.index('esp_err_t admission_response(')]
     addition = block(source[source.index('    Tracked operation;'):], '    if(path=="/api/membership/add")').replace('root.get()', 'root')
     update = block(source[source.index('void update_operation('):], '    if(operation.path=="/api/membership/add")')
@@ -44,26 +44,24 @@ namespace m=amity::system;
 using esp_err_t=int;using httpd_req_t=int;
 constexpr int ESP_OK=0,ESP_FAIL=1;
 using Json=std::unique_ptr<cJSON,decltype(&cJSON_Delete)>;
-struct SensitiveString {std::string& value;~SensitiveString();};
 namespace device_settings {
 const char* hostname(){return "amity-main";}
 ''' + function(settings, 'bool normalize_hostname(') + r'''
 }
 namespace amity::consortium {
 struct RuntimeAdmissionCandidate {std::string token,label;};
-struct RuntimeAdmissionStatus {m::MessageId scan_id;std::string phase="idle",error;bool requires_setup_code=false;std::vector<RuntimeAdmissionCandidate> candidates;m::OctopusId candidate_id;};
+struct RuntimeAdmissionStatus {m::MessageId scan_id;std::string phase="idle",error;std::vector<RuntimeAdmissionCandidate> candidates;m::OctopusId candidate_id;};
 struct Peer {m::OctopusId id;bool enrolled=false,ready=false,provisional=false;std::string hostname;};
-RuntimeAdmissionStatus current;std::vector<Peer> peers;unsigned connects=0;std::string sent_token,sent_name,sent_code;
+RuntimeAdmissionStatus current;std::vector<Peer> peers;unsigned connects=0;std::string sent_token,sent_name;
 RuntimeAdmissionStatus runtime_admission_status(){return current;}
 std::vector<Peer> runtime_peers(){return peers;}
-int runtime_add_octopus(m::MessageId scan,const std::string& token,const std::string& name,const std::string& code){assert(scan==current.scan_id);++connects;sent_token=token;sent_name=name;sent_code=code;return ESP_OK;}
+int runtime_add_octopus(m::MessageId scan,const std::string& token,const std::string& name){assert(scan==current.scan_id);++connects;sent_token=token;sent_name=name;return ESP_OK;}
 }
 std::string rejection,serialized;
 int error(httpd_req_t*,const char* code,const std::string&,const char* ="400 Bad Request",bool=false){rejection=code;return ESP_FAIL;}
 int send(httpd_req_t*,cJSON* value){char* data=cJSON_PrintUnformatted(value);serialized=data;cJSON_free(data);return ESP_OK;}
 struct Tracked {std::string path="/api/membership/add",status="admitted",error; m::MessageId scan_id; m::OctopusId candidate;std::string name;};
 ''' + helpers + r'''
-SensitiveString::~SensitiveString(){wipe(value);}
 ''' + selection + get_status + r'''
 bool add(cJSON* root,Tracked& operation){
     const std::string path="/api/membership/add";httpd_req_t* req=nullptr;int result=0;bool done=false;
@@ -76,25 +74,21 @@ void update_add(Tracked& operation){if(operation.status!="admitted")return;
 }
 template<class T>T id(unsigned n){char value[33];std::snprintf(value,sizeof(value),"%032x",n);return *T::parse(value);}
 std::string request(std::string name="office",std::string extra=""){return "{\"request_id\":\""+id<m::MessageId>(1).str()+"\",\"scan_id\":\""+id<m::MessageId>(2).str()+"\",\"candidate_token\":\"opaque-public-token\",\"name\":\""+name+"\""+extra+"}";}
-bool read(const std::string& raw,bool strict,AdmissionSelection& selection){Json root(web_admin::parse_json_input(raw),cJSON_Delete);std::string message;return root&&unique_keys(root.get())&&admission_selection(root.get(),strict,selection,message);}
-void reject(const std::string& raw,bool strict=false){AdmissionSelection selection;assert(!read(raw,strict,selection));}
+bool read(const std::string& raw,AdmissionSelection& selection){Json root(web_admin::parse_json_input(raw),cJSON_Delete);std::string message;return root&&unique_keys(root.get())&&admission_selection(root.get(),selection,message);}
+void reject(const std::string& raw){AdmissionSelection selection;assert(!read(raw,selection));}
 int main(){
-    AdmissionSelection selection;assert(read(request("  AMITY-OFFICE  "),false,selection)&&selection.name=="amity-office"&&selection.candidate_token=="opaque-public-token"&&selection.setup_code.empty());
-    assert(read(request("a"),false,selection));assert(read(request(std::string(32,'n')),false,selection));
+    AdmissionSelection selection;assert(read(request("  AMITY-OFFICE  "),selection)&&selection.name=="amity-office"&&selection.candidate_token=="opaque-public-token");
+    assert(read(request("a"),selection));assert(read(request(std::string(32,'n')),selection));
     for(const auto* name:{"","bad name","-bad","bad-","amity.room","caf\xc3\xa9"})reject(request(name));
     reject(request(std::string(33,'n')));reject(request("office",",\"extra\":true"));reject(request("office",",\"name\":\"other\""));reject(request()+" trailing");
-    reject(request("office",",\"setup_code\":true"));reject(request("office",",\"setup_code\":[]"));reject(request("office",",\"setup_code\":\"amityc1:retired\""));
-    assert(read(request("office",",\"setup_code\":\"\""),false,selection));reject(request(),true);
-    const auto printed=" 1234-567-8901 ";assert(read(request("office",std::string(",\"setup_code\":\"")+printed+"\""),true,selection)&&selection.setup_code==printed);
-    assert(read(request("office",",\"setup_code\":\"MT:EXAMPLE-QR-PAYLOAD\""),true,selection));
-    assert(read(request("office",",\"setup_code\":\""+std::string(256,'q')+"\""),true,selection));reject(request("office",",\"setup_code\":\""+std::string(257,'q')+"\""),true);
+    reject(request("office",",\"setup_code\":\"\""));
     for(const auto* field:{"scan_id","candidate_token","name"}){auto raw=request();Json root(cJSON_Parse(raw.c_str()),cJSON_Delete);cJSON_ReplaceItemInObjectCaseSensitive(root.get(),field,cJSON_CreateNumber(1));char* text=cJSON_PrintUnformatted(root.get());reject(text);cJSON_free(text);}
     for(const auto* field:{"scan_id","candidate_token","name"}){Json root(cJSON_Parse(request().c_str()),cJSON_Delete);cJSON_DeleteItemFromObjectCaseSensitive(root.get(),field);char* text=cJSON_PrintUnformatted(root.get());reject(text);cJSON_free(text);}
     for(const auto& token:{std::string{},std::string(129,'x'),std::string("bad")+char(1)+"token"}){Json root(cJSON_Parse(request().c_str()),cJSON_Delete);cJSON_ReplaceItemInObjectCaseSensitive(root.get(),"candidate_token",cJSON_CreateString(token.c_str()));char* text=cJSON_PrintUnformatted(root.get());reject(text);cJSON_free(text);}
     auto invalid=request();invalid.replace(invalid.find(id<m::MessageId>(2).str()),32,std::string(32,'0'));reject(invalid);
     using namespace amity::consortium;
     current.scan_id=id<m::MessageId>(2);current.phase="found";Tracked operation;Json document(cJSON_Parse(request().c_str()),cJSON_Delete);
-    assert(add(document.get(),operation)&&connects==1&&sent_name=="office"&&sent_code.empty()&&operation.scan_id==current.scan_id&&!operation.candidate);
+    assert(add(document.get(),operation)&&connects==1&&sent_name=="office"&&operation.scan_id==current.scan_id&&!operation.candidate);
     current.scan_id=id<m::MessageId>(3);rejection.clear();assert(add(document.get(),operation)&&rejection=="stale_scan"&&connects==1);current.scan_id=id<m::MessageId>(2);
     Json own_name(cJSON_Parse(request("AMITY-MAIN").c_str()),cJSON_Delete);assert(add(own_name.get(),operation)&&rejection=="name_in_use"&&connects==1);
     peers={{id<m::OctopusId>(8),true,false,false,"office"}};assert(add(document.get(),operation)&&rejection=="name_in_use"&&connects==1);peers.clear();
@@ -106,8 +100,8 @@ int main(){
     operation.status="admitted";operation.candidate={};update_add(operation);assert(operation.status=="unknown"&&operation.error.find("Check the Amity devices list")!=std::string::npos);current.scan_id=id<m::MessageId>(2);
     operation.status="admitted";current.phase="failed";current.error="Could not connect";update_add(operation);assert(operation.status=="failed"&&operation.error==current.error);
     operation.status="admitted";current.phase="cancelled";update_add(operation);assert(operation.status=="cancelled");
-    current.requires_setup_code=true;current.candidates={{"token","Amity <nearby>"}};assert(admission_response(nullptr)==ESP_OK);Json status(cJSON_Parse(serialized.c_str()),cJSON_Delete);assert(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(status.get(),"requires_setup_code")));auto* candidates=cJSON_GetObjectItemCaseSensitive(status.get(),"candidates");assert(cJSON_GetArraySize(candidates)==1&&string(cJSON_GetArrayItem(candidates,0),"label")=="Amity <nearby>");
-    std::cout<<"PASS admission API: closed typed scan/token/name/code contract, normal/strict profiles, no connect before validation, stale scans, exact final peer/name and safe status JSON\n";
+    current.candidates={{"token","Amity <nearby>"}};assert(admission_response(nullptr)==ESP_OK);Json status(cJSON_Parse(serialized.c_str()),cJSON_Delete);assert(!cJSON_GetObjectItemCaseSensitive(status.get(),"requires_setup_code"));auto* candidates=cJSON_GetObjectItemCaseSensitive(status.get(),"candidates");assert(cJSON_GetArraySize(candidates)==1&&string(cJSON_GetArrayItem(candidates,0),"label")=="Amity <nearby>");
+    std::cout<<"PASS admission API: closed typed scan/token/name contract, no connect before validation, stale scans, exact final peer/name and safe status JSON\n";
 }
 '''
     json_dir = ROOT / 'managed_components/espressif__cjson/cJSON'
