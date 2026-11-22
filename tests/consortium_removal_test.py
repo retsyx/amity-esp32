@@ -58,10 +58,10 @@ std::shared_ptr<Active> connection(bool receiver,bool management=false){
  assert(active->session.hello(hello)==Error::none&&active->session.synchronized(1,true,true)==Error::none);if(management)active->session.restrict_management();
  active->ready=!management;active->management_ready=management;active->status.id=active->peer;active->status.boot_id=sc.peer_boot_id;active->status.config_revision=1;active->status.ready=!management;active->status.management_ready=management;links.push_back(active);return active;
 }
-Envelope message(const std::shared_ptr<Active>& active){const auto& sc=active->session.scope();Envelope e;e.consortium_id=sc.consortium_id;e.origin_octopus_id=sc.peer_id;e.destination_octopus_id=sc.local_id;e.origin_boot_id=sc.peer_boot_id;e.destination_boot_id=sc.local_boot_id;e.config_revision=1;e.kind=Kind::membership_event;e.ttl_ms=2000;e.payload=parsed("{\"phase\":\"factory_reset\"}");return e;}
+Envelope message(const std::shared_ptr<Active>&){Envelope e;e.config_revision=1;e.kind=Kind::membership_event;e.ttl_ms=2000;e.payload=parsed("{\"phase\":\"factory_reset\"}");return e;}
 bool dispatch(const std::shared_ptr<Active>& active,const Envelope& e){const auto received=clock_ms;return active->session.admit(e,received,received)==Error::none&&retire_member(*active,e);}
 void codec_tests(){
- const auto base=parsed(R"({"protocol_version":1,"consortium_id":"11111111111111111111111111111111","origin_octopus_id":"33333333333333333333333333333333","origin_boot_id":"44444444444444444444444444444444","destination_octopus_id":"55555555555555555555555555555555","destination_boot_id":"66666666666666666666666666666666","config_revision":"1","kind":"membership_event","ttl_ms":2000,"payload":{"phase":"factory_reset"}})");
+ const auto base=parsed(R"({"config_revision":"1","kind":"membership_event","ttl_ms":2000,"payload":{"phase":"factory_reset"}})");
  unsigned cases=0,accepted=0;
  auto check_body=[&](const std::string& body,bool expected){
   Envelope envelope;const bool actual=parse_envelope(body,envelope)==Error::none;
@@ -95,18 +95,12 @@ void codec_tests(){
  {auto value=base;value.object.emplace_back("extra",parsed("true"));check(value,false);}
  {auto value=base;value.object.emplace_back("ttl_ms",parsed("2000"));check(value,false);}
  {auto value=base;value.get("payload")->object.emplace_back("phase",parsed("\"factory_reset\""));check(value,false);}
- for(const auto* field:{"consortium_id","origin_octopus_id","origin_boot_id","destination_octopus_id","destination_boot_id"}){
-  for(const auto& id:std::vector<std::string>{std::string(32,'0'),std::string(31,'1'),std::string(33,'1'),std::string(32,'A'),std::string(32,'g')}){
-   auto value=base;value.get(field)->string=id;check(value,false);
-  }
- }
  for(const auto* field:{"config_revision"}){
   for(const auto* replacement:{"null","true","0","\"\"","\"01\"","\"-1\"","\"18446744073709551616\""}){
    auto value=base;*value.get(field)=parsed(replacement);check(value,false);
   }
   for(const auto* revision:{"0","18446744073709551615"}){auto value=base;value.get(field)->string=revision;check(value,true);}
  }
- for(const auto* replacement:{"null","true","\"1\"","0","2"}){auto value=base;*value.get("protocol_version")=parsed(replacement);check(value,false);}
  for(const auto* replacement:{"null","true","\"1\"","10001"}){auto value=base;*value.get("ttl_ms")=parsed(replacement);check(value,false);}
  {auto body=settings_json(base);const auto at=body.find("\"ttl_ms\":2000");assert(at!=std::string::npos);body.replace(at,13,"\"ttl_ms\":-1");check_body(body,false);}
  {auto value=base;value.get("kind")->string="unknown";check(value,false);}
@@ -115,7 +109,7 @@ void codec_tests(){
 }
 void receiver_tests(){
  for(bool management:{false,true}){reset(false);auto active=connection(true,management);assert(dispatch(active,message(active))&&!group_saves&&markers==1&&restarts==1);assert(events==std::vector<std::string>({"quiescent","marker","response_attempt","restart"}));assert(parsed(sent.back()).get("result")->string=="reset_scheduled");assert(!dispatch(active,message(active))&&markers==1);}
- for(unsigned fault=0;fault<8;++fault){reset(false);auto active=connection(true);auto e=message(active);switch(fault){case 0:e.origin_boot_id=ident<model::BootId>(99);break;case 1:e.destination_boot_id=ident<model::BootId>(99);break;case 2:e.origin_octopus_id=ident<model::OctopusId>(99);break;case 3:e.destination_octopus_id=ident<model::OctopusId>(99);break;case 4:e.consortium_id=ident<model::ConsortiumId>(99);break;case 5:++e.config_revision;break;case 6:active->tls->authenticated=ident<model::OctopusId>(99);break;case 7:e.ttl_ms=2001;break;}assert(!dispatch(active,e)&&!markers&&!restarts);}
+ for(unsigned fault=0;fault<3;++fault){reset(false);auto active=connection(true);auto e=message(active);switch(fault){case 0:++e.config_revision;break;case 1:active->tls->authenticated=ident<model::OctopusId>(99);break;case 2:e.ttl_ms=2001;break;}assert(!dispatch(active,e)&&!markers&&!restarts);}
  for(unsigned fault:{1u,5u}){reset(false);auto active=connection(true);failure=fault;assert(!dispatch(active,message(active))&&!markers&&!restarts&&!group_saves);}
  reset(false);auto active=connection(true);send_ok=false;assert(!dispatch(active,message(active))&&markers==1&&restarts==1); // LostACK still finishes explicitly authorized durable reset.
  reset(true);active=connection(false);assert(!dispatch(active,message(active))&&!group_saves&&!markers); // Main can never be reset by a member.
@@ -154,7 +148,7 @@ void empty_context_refresh_allows_reviewed_removal(){
 }
 void ack_tests(){
  for(bool publish_cleanup:{false,true}){
- reset(true);auto active=connection(false);const auto request=ident<model::MessageId>(80);assert(runtime_remove_octopus(active->peer,request,1,{})==ESP_OK);auto response=parsed("{\"phase\":\"factory_reset\",\"result\":\"reset_scheduled\"}");const auto sc=active->session.scope();Envelope e;e.kind=Kind::membership_result;e.consortium_id=sc.consortium_id;e.origin_octopus_id=sc.peer_id;e.destination_octopus_id=sc.local_id;e.origin_boot_id=sc.peer_boot_id;e.destination_boot_id=sc.local_boot_id;e.config_revision=1;e.ttl_ms=2000;const std::string payload=settings_json(response);
+ reset(true);auto active=connection(false);const auto request=ident<model::MessageId>(80);assert(runtime_remove_octopus(active->peer,request,1,{})==ESP_OK);auto response=parsed("{\"phase\":\"factory_reset\",\"result\":\"reset_scheduled\"}");Envelope e;e.kind=Kind::membership_result;e.config_revision=1;e.ttl_ms=2000;const std::string payload=settings_json(response);
  // The real Remove transaction revokes membership in before_commit, then
  // publishes its saved-config deletion before this worker necessarily runs.
  if(publish_cleanup){configuration=2;clock_ms+=100;}
@@ -170,7 +164,7 @@ std::string inflight_payload(const LinkScope& scope,Kind kind){
  assert(kind==Kind::update_result);return "{\"request_id\":\""+ident<model::MessageId>(90).str()+"\",\"release_id\":\""+ident<model::MessageId>(91).str()+"\",\"image_sha256\":\""+std::string(64,'a')+"\",\"offset\":\"0\",\"stage\":\"status\",\"error\":\"\"}";
 }
 Envelope inflight_frame(const std::shared_ptr<Active>& active,Kind kind,uint64_t revision){
- const auto& scope=active->session.scope();Envelope e;e.consortium_id=scope.consortium_id;e.origin_octopus_id=scope.peer_id;e.destination_octopus_id=scope.local_id;e.origin_boot_id=scope.peer_boot_id;e.destination_boot_id=scope.local_boot_id;e.config_revision=revision;e.kind=kind;e.ttl_ms=1000;e.payload=parsed(inflight_payload(scope,kind));return e;
+ const auto& scope=active->session.scope();Envelope e;e.config_revision=revision;e.kind=kind;e.ttl_ms=1000;e.payload=parsed(inflight_payload(scope,kind));return e;
 }
 void queue_reset_ack(const std::shared_ptr<Active>& active,uint64_t revision=0){
  auto ack=inflight_frame(active,Kind::device_status,revision?revision:active->session.scope().config_revision);ack.kind=Kind::membership_result;ack.ttl_ms=2000;
@@ -190,18 +184,13 @@ void inflight_status_does_not_hide_reset_ack(){
   assert(active->session.state()==ConnectionState::restricted&&!active->ready&&!active->management_ready&&!active->status.ready&&!active->status.management_ready);
   assert(active->session.admit(checked,clock_ms,clock_ms)!=Error::none&&active->removal_until==until&&clock_ms==100&&sent_timeouts.front()==2000);
  }
- for(unsigned fault=0;fault<8;++fault){
+ for(unsigned fault=0;fault<3;++fault){
   reset(true);auto active=connection(false);configuration=2;assert(active->session.advance_configuration(2)==Error::none);active->status.config_revision=2;
   auto prior=inflight_frame(active,Kind::scoped_result,2);
   switch(fault){
-   case 0:prior.origin_boot_id=ident<model::BootId>(99);break;
-   case 1:prior.destination_boot_id=ident<model::BootId>(99);break;
-   case 2:prior.origin_octopus_id=ident<model::OctopusId>(99);break;
-   case 3:prior.destination_octopus_id=ident<model::OctopusId>(99);break;
-   case 4:prior.consortium_id=ident<model::ConsortiumId>(99);break;
-   case 5:prior.config_revision=3;break;
-   case 6:prior.config_revision=0;break;
-   case 7:prior.payload.get("snapshot")->object.emplace_back("unexpected",Json{});break;
+   case 0:prior.config_revision=3;break;
+   case 1:prior.config_revision=0;break;
+   case 2:prior.payload.get("snapshot")->object.emplace_back("unexpected",Json{});break;
   }
   const auto request=ident<model::MessageId>(84);assert(runtime_remove_octopus(active->peer,request,1,{})==ESP_OK);
   active->tls->frames.push_back(envelope_json(prior,settings_json(prior.payload)));queue_reset_ack(active);

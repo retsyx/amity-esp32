@@ -87,8 +87,8 @@ struct RuntimeSnapshotRetry {
 struct RuntimeControlHooks {
     std::function<std::string(model::OctopusId)> snapshot;
     std::function<Error(model::OctopusId,const Json &)> synchronize;
-    // Exact receiver-local deadline and authenticated logical execution session.
-    std::function<Error(model::OctopusId,const Envelope &,uint64_t,model::LinkId)> control;
+    // The authenticated logical session and the exact receiver-local deadline.
+    std::function<Error(const LinkScope&,const Envelope &,uint64_t)> control;
     std::function<bool(model::OctopusId,model::BootId,model::LinkId)> disconnected;
     // Admit a current-context recapture on the owner task. Acceptance may be
     // asynchronous; execution is ready only after that context enters the link FIFO.

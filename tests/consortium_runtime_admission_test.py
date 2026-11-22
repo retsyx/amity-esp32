@@ -56,8 +56,8 @@ void start(Active &active,uint64_t config=7){
     check(active.session.authenticate(sc,sc.peer_id,PeerRole::actuator,true)==Error::none,"authenticate failed");
     check(active.session.hello(hello)==Error::none&&active.session.synchronized(config,true,true)==Error::none,"session did not synchronize");
 }
-Envelope envelope(Kind kind,uint64_t config=7){const auto s=scope(config);Envelope e;e.kind=kind;e.consortium_id=s.consortium_id;e.origin_octopus_id=s.peer_id;e.origin_boot_id=s.peer_boot_id;e.destination_octopus_id=s.local_id;e.destination_boot_id=s.local_boot_id;e.config_revision=s.config_revision;e.ttl_ms=2000;return e;}
-std::string packet(const Envelope&e,std::string payload){return "{\"protocol_version\":1,\"consortium_id\":\""+e.consortium_id.str()+"\",\"origin_octopus_id\":\""+e.origin_octopus_id.str()+"\",\"origin_boot_id\":\""+e.origin_boot_id.str()+"\",\"destination_octopus_id\":\""+e.destination_octopus_id.str()+"\",\"destination_boot_id\":\""+e.destination_boot_id.str()+"\",\"config_revision\":\""+std::to_string(e.config_revision)+"\",\"kind\":\""+kind_name(e.kind)+"\",\"ttl_ms\":2000,\"payload\":"+payload+"}";}
+Envelope envelope(Kind kind,uint64_t config=7){const auto s=scope(config);Envelope e;e.kind=kind;e.config_revision=s.config_revision;e.ttl_ms=2000;return e;}
+std::string packet(const Envelope&e,std::string payload){return "{\"config_revision\":\""+std::to_string(e.config_revision)+"\",\"kind\":\""+kind_name(e.kind)+"\",\"ttl_ms\":2000,\"payload\":"+payload+"}";}
 const std::string device_status="{\"hostname\":\"amity-member\"}";
 std::string acknowledgement(bool correct=true){return packet(envelope(Kind::membership_result),correct?"{\"phase\":\"factory_reset\",\"result\":\"reset_scheduled\"}":"{\"phase\":\"factory_reset\",\"result\":\"rejected\"}");}
 const std::string settings_payload="{\"request_id\":\"00000000000000000000000000000100\",\"operation\":\"read\",\"stage\":\"applied\",\"error\":\"\",\"snapshot\":{\"boot_id\":\"00000000000000000000000000000006\",\"settings_revision\":\"1\",\"hostname_revision\":\"1\",\"hostname\":\"amity\",\"adapters\":[{\"tentacle_id\":0,\"name\":\"HDMI adapter 1\",\"configured\":true,\"default_front_physical_address\":\"1.0.0.0\",\"observed_front_physical_address\":null,\"effective_front_physical_address\":\"1.0.0.0\"}]},\"rebooting\":false}";
@@ -81,8 +81,8 @@ void settings_retirement_tests(){
      check(active.session.state()==ConnectionState::restricted&&!active.ready&&!active.status.ready&&active.queue.empty(),"drained settings reply restored work authority");
      check(active.transport.largest_timeout<=2000,"settings reply drain extended the removal deadline");
      check(active.session.admit(envelope(Kind::device_status),clock_ms,clock_ms)!=Error::none,"settings reply left the session in management mode");}
-    for(unsigned failure=0;failure<6;++failure){Active active;start(active);auto foreign=envelope(Kind::settings_result);
-     switch(failure){case 0:foreign.origin_boot_id=ident<m::BootId>(99);break;case 1:foreign.destination_boot_id=ident<m::BootId>(99);break;case 2:foreign.origin_octopus_id=ident<m::OctopusId>(99);break;case 3:foreign.destination_octopus_id=ident<m::OctopusId>(99);break;case 4:foreign.consortium_id=ident<m::ConsortiumId>(99);break;case 5:foreign.config_revision=8;break;}
+    for(unsigned failure=0;failure<1;++failure){Active active;start(active);auto foreign=envelope(Kind::settings_result);
+     switch(failure){case 0:foreign.config_revision=8;break;}
      active.transport.frames={packet(foreign,settings_payload),acknowledgement()};
      check(!finish_retirement(active)&&active.transport.next==1,"foreign settings reply was drained or acknowledged");}
     {Active active;start(active);active.transport.frames={settings_reply()};

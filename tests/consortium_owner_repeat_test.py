@@ -418,7 +418,7 @@ void codec_and_session(){
  input.edges[1].key=0x42;assert(parse_json(owned_intent_json(input),bad,error)&&parse_owned_intent(bad,parsed)==Error::invalid_message);input=down();
  LinkScope scope{ident<model::LinkId>(7),ident<model::ConsortiumId>(1),ident<model::OctopusId>(3),ident<model::OctopusId>(2),ident<model::OctopusId>(2),ident<model::BootId>(8),ident<model::BootId>(4),1};
  Session session;assert(session.authenticate(scope,scope.peer_id,PeerRole::coordinator,true)==Error::none);HelloFrame h;h.consortium_id=scope.consortium_id;h.octopus_id=scope.peer_id;h.boot_id=scope.peer_boot_id;assert(session.hello(h)==Error::none&&session.synchronized(1,true,true)==Error::none);
- Envelope e;e.consortium_id=scope.consortium_id;e.origin_octopus_id=scope.peer_id;e.destination_octopus_id=scope.local_id;e.origin_boot_id=scope.peer_boot_id;e.destination_boot_id=scope.local_boot_id;e.config_revision=1;e.kind=Kind::scoped_intent;e.ttl_ms=500;e.payload=value;
+ Envelope e;e.config_revision=1;e.kind=Kind::scoped_intent;e.ttl_ms=500;e.payload=value;
  assert(session.admit(e,100,100)==Error::none);
  input=down();text=owned_intent_json(input);assert(parse_json(text,e.payload,error)&&session.admit(e,60000,60000)==Error::none); // Fresh input after long idle needs no grant.
  assert(session.admit(e,60000,60500)==Error::invalid_message); // Its original 500 ms TTL still expires.
@@ -436,7 +436,7 @@ void codec_and_session(){
                model::OwnedIntentKind::query_audio,model::OwnedIntentKind::standby_wire,model::OwnedIntentKind::announce_active_source}){
   auto local=down();local.kind=kind;assert(owned_intent_json(local).empty()); // CEC actions never cross owners.
  }
- e.origin_boot_id=ident<model::BootId>(99);assert(session.admit(e,60600,60600)==Error::stale_boot);e.origin_boot_id=scope.peer_boot_id;e.config_revision=2;assert(session.admit(e,60600,60600)==Error::stale_config);
+ e.config_revision=2;assert(session.admit(e,60600,60600)==Error::stale_config);
  model::OwnedAdapterSnapshot report;report.owner=scope.local_id;report.boot=scope.local_boot_id;report.devices.push_back({model::Side::back,"Player",4,4,0x1000,1,true});text=owned_snapshot_json(report);assert(!text.empty()&&parse_json(text,value,error));model::OwnedAdapterSnapshot decoded;assert(parse_owned_snapshot(value,decoded)&&decoded.devices.front().osd_name=="Player");value.get("devices")->array.push_back(value.get("devices")->array.front());assert(!parse_owned_snapshot(value,decoded));
 }
 

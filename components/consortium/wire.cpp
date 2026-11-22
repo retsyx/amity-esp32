@@ -74,7 +74,7 @@ std::string synchronization_json(model::MessageId round,std::string_view phase,u
 const char *error_name(Error v) {
     switch(v) {
 #define E(a,b) case Error::a:return b
-    E(none,"OK");E(invalid_message,"INVALID_MESSAGE");E(unsupported_kind,"UNSUPPORTED_KIND");E(protocol_mismatch,"PROTOCOL_MISMATCH");E(unauthorized_role,"UNAUTHORIZED_ROLE");E(wrong_consortium,"WRONG_CONSORTIUM");E(stale_boot,"STALE_BOOT");E(stale_config,"STALE_CONFIG");E(expired,"EXPIRED");E(target_not_local,"TARGET_NOT_LOCAL");E(not_ready,"NOT_READY");E(queue_full,"QUEUE_FULL");E(duplicate,"DUPLICATE");E(identity_conflict,"IDENTITY_CONFLICT");E(storage_failure,"STORAGE_FAILURE");E(transaction_conflict,"TRANSACTION_CONFLICT");
+    E(none,"OK");E(invalid_message,"INVALID_MESSAGE");E(unsupported_kind,"UNSUPPORTED_KIND");E(unauthorized_role,"UNAUTHORIZED_ROLE");E(wrong_consortium,"WRONG_CONSORTIUM");E(stale_boot,"STALE_BOOT");E(stale_config,"STALE_CONFIG");E(expired,"EXPIRED");E(target_not_local,"TARGET_NOT_LOCAL");E(not_ready,"NOT_READY");E(queue_full,"QUEUE_FULL");E(duplicate,"DUPLICATE");E(identity_conflict,"IDENTITY_CONFLICT");E(storage_failure,"STORAGE_FAILURE");E(transaction_conflict,"TRANSACTION_CONFLICT");
 #undef E
     }return "INVALID_MESSAGE";
 }
@@ -88,16 +88,14 @@ bool decimal(const Json *v,uint64_t &out) {if(!v||v->type!=Json::Type::string)re
 Error parse_envelope(std::string_view body,Envelope &out,JsonError *detail) {
     if(body.substr(0,4)=="AFU1")return parse_update_chunk_envelope(body,out);
     Json v;JsonError e;if(!parse_json(body,v,e,max_frame_bytes,2048)){if(detail)*detail=e;return Error::invalid_message;}
-    if(!closed(v,{"protocol_version","consortium_id","origin_octopus_id","origin_boot_id","destination_octopus_id","destination_boot_id","config_revision","kind","ttl_ms","payload"}))return Error::invalid_message;
-    uint64_t version=0,ttl=0;if(!json_uint(v.get("protocol_version"),version,1,1))return Error::protocol_mismatch;
-    Envelope x;
-    if(!id(v.get("consortium_id"),x.consortium_id)||!id(v.get("origin_octopus_id"),x.origin_octopus_id)||!id(v.get("origin_boot_id"),x.origin_boot_id)||!id(v.get("destination_octopus_id"),x.destination_octopus_id)||!id(v.get("destination_boot_id"),x.destination_boot_id)||!decimal(v.get("config_revision"),x.config_revision)||!json_uint(v.get("ttl_ms"),ttl,1,10000))return Error::invalid_message;
+    if(!closed(v,{"config_revision","kind","ttl_ms","payload"}))return Error::invalid_message;
+    uint64_t ttl=0;Envelope x;
+    if(!decimal(v.get("config_revision"),x.config_revision)||!json_uint(v.get("ttl_ms"),ttl,1,10000))return Error::invalid_message;
     bool recognized=false;for(auto kind:{Kind::enrollment_control,Kind::membership_event,Kind::membership_result,Kind::snapshot_request,Kind::snapshot_chunk,Kind::update_begin,Kind::update_chunk,Kind::update_install,Kind::update_status,Kind::update_abort,Kind::update_result,Kind::device_status,Kind::settings_read,Kind::settings_write,Kind::settings_result,Kind::scoped_intent,Kind::scoped_result,Kind::synchronization,Kind::log_request,Kind::log_result})if(text_is(v.get("kind"),{kind_name(kind)})){x.kind=kind;recognized=true;break;}
     if(!recognized)return Error::unsupported_kind;
     if((x.kind==Kind::membership_event||x.kind==Kind::membership_result)&&ttl>2000)return Error::invalid_message;
     if(!payload(x.kind,*v.get("payload")))return Error::invalid_message;
     x.ttl_ms=ttl;x.payload=std::move(*v.get("payload"));
-    if(x.kind==Kind::scoped_intent){model::OwnedIntent op;parse_owned_intent(x.payload,op);if(op.kind!=model::OwnedIntentKind::key_edges&&(op.target.port.consortium_id!=x.consortium_id||op.target.port.octopus_id!=x.destination_octopus_id))return Error::target_not_local;}
     out=std::move(x);return Error::none;
 }
 std::string hello_json(const HelloFrame &h){

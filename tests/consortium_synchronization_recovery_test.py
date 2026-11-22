@@ -51,7 +51,6 @@ struct ServerScript {
  bool stale_only_second=false,reject_first_transfer=false;
  explicit ServerScript(LinkScope scope):original(scope){}
  void operator()(Active& active,const Envelope& envelope){
-  assert(envelope.origin_boot_id==original.local_boot_id&&envelope.destination_boot_id==original.peer_boot_id);
   if(envelope.kind==Kind::device_status){feed(active,inbound(original,envelope.config_revision,Kind::device_status,"{\"hostname\":\"amity-member\"}"));return;}
   if(envelope.kind==Kind::synchronization){
    model::MessageId round;std::string phase;uint64_t target;
@@ -92,7 +91,6 @@ void coordinator_recovers_capture_failure_and_ignores_old_round(){
  on_send=[&](auto& a,const auto& e){script(a,e);};
  assert(synchronize_connection(*active,true)&&active->ready&&active->status.ready&&script.rounds==3&&captures==2&&applies==1);
  same_connection(*active,original,tls,7);
- seen.origin_boot_id=ident<model::BootId>(999);assert(active->session.admit(seen,clock_ms,clock_ms)==Error::stale_boot); // Same authenticated stream retains its exact boot fence.
  assert(!diagnostic_logs.empty()&&clock_ms>=12100); // Failed barrier and existing one-second recovery delays.
 }
 void coordinator_recovers_owner_apply_and_peer_rejection(){
@@ -183,44 +181,36 @@ void recovery_revision_preserves_identity_and_fences_ordinary_revision(){
   auto future=inbound(original,9,Kind::device_status,device_status);assert(active->session.admit(future,clock_ms,clock_ms)==Error::stale_config);
  }
 }
-void broken_transport_and_wrong_boot_stop_recovery(){
- for(bool wrong_boot:{false,true}){
-  auto active=initial(true);const auto original=active->session.scope();const auto* tls=active->tls.get();unsigned begins=0;
-  on_send=[&](Active& a,const Envelope& envelope){
-   assert(envelope.kind==Kind::synchronization);++begins;
-   if(wrong_boot){model::MessageId round;std::string phase;uint64_t revision;assert(parse_synchronization(envelope.payload,round,phase,revision)==Error::none);auto ack=sync_frame(original,round,"ack",revision);ack.origin_boot_id=ident<model::BootId>(999);feed(a,ack);}
-  };
-  if(!wrong_boot)active->tls->before_receive=[&]{active->tls->healthy=false;};
-  assert(!synchronize_connection(*active,true)&&begins==1&&!active->ready&&!active->status.ready&&active->tls.get()==tls&&shutdowns==0);
-  if(wrong_boot)assert(active->tls->usable());else assert(!active->tls->usable());
- }
+void broken_transport_stops_recovery(){
+ auto active=initial(true);const auto* tls=active->tls.get();unsigned begins=0;
+ on_send=[&](Active&,const Envelope& envelope){assert(envelope.kind==Kind::synchronization);++begins;};
+ active->tls->before_receive=[&]{active->tls->healthy=false;};
+ assert(!synchronize_connection(*active,true)&&begins==1&&!active->ready&&!active->status.ready&&active->tls.get()==tls&&shutdowns==0);
+ assert(!active->tls->usable());
  auto revoked=initial(true);credentials_current=false;assert(!synchronize_connection(*revoked,true)&&revoked->tls->sent.empty());
 }
-void observation_interleaving_preserves_identity_fences(){
- for(bool wrong_boot:{false,true}){
+void interleaved_observations_complete_recovery(){
+ {
   auto active=start(true);credentials_current=true;const auto original=active->session.scope();const auto* tls=active->tls.get();
-  controls.control=[](auto,const auto&,auto,auto){assert(false&&"No remote CEC completion exists");return Error::none;};
+  controls.control=[](const auto&,const auto&,auto){assert(false&&"No remote CEC completion exists");return Error::none;};
   SynchronizationRound round{ident<model::MessageId>(600),7};
-  auto result=inbound(original,7,Kind::scoped_result,observation(original));if(wrong_boot)result.origin_boot_id=ident<model::BootId>(999);
-  feed(*active,result);feed(*active,sync_frame(original,round.id,"ack",7));
-  LinkTrace trace;const bool passed=synchronization_barrier(*active,true,round,trace);
+  feed(*active,inbound(original,7,Kind::scoped_result,observation(original)));feed(*active,sync_frame(original,round.id,"ack",7));
+  LinkTrace trace;assert(synchronization_barrier(*active,true,round,trace));
   same_connection(*active,original,tls,7);assert(restart_fences.empty());
-  assert(passed!=wrong_boot);if(wrong_boot)assert(trace.error==Error::stale_boot);
  }
- for(bool barrier:{false,true})for(bool wrong_boot:{false,true}){
+ for(bool barrier:{false,true}){
   auto active=start(true);credentials_current=true;const auto original=active->session.scope();const auto* tls=active->tls.get();bool injected=false;
   controls.snapshot=[](auto){return owner_state;};controls.synchronize=[](auto,const Json&){return Error::none;};
   controls.configuration_snapshot=[&](auto,uint64_t revision){return controller_slice(original,revision);};
   ServerScript script{original};on_send=[&](Active& a,const Envelope& envelope){
    if(!injected&&((barrier&&envelope.kind==Kind::synchronization)||(!barrier&&envelope.kind==Kind::snapshot_request))){
-    injected=true;assert(active->execution_fenced);auto result=inbound(original,7,Kind::scoped_result,observation(original));if(wrong_boot)result.origin_boot_id=ident<model::BootId>(999);feed(a,result);
+    injected=true;assert(active->execution_fenced);feed(a,inbound(original,7,Kind::scoped_result,observation(original)));
    }
    script(a,envelope);
   };
   LinkTrace trace;const bool ready=synchronize_connection(*active,true,true,0,&trace);
   same_connection(*active,original,tls,7);assert(injected&&script.rounds==1&&restart_fences.size()==1);
-  if(!wrong_boot)assert(ready&&active->ready&&!active->execution_fenced&&active->session.scope().link_id!=original.link_id);
-  else assert(!ready&&!active->ready&&!active->status.ready&&trace.error==Error::stale_boot);
+  assert(ready&&active->ready&&!active->execution_fenced&&active->session.scope().link_id!=original.link_id);
  }
 }
 void logical_restart_clears_old_ipc_and_update_without_replaying_work(){
@@ -254,7 +244,6 @@ void logical_restart_clears_old_ipc_and_update_without_replaying_work(){
  active->cleaned_link=active->session.scope().link_id;
  assert(fence_synchronization_scope(*active,trace)&&aborted_updates==2&&!active->update_begin_id);
  assert(fence_synchronization_scope(*active,trace)&&aborted_updates==2);
- old_scope_frame.destination_boot_id=ident<model::BootId>(999);assert(active->session.admit(old_scope_frame,clock_ms,clock_ms)==Error::stale_boot);
  assert(active->session.synchronized(7,true,true)==Error::none);
  assert(active->queue.empty()&&active->tls->sent.empty()); // Fresh authentication never resurrects admitted work from the ended link.
  round.id=ident<model::MessageId>(503);assert(restart_synchronization_scope(*active,round,trace));
@@ -315,7 +304,7 @@ void application_restart_waits_for_exact_cleanup_before_fresh_scope(){
  LinkTrace trace;trace.fail("control_dispatch",Error::not_ready);assert(application_failure_recoverable(*active,trace));
  assert(recover_operational_frame(*active,true,trace)&&fences==3&&script.rounds==1&&clock_ms>=2100);
  same_connection(*active,original,tls,7);assert(active->ready&&!active->execution_fenced&&active->queue.empty()&&abandoned.expired()&&disconnects==0&&observations.size()==3);
- assert(active->session.scope().link_id!=original.link_id);old_scope_frame.destination_boot_id=ident<model::BootId>(999);assert(active->session.admit(old_scope_frame,clock_ms,clock_ms)==Error::stale_boot);
+ assert(active->session.scope().link_id!=original.link_id);
  assert(std::none_of(active->tls->sent.begin(),active->tls->sent.end(),[](const auto& e){return e.kind==Kind::scoped_intent;}));
 }
 void logical_recovery_keeps_security_and_transport_fences(){
@@ -337,7 +326,7 @@ void logical_recovery_keeps_security_and_transport_fences(){
  active->lifecycle_only=true;assert(!application_failure_recoverable(*active,trace));active->lifecycle_only=false;
  group.role=Group::prepared;assert(!application_failure_recoverable(*active,trace));
 }
-struct PairedResult {bool ready=false,scope_intact=false,context_withheld=false,boot_fence_intact=false;unsigned applies=0,rounds=0;model::LinkId link;};
+struct PairedResult {bool ready=false,scope_intact=false,context_withheld=false;unsigned applies=0,rounds=0;model::LinkId link;};
 PairedResult paired_endpoint(bool server,int fd){
  auto active=initial(server);active->tls->socket=fd;const auto original=active->session.scope();const auto* tls=active->tls.get();
  auto seen=inbound(original,7,Kind::device_status,"{\"hostname\":\"amity-peer\"}");assert(active->session.admit(seen,clock_ms,clock_ms)==Error::none);
@@ -381,7 +370,7 @@ PairedResult paired_endpoint(bool server,int fd){
  auto expected=original;expected.link_id=*model::LinkId::parse(active->synchronization.id.str());result.link=expected.link_id;
  result.scope_intact=active->session.scope()==expected&&expected.link_id!=original.link_id&&active->tls.get()==tls&&active->tls->socket==fd&&active->tls->usable()&&shutdowns==0;
  result.context_withheld=!active->context_ready;
- seen.origin_boot_id=ident<model::BootId>(999);result.boot_fence_intact=active->session.admit(seen,clock_ms,clock_ms)==Error::stale_boot;result.applies=applies;result.rounds=rounds;
+ result.applies=applies;result.rounds=rounds;
  return result;
 }
 void paired_endpoints_recover_crossed_application_failures(){
@@ -395,14 +384,14 @@ void paired_endpoints_recover_crossed_application_failures(){
  PairedResult member;const auto read=::read(reports[0],&member,sizeof(member));::close(reports[0]);int status=0;assert(::waitpid(child,&status,0)==child);
  assert(read==sizeof(member)&&WIFEXITED(status)&&WEXITSTATUS(status)==0);
  assert(main.link&&main.link==member.link);
- for(const auto& endpoint:{main,member})assert(endpoint.ready&&endpoint.scope_intact&&endpoint.context_withheld&&endpoint.boot_fence_intact&&endpoint.applies>=2&&endpoint.rounds>=3);
+ for(const auto& endpoint:{main,member})assert(endpoint.ready&&endpoint.scope_intact&&endpoint.context_withheld&&endpoint.applies>=2&&endpoint.rounds>=3);
 }
 }
 int main(){using namespace amity::consortium;
  coordinator_recovers_capture_failure_and_ignores_old_round();coordinator_recovers_owner_apply_and_peer_rejection();
  member_recovers_configuration_apply_and_owner_capture();new_begin_unwinds_pending_transfer_without_reauthenticating();
- recovery_revision_preserves_identity_and_fences_ordinary_revision();broken_transport_and_wrong_boot_stop_recovery();
- observation_interleaving_preserves_identity_fences();logical_restart_clears_old_ipc_and_update_without_replaying_work();
+ recovery_revision_preserves_identity_and_fences_ordinary_revision();broken_transport_stops_recovery();
+ interleaved_observations_complete_recovery();logical_restart_clears_old_ipc_and_update_without_replaying_work();
  hostname_persistence_failure_retains_same_stream();late_old_link_callbacks_cannot_cancel_fenced_tls();expired_operational_frame_uses_existing_connection();
  application_restart_waits_for_exact_cleanup_before_fresh_scope();logical_recovery_keeps_security_and_transport_fences();
  paired_endpoints_recover_crossed_application_failures();

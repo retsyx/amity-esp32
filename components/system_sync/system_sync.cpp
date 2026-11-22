@@ -110,7 +110,8 @@ c::Error synchronize(s::OctopusId sender,const c::Json& value){
     {std::lock_guard<std::mutex> guard(state.mutex);state.owner_revision=revision;}
     return c::Error::none;
 }
-c::Error receive(s::OctopusId sender,const c::Envelope& envelope,uint64_t deadline,s::LinkId link){
+c::Error receive(const c::LinkScope& scope,const c::Envelope& envelope,uint64_t deadline){
+    const auto sender=scope.peer_id;const auto link=scope.link_id;
     if(envelope.kind==c::Kind::scoped_result){
         if(!c::runtime_status().coordinator)return c::Error::unauthorized_role;
         const auto* snapshot=envelope.payload.get("snapshot");s::OwnedAdapterSnapshot report;
@@ -124,7 +125,7 @@ c::Error receive(s::OctopusId sender,const c::Envelope& envelope,uint64_t deadli
         admitted=state.control->submit_key_edges(intent.edges,intent.edge_count,intent.generation,link,deadline);
     }else{
         if(intent.target.port.octopus_id!=state.control->octopus_id()||intent.target.port.consortium_id!=state.control->consortium_id())return c::Error::target_not_local;
-        s::OwnedAuthorization auth{sender,envelope.origin_boot_id,envelope.destination_boot_id,link,envelope.config_revision,deadline};
+        s::OwnedAuthorization auth{sender,scope.peer_boot_id,scope.local_boot_id,link,envelope.config_revision,deadline};
         admitted=state.control->submit_owned(intent,auth);
     }
     if(intent.kind==s::OwnedIntentKind::key_edges&&

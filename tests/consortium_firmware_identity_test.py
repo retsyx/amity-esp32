@@ -54,8 +54,8 @@ std::shared_ptr<Active> connection(bool server,bool matching,bool provisional){
 }
 Envelope inbound(const Active& active,Kind kind){
  const auto scope=active.session.scope();Envelope message;
- message.consortium_id=scope.consortium_id;message.origin_octopus_id=scope.peer_id;message.destination_octopus_id=scope.local_id;
- message.origin_boot_id=scope.peer_boot_id;message.destination_boot_id=scope.local_boot_id;
+ 
+ 
  message.config_revision=scope.config_revision;message.ttl_ms=1000;message.kind=kind;return message;
 }
 void mismatched(bool server,bool provisional){
@@ -77,7 +77,6 @@ void mismatched(bool server,bool provisional){
  for(auto kind:{Kind::update_begin,Kind::update_chunk,Kind::update_install,Kind::update_abort,Kind::update_status,Kind::update_result}){
   auto message=inbound(*active,kind);if(kind==Kind::update_chunk)message.update_chunk=UpdateChunk{ident<model::MessageId>(98),0,std::string(2048,'x')};const bool allowed=server?kind==Kind::update_result:kind!=Kind::update_result;
   assert(active->session.admit(message,100,100)==(allowed?Error::none:Error::unauthorized_role));
-  if(allowed){message.origin_boot_id=ident<model::BootId>(99);assert(active->session.admit(message,100,100)==Error::stale_boot);}
  }
  assert(active->session.begin_synchronization(scope.config_revision)==Error::not_ready);
  // A later local configuration change cannot unlock or resynchronize this image.

@@ -193,7 +193,7 @@ bool candidate_passive=false;
 int listener=-1;
 void error(std::string value){std::lock_guard<std::mutex> guard(lock);status.last_error=std::move(value);}
 template<class T>T random_id(){auto value=T::parse(random_hex(16));return value?*value:T{};}
-Envelope outgoing(const Active &link,Kind kind,uint32_t ttl){auto s=link.session.scope();Envelope e;e.consortium_id=s.consortium_id;e.origin_octopus_id=s.local_id;e.origin_boot_id=s.local_boot_id;e.destination_octopus_id=s.peer_id;e.destination_boot_id=s.peer_boot_id;e.config_revision=s.config_revision;e.kind=kind;e.ttl_ms=ttl;return e;}
+Envelope outgoing(const Active &link,Kind kind,uint32_t ttl){Envelope e;e.config_revision=link.session.scope().config_revision;e.kind=kind;e.ttl_ms=ttl;return e;}
 bool lifecycle_kind(Kind kind){return kind==Kind::membership_event||kind==Kind::membership_result;}
 bool current_peer_credential(const Active &link,const Group &current){
     for(const auto &peer:current.peers)if(peer.id==link.tls->authenticated)for(const auto &allowed:link.tls->allowed)if(allowed.id==peer.id&&allowed.der==peer.der&&allowed.pin==peer.pin)return true;
@@ -375,7 +375,7 @@ bool synchronization_recoverable(const Active& active,const LinkTrace& trace){
     switch(trace.error){
     case Error::wrong_consortium:case Error::stale_boot:
     case Error::identity_conflict:case Error::unauthorized_role:case Error::target_not_local:
-    case Error::protocol_mismatch:case Error::unsupported_kind:return false;
+    case Error::unsupported_kind:return false;
     default:return true;
     }
 }
@@ -1105,7 +1105,7 @@ void active_loop_work(void *arg){
 
             }
             if(hooks.control){
-                const auto result=hooks.control(active->peer,envelope,deadline,active->session.scope().link_id);
+                const auto result=hooks.control(active->session.scope(),envelope,deadline);
                 if(active->restart_requested){trace.fail("application_restart_requested");break;}
                 if(!server&&result==Error::none&&envelope.kind==Kind::scoped_intent&&(envelope.payload.get("action")->string=="context"||envelope.payload.get("action")->string=="activity")){active->context_ready=true;active->refreshing=false;}
                 if(result!=Error::none&&(envelope.kind==Kind::scoped_result||(envelope.kind==Kind::scoped_intent&&(key_cleanup||envelope.payload.get("action")->string=="activity"||envelope.payload.get("action")->string=="context")))){trace.fail("control_dispatch",result);break;}

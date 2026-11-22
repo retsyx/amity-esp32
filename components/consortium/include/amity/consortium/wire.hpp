@@ -6,7 +6,7 @@
 
 namespace amity::consortium {
 namespace model = amity::system;
-enum class Error { none, invalid_message, unsupported_kind, protocol_mismatch, unauthorized_role,
+enum class Error { none, invalid_message, unsupported_kind, unauthorized_role,
     wrong_consortium, stale_boot, stale_config, expired, target_not_local, not_ready, queue_full, duplicate,
     identity_conflict, storage_failure, transaction_conflict };
 const char *error_name(Error);
@@ -21,10 +21,9 @@ struct UpdateChunk {
     uint64_t offset = 0;
     std::string bytes;
 };
+// The authenticated connection identifies both Amities and boots; a frame
+// carries only its configuration fence, kind, lifetime and payload.
 struct Envelope {
-    model::ConsortiumId consortium_id;
-    model::OctopusId origin_octopus_id, destination_octopus_id;
-    model::BootId origin_boot_id, destination_boot_id;
     uint64_t config_revision = 0;
     Kind kind = Kind::device_status;
     uint32_t ttl_ms = 0;

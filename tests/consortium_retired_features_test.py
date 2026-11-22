@@ -45,7 +45,7 @@ struct RuntimeStartup {
 };
 '''
 SUITE = r'''
-std::string packet_name(std::string_view name,std::string_view payload){return "{\"protocol_version\":1,\"consortium_id\":\""+ident<model::ConsortiumId>(1).str()+"\",\"origin_octopus_id\":\""+ident<model::OctopusId>(3).str()+"\",\"origin_boot_id\":\""+ident<model::BootId>(4).str()+"\",\"destination_octopus_id\":\""+ident<model::OctopusId>(5).str()+"\",\"destination_boot_id\":\""+ident<model::BootId>(6).str()+"\",\"config_revision\":\"1\",\"kind\":\""+std::string(name)+"\",\"ttl_ms\":1000,\"payload\":"+std::string(payload)+"}";}
+std::string packet_name(std::string_view name,std::string_view payload){return "{\"config_revision\":\"1\",\"kind\":\""+std::string(name)+"\",\"ttl_ms\":1000,\"payload\":"+std::string(payload)+"}";}
 std::string packet(Kind kind,std::string_view payload){return packet_name(kind_name(kind),payload);}
 int main(){
  Envelope envelope;for(const auto* retired:{"ingress_lease","hold_renew","integration_state","intent","remote_management","remote_management_result"})assert(parse_envelope(packet_name(retired,"{}"),envelope)==Error::unsupported_kind);

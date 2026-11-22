@@ -73,10 +73,8 @@ s::OwnedIntent down(const amity::SystemControl& owner){
     value.target={{owner.consortium_id(),owner.octopus_id(),0,s::Side::back},"Source"};
     value.generation=7;value.edge_count=1;value.edges[0]={0x41,true};return value;
 }
-c::Envelope envelope(const amity::SystemControl& owner,s::OctopusId sender,const s::OwnedIntent& intent){
-    c::Envelope value;value.kind=c::Kind::scoped_intent;value.consortium_id=owner.consortium_id();
-    value.origin_octopus_id=sender;value.destination_octopus_id=owner.octopus_id();
-    value.origin_boot_id=id<s::BootId>(12);value.destination_boot_id=owner.boot_identity();value.config_revision=23;
+c::Envelope envelope(const amity::SystemControl&,s::OctopusId,const s::OwnedIntent& intent){
+    c::Envelope value;value.kind=c::Kind::scoped_intent;value.config_revision=23;
     value.payload=json(c::owned_intent_json(intent));return value;
 }
 c::Envelope report_envelope(const s::OwnedAdapterSnapshot& value){
@@ -118,6 +116,12 @@ esp_err_t cancel_staged_configuration(){fixture::journal->cancel_stage();return 
 
 namespace {
 using namespace fixture;
+// The authenticated link that carries a frame: the sender's boot and this board's boot.
+c::Error deliver(s::OctopusId sender,const c::Envelope& envelope,uint64_t deadline,s::LinkId link){
+    c::LinkScope scope;scope.link_id=link;scope.peer_id=sender;scope.peer_boot_id=id<s::BootId>(12);scope.config_revision=envelope.config_revision;
+    if(amity::state.control){scope.consortium_id=amity::state.control->consortium_id();scope.local_id=amity::state.control->octopus_id();scope.local_boot_id=amity::state.control->boot_identity();}
+    return hooks.control(scope,envelope,deadline);
+}
 void configuration_revision_waits_for_application(){
     reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);
     amity::publish_configuration_revision();assert(configuration_changes.empty());
@@ -180,7 +184,7 @@ void intent_delivery_preserves_authorization(){
     reset();auto member=control(true);assert(amity::start_configuration_synchronization(member)==ESP_OK);
     const auto original=*member.configuration.controller_octopus_id;const auto intent=down(member);auto received=envelope(member,original,intent);
     const auto link=id<s::LinkId>(44);const uint64_t deadline=123456;
-    assert(hooks.control(original,received,deadline,link)==c::Error::none&&member.key_deliveries.size()==1);
+    assert(deliver(original,received,deadline,link)==c::Error::none&&member.key_deliveries.size()==1);
     const auto& actual=member.key_deliveries.back();
     assert(actual.generation==7&&actual.count==1&&actual.edges[0].key==0x41&&actual.edges[0].down&&actual.link==link&&actual.deadline_ms==deadline);
     assert(member.submitted.empty()&&member.authorizations.empty()&&authorization_checks==0);
@@ -188,28 +192,28 @@ void intent_delivery_preserves_authorization(){
     // The owner receives only its edges, link, generation and original deadline.
     auth_allowed=false;
     auto up=intent;up.edges[0].down=false;auto released=envelope(member,original,up);
-    assert(hooks.control(original,released,deadline,link)==c::Error::none&&member.key_deliveries.size()==2);
+    assert(deliver(original,released,deadline,link)==c::Error::none&&member.key_deliveries.size()==2);
     assert(member.key_deliveries.back().count==1&&!member.key_deliveries.back().edges[0].down);
     auto tap=intent;tap.edge_count=2;tap.edges[1]={tap.edges[0].key,false};
-    assert(hooks.control(original,envelope(member,original,tap),deadline,link)==c::Error::none&&member.key_deliveries.size()==3);
+    assert(deliver(original,envelope(member,original,tap),deadline,link)==c::Error::none&&member.key_deliveries.size()==3);
     const auto& pair=member.key_deliveries.back();assert(pair.count==2&&pair.edges[0].down&&!pair.edges[1].down&&pair.edges[0].key==pair.edges[1].key&&pair.link==link&&pair.generation==7&&pair.deadline_ms==deadline);
     assert(member.submitted.empty()&&member.authorizations.empty()&&authorization_checks==0);
     auth_allowed=true;
     // Activity and other non-key work retain the existing ownership check.
     auto power=intent;power.kind=s::OwnedIntentKind::activity;power.selected=true;power.source=intent.target;auto powered=envelope(member,original,power);
-    assert(hooks.control(original,powered,deadline,link)==c::Error::none&&member.submitted.size()==1&&authorization_checks==1);
-    const auto& auth=member.authorizations.back();assert(auth.controller_id==original&&auth.controller_boot==powered.origin_boot_id&&auth.owner_boot==member.boot&&auth.link_id==link&&auth.config_revision==23&&auth.deadline_ms==deadline&&auth.authority==s::OwnedAuthority::control);
-    auth_allowed=false;assert(hooks.control(original,powered,deadline,link)==c::Error::unauthorized_role&&authorization_checks==2);auth_allowed=true;
-    for(const auto& test:std::vector<std::pair<s::AdmissionCode,c::Error>>{{s::AdmissionCode::overloaded,c::Error::queue_full},{s::AdmissionCode::expired,c::Error::expired},{s::AdmissionCode::stale,c::Error::stale_boot},{s::AdmissionCode::invalid,c::Error::invalid_message}}){member.admission=test.first;assert(hooks.control(original,received,deadline,link)==test.second);}member.admission=s::AdmissionCode::accepted;
+    assert(deliver(original,powered,deadline,link)==c::Error::none&&member.submitted.size()==1&&authorization_checks==1);
+    const auto& auth=member.authorizations.back();assert(auth.controller_id==original&&auth.controller_boot==id<s::BootId>(12)&&auth.owner_boot==member.boot&&auth.link_id==link&&auth.config_revision==23&&auth.deadline_ms==deadline&&auth.authority==s::OwnedAuthority::control);
+    auth_allowed=false;assert(deliver(original,powered,deadline,link)==c::Error::unauthorized_role&&authorization_checks==2);auth_allowed=true;
+    for(const auto& test:std::vector<std::pair<s::AdmissionCode,c::Error>>{{s::AdmissionCode::overloaded,c::Error::queue_full},{s::AdmissionCode::expired,c::Error::expired},{s::AdmissionCode::stale,c::Error::stale_boot},{s::AdmissionCode::invalid,c::Error::invalid_message}}){member.admission=test.first;assert(deliver(original,received,deadline,link)==test.second);}member.admission=s::AdmissionCode::accepted;
     assert(authorization_checks==2);
     const auto calls=member.key_deliveries.size(),owned_calls=member.submitted.size();auto wrong_target=power;wrong_target.target.port.octopus_id=id<s::OctopusId>(99);auto target=envelope(member,original,wrong_target);
-    assert(hooks.control(original,target,deadline,link)==c::Error::target_not_local&&member.key_deliveries.size()==calls);
+    assert(deliver(original,target,deadline,link)==c::Error::target_not_local&&member.key_deliveries.size()==calls);
     wrong_target=power;wrong_target.kind=s::OwnedIntentKind::discover;wrong_target.target.port.consortium_id=id<s::ConsortiumId>(99);target=envelope(member,original,wrong_target);
-    assert(hooks.control(original,target,deadline,link)==c::Error::target_not_local&&member.key_deliveries.size()==calls);
-    for(auto kind:{c::Kind::membership_event,c::Kind::update_begin,c::Kind::settings_write,c::Kind::log_request,c::Kind::synchronization}){received.kind=kind;assert(hooks.control(original,received,deadline,link)==c::Error::unauthorized_role&&member.key_deliveries.size()==calls);}
-    received.kind=c::Kind::scoped_result;assert(hooks.control(original,received,deadline,link)==c::Error::unauthorized_role);
+    assert(deliver(original,target,deadline,link)==c::Error::target_not_local&&member.key_deliveries.size()==calls);
+    for(auto kind:{c::Kind::membership_event,c::Kind::update_begin,c::Kind::settings_write,c::Kind::log_request,c::Kind::synchronization}){received.kind=kind;assert(deliver(original,received,deadline,link)==c::Error::unauthorized_role&&member.key_deliveries.size()==calls);}
+    received.kind=c::Kind::scoped_result;assert(deliver(original,received,deadline,link)==c::Error::unauthorized_role);
     role.member=false;role.coordinator=true;received.kind=c::Kind::scoped_intent;
-    assert(hooks.control(original,received,deadline,link)==c::Error::unauthorized_role&&member.key_deliveries.size()==calls&&member.submitted.size()==owned_calls);
+    assert(deliver(original,received,deadline,link)==c::Error::unauthorized_role&&member.key_deliveries.size()==calls&&member.submitted.size()==owned_calls);
 }
 void key_rejection_diagnostics_preserve_results(){
     reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);
@@ -226,14 +230,14 @@ void key_rejection_diagnostics_preserve_results(){
     reset();auto member=control(true);assert(amity::start_configuration_synchronization(member)==ESP_OK);
     const auto original=*member.configuration.controller_octopus_id;
     const auto key=down(member);const auto packet=envelope(member,original,key);const auto link=id<s::LinkId>(44);
-    assert(hooks.control(original,packet,123456,link)==c::Error::none&&system_sync_test_log::messages.empty());
+    assert(deliver(original,packet,123456,link)==c::Error::none&&system_sync_test_log::messages.empty());
     member.admission=s::AdmissionCode::pending;
-    assert(hooks.control(original,packet,123456,link)==c::Error::none&&system_sync_test_log::messages.empty());
+    assert(deliver(original,packet,123456,link)==c::Error::none&&system_sync_test_log::messages.empty());
     for(const auto& failure:std::vector<std::pair<s::AdmissionCode,c::Error>>{
         {s::AdmissionCode::overloaded,c::Error::queue_full},{s::AdmissionCode::expired,c::Error::expired},
         {s::AdmissionCode::stale,c::Error::stale_boot},{s::AdmissionCode::unauthorized,c::Error::unauthorized_role}}){
         member.admission=failure.first;const auto count=system_sync_test_log::messages.size();
-        assert(hooks.control(original,packet,123456,link)==failure.second&&system_sync_test_log::messages.size()==count+1);
+        assert(deliver(original,packet,123456,link)==failure.second&&system_sync_test_log::messages.size()==count+1);
         const auto& message=system_sync_test_log::messages.back();
         assert(message=="Key rejected phase=owner key=65 generation=7 admission="+std::to_string(static_cast<int>(failure.first)));
         assert(message.find("Source")==std::string::npos);
@@ -245,17 +249,17 @@ void activity_selection_delivery_is_independent(){
     activity.target.osd_name.clear();activity.selected=true;activity.source=down(member).target;activity.repair=true;
     const auto received=envelope(member,original,activity);const auto link=id<s::LinkId>(44);const auto began=now;
     for(auto code:{s::AdmissionCode::accepted,s::AdmissionCode::pending,s::AdmissionCode::unresolved}){
-        member.admission=code;assert(hooks.control(original,received,123456,link)==c::Error::none);
+        member.admission=code;assert(deliver(original,received,123456,link)==c::Error::none);
         const auto& delivered=member.submitted.back();
         assert(delivered.kind==s::OwnedIntentKind::activity&&delivered.selected&&delivered.repair&&delivered.source==activity.source);
         assert(!delivered.activity_step&&member.authorizations.back().authority==s::OwnedAuthority::control);
         assert(result_packets.empty()&&result_fences.empty()&&packets.empty()&&now==began);
     }
     activity.selected=false;activity.repair=false;member.admission=s::AdmissionCode::accepted;
-    assert(hooks.control(original,envelope(member,original,activity),123456,link)==c::Error::none&&!member.submitted.back().selected);
+    assert(deliver(original,envelope(member,original,activity),123456,link)==c::Error::none&&!member.submitted.back().selected);
     reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);
     c::Envelope retired;retired.kind=c::Kind::scoped_result;retired.payload=json("{\"action_result\":{}}");
-    assert(!c::valid_owned_result(retired.payload)&&hooks.control(id<s::OctopusId>(9),retired,123456,link)==c::Error::invalid_message);
+    assert(!c::valid_owned_result(retired.payload)&&deliver(id<s::OctopusId>(9),retired,123456,link)==c::Error::invalid_message);
 }
 void reports_and_exact_disconnect(){
     reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);
@@ -264,16 +268,16 @@ void reports_and_exact_disconnect(){
     assert(main.updates[0].discovery_generation==3);
     auto available=amity::discovered_equipment();assert(available.size()==1&&available[0].endpoint.port.octopus_id==owner&&available[0].endpoint.logical_address==4&&available[0].owner_boot_id==oldboot);
     const auto count=main.updates.size();auto bad=first;bad.owner=id<s::OctopusId>(98);auto value=report_envelope(bad);
-    assert(hooks.control(owner,value,100,id<s::LinkId>(1))==c::Error::invalid_message&&main.updates.size()==count);
-    bad=first;bad.boot=id<s::BootId>(98);value=report_envelope(bad);assert(hooks.control(owner,value,100,id<s::LinkId>(1))==c::Error::invalid_message);
-    bad=first;bad.adapter=peers[0].supported_tentacles;value=report_envelope(bad);assert(hooks.control(owner,value,100,id<s::LinkId>(1))==c::Error::invalid_message);
-    value=report_envelope(first);assert(hooks.control(id<s::OctopusId>(98),value,100,id<s::LinkId>(1))==c::Error::invalid_message);
+    assert(deliver(owner,value,100,id<s::LinkId>(1))==c::Error::invalid_message&&main.updates.size()==count);
+    bad=first;bad.boot=id<s::BootId>(98);value=report_envelope(bad);assert(deliver(owner,value,100,id<s::LinkId>(1))==c::Error::invalid_message);
+    bad=first;bad.adapter=peers[0].supported_tentacles;value=report_envelope(bad);assert(deliver(owner,value,100,id<s::LinkId>(1))==c::Error::invalid_message);
+    value=report_envelope(first);assert(deliver(id<s::OctopusId>(98),value,100,id<s::LinkId>(1))==c::Error::invalid_message);
     main.update_result=false;const auto before_overload=main.updates.size();
-    assert(hooks.control(owner,value,100,id<s::LinkId>(1))==c::Error::invalid_message&&main.updates.size()==before_overload+1);
+    assert(deliver(owner,value,100,id<s::LinkId>(1))==c::Error::invalid_message&&main.updates.size()==before_overload+1);
     main.update_result=true;
-    amity::set_owner_maintenance(owner,true);assert(hooks.control(owner,value,100,id<s::LinkId>(1))==c::Error::invalid_message);assert(amity::discovered_equipment().front().stale);amity::set_owner_maintenance(owner,false);
-    auto second=first;second.adapter=1;value=report_envelope(second);assert(hooks.control(owner,value,100,id<s::LinkId>(1))==c::Error::none);
-    const auto newboot=id<s::BootId>(29);peers[0].boot_id=newboot;auto fresh=first;fresh.boot=newboot;fresh.devices[0].logical_address=8;value=report_envelope(fresh);assert(hooks.control(owner,value,100,id<s::LinkId>(2))==c::Error::none);
+    amity::set_owner_maintenance(owner,true);assert(deliver(owner,value,100,id<s::LinkId>(1))==c::Error::invalid_message);assert(amity::discovered_equipment().front().stale);amity::set_owner_maintenance(owner,false);
+    auto second=first;second.adapter=1;value=report_envelope(second);assert(deliver(owner,value,100,id<s::LinkId>(1))==c::Error::none);
+    const auto newboot=id<s::BootId>(29);peers[0].boot_id=newboot;auto fresh=first;fresh.boot=newboot;fresh.devices[0].logical_address=8;value=report_envelope(fresh);assert(deliver(owner,value,100,id<s::LinkId>(2))==c::Error::none);
     const auto oldlink=id<s::LinkId>(70);const auto sent_before=sent.size();const auto updates_before=main.updates.size();
     main.fence_result=false;assert(!hooks.disconnected(owner,oldboot,oldlink));
     assert(main.updates.size()==updates_before&&amity::discovered_equipment().size()==2&&main.fences.back()==std::make_pair(owner,oldlink));
@@ -282,7 +286,7 @@ void reports_and_exact_disconnect(){
     available=amity::discovered_equipment();assert(available.size()==1&&available[0].owner_boot_id==newboot&&available[0].endpoint.logical_address==8);
     const auto& missing=main.updates.back();assert(missing.boot==oldboot&&missing.adapter==1&&!missing.ready&&!missing.discovering&&missing.devices.empty());
     assert(hooks.disconnected(owner,newboot,id<s::LinkId>(71))&&amity::discovered_equipment().empty());
-    main.update_result=true;value=report_envelope(fresh);assert(hooks.control(owner,value,100,id<s::LinkId>(2))==c::Error::none);
+    main.update_result=true;value=report_envelope(fresh);assert(deliver(owner,value,100,id<s::LinkId>(2))==c::Error::none);
     main.fence_result=false;amity::set_owner_maintenance(owner,true);amity::forget_owner(owner);
     assert(amity::discovered_equipment().empty()&&amity::state.reports.empty()&&!amity::state.maintenance.count(owner));
     assert(serialize_configuration(main.configuration).find("\"enabled\"")==std::string::npos&&memory.writes==0);
@@ -359,27 +363,27 @@ void full_roster_adapter_reports_keep_exact_owner_fences(){
     // A full roster still updates exactly one existing owner/adapter slot.
     auto changed=expected[3];changed.discovery_generation=900;changed.devices[0].logical_address=8;
     const auto link=id<s::LinkId>(82);
-    assert(hooks.control(changed.owner,report_envelope(changed),100,link)==c::Error::none);
+    assert(deliver(changed.owner,report_envelope(changed),100,link)==c::Error::none);
     expected[3]=changed;assert(main.updates.size()==count+1);retained();
     const auto updates=main.updates.size();
     auto rejected=changed;rejected.boot=id<s::BootId>(99);
-    assert(hooks.control(changed.owner,report_envelope(rejected),100,link)==c::Error::invalid_message);
+    assert(deliver(changed.owner,report_envelope(rejected),100,link)==c::Error::invalid_message);
     rejected=changed;rejected.owner=peers[1].id;
-    assert(hooks.control(changed.owner,report_envelope(rejected),100,link)==c::Error::invalid_message);
+    assert(deliver(changed.owner,report_envelope(rejected),100,link)==c::Error::invalid_message);
     auto invalid_adapter=report_envelope(changed);invalid_adapter.payload.get("snapshot")->get("adapter")->integer=amity::max_tentacles;
-    assert(hooks.control(changed.owner,invalid_adapter,100,link)==c::Error::invalid_message);
+    assert(deliver(changed.owner,invalid_adapter,100,link)==c::Error::invalid_message);
     peers[0].supported_tentacles=3;
-    assert(hooks.control(changed.owner,report_envelope(changed),100,link)==c::Error::invalid_message);
+    assert(deliver(changed.owner,report_envelope(changed),100,link)==c::Error::invalid_message);
     peers[0].supported_tentacles=amity::max_tentacles;
     rejected=changed;rejected.owner=id<s::OctopusId>(99);
-    assert(hooks.control(rejected.owner,report_envelope(rejected),100,link)==c::Error::invalid_message);
+    assert(deliver(rejected.owner,report_envelope(rejected),100,link)==c::Error::invalid_message);
     assert(main.updates.size()==updates);retained();
 
     // Replacement boot observations survive cleanup of that owner's old boot;
     // all adapters belonging to the other two owners remain untouched.
     const auto owner=changed.owner;const auto oldboot=changed.boot;
     peers[0].boot_id=changed.boot=id<s::BootId>(29);changed.discovery_generation=901;
-    assert(hooks.control(owner,report_envelope(changed),100,link)==c::Error::none);
+    assert(deliver(owner,report_envelope(changed),100,link)==c::Error::none);
     expected[3]=changed;retained();
     main.fence_result=false;
     assert(!hooks.disconnected(owner,oldboot,id<s::LinkId>(81)));retained();

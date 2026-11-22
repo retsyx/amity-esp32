@@ -24,10 +24,10 @@ c::Session session(c::PeerRole role,bool active=true){
     if(active)assert(value.synchronized(7,true,true)==c::Error::none);
     return value;
 }
-c::Envelope message(const c::Session& value,c::Kind kind){
-    const auto link=value.scope();c::Envelope envelope;
-    envelope.consortium_id=link.consortium_id;envelope.origin_octopus_id=link.peer_id;envelope.destination_octopus_id=link.local_id;
-    envelope.origin_boot_id=link.peer_boot_id;envelope.destination_boot_id=link.local_boot_id;
+c::Envelope message(const c::Session&,c::Kind kind){
+    c::Envelope envelope;
+    
+    
     envelope.config_revision=7;envelope.kind=kind;envelope.ttl_ms=1000;
     const auto transfer=ident<m::MessageId>('7');
     envelope.payload=parsed(kind==c::Kind::log_request?c::log_request_json(transfer,0):c::log_result_json(transfer,0,1,"x"));
@@ -73,10 +73,9 @@ void codec_tests(){
         if(fault==5)invalid.get("transfer_id")->string=std::string(32,'0');
         assert(!c::valid_log_payload(c::Kind::log_result,invalid));
     }
-    const auto link=scope(c::PeerRole::coordinator);
     for(const auto kind:{c::Kind::log_request,c::Kind::log_result}){
         const auto payload=kind==c::Kind::log_request?c::log_request_json(transfer,0):c::log_result_json(transfer,0,1,"x");
-        const auto wire="{\"protocol_version\":1,\"consortium_id\":\""+link.consortium_id.str()+"\",\"origin_octopus_id\":\""+link.peer_id.str()+"\",\"origin_boot_id\":\""+link.peer_boot_id.str()+"\",\"destination_octopus_id\":\""+link.local_id.str()+"\",\"destination_boot_id\":\""+link.local_boot_id.str()+"\",\"config_revision\":\"7\",\"kind\":\""+c::kind_name(kind)+"\",\"ttl_ms\":1000,\"payload\":"+payload+"}";
+        const auto wire=std::string("{\"config_revision\":\"7\",\"kind\":\"")+c::kind_name(kind)+"\",\"ttl_ms\":1000,\"payload\":"+payload+"}";
         c::Envelope decoded;assert(c::parse_envelope(wire,decoded)==c::Error::none&&decoded.kind==kind);
     }
 }
@@ -89,14 +88,7 @@ void authorization_tests(){
         assert(value.admit(envelope,100,101)==c::Error::none);
         assert(value.admit(message(value,rejected),100,101)==c::Error::unauthorized_role);
         assert(value.admit(envelope,100,1100)==c::Error::invalid_message);
-        for(unsigned fault=0;fault<4;++fault){
-            auto invalid=envelope;
-            if(fault==0)invalid.origin_boot_id=ident<m::BootId>('8');
-            if(fault==1)invalid.destination_boot_id=ident<m::BootId>('8');
-            if(fault==2)invalid.origin_octopus_id=ident<m::OctopusId>('8');
-            if(fault==3)invalid.config_revision=8;
-            assert(value.admit(invalid,100,101)!=c::Error::none);
-        }
+        auto invalid=envelope;invalid.config_revision=8;assert(value.admit(invalid,100,101)!=c::Error::none);
         value.restrict_management();assert(value.admit(envelope,100,101)==c::Error::none);
         assert(value.admit(message(value,rejected),100,101)==c::Error::unauthorized_role);
         auto passive=session(role,false);passive.restrict_management();

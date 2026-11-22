@@ -48,7 +48,7 @@ SUITE = r'''
 namespace amity::consortium {
 Json parsed(std::string_view body){Json value;JsonError error;assert(parse_json(body,value,error));return value;}
 Envelope message(const std::shared_ptr<Active>& active,Kind kind,std::string_view payload){
- const auto& s=active->session.scope();Envelope e;e.consortium_id=s.consortium_id;e.origin_octopus_id=s.peer_id;e.destination_octopus_id=s.local_id;e.origin_boot_id=s.peer_boot_id;e.destination_boot_id=s.local_boot_id;e.config_revision=s.config_revision;e.kind=kind;e.ttl_ms=2000;e.payload=parsed(payload);assert(valid_log_payload(kind,e.payload));return e;
+ const auto& s=active->session.scope();Envelope e;e.config_revision=s.config_revision;e.kind=kind;e.ttl_ms=2000;e.payload=parsed(payload);assert(valid_log_payload(kind,e.payload));return e;
 }
 bool dispatch(const std::shared_ptr<Active>& active,const Envelope& e){return active->session.admit(e,clock_ms,clock_ms)==Error::none&&log_dispatch(active,e,clock_ms);}
 std::shared_ptr<Active> setup(bool main=true){
@@ -150,7 +150,6 @@ void sender_identity_and_late_result_fences(){
   assert(dispatch(peer,message(peer,Kind::log_result,log_result_json(ident<model::MessageId>(99),offset,source.size(),std::string_view(source).substr(offset,1024)))));
   assert(!log_pull.received);
   if(!offset){assert(dispatch(peer,message(peer,Kind::log_result,log_result_json(id,1024,source.size(),std::string_view(source).substr(1024)))));assert(!log_pull.received);}
-  auto stale=message(peer,Kind::log_result,log_result_json(id,offset,source.size(),std::string_view(source).substr(offset,1024)));stale.origin_boot_id=ident<model::BootId>(99);assert(!dispatch(peer,stale)&&!log_pull.received);
   respond(peer,request,source);
  });};assert(pull_logs(a->peer,[&](auto bytes){received+=bytes;return true;})==ESP_OK&&received==source&&requests==2);
  a=setup();requests=0;tick=[&]{pump(a,[&](const auto& peer,const auto& request){++requests;respond(peer,request,content(requests==1?2048:3072));});};

@@ -51,10 +51,6 @@ void Session::restrict_lifecycle(){management_=false;state_=ConnectionState::res
 void Session::restrict_management(){restrict_lifecycle();management_=true;}
 Error Session::common(const Envelope &e,uint64_t received,uint64_t now,bool stale,bool synchronization_discard)const {
     if(state_!=ConnectionState::ready&&state_!=ConnectionState::restricted&&state_!=ConnectionState::synchronizing)return Error::not_ready;
-    if(e.consortium_id!=scope_.consortium_id)return Error::wrong_consortium;
-    if(e.origin_octopus_id!=scope_.peer_id)return Error::identity_conflict;
-    if(e.destination_octopus_id!=scope_.local_id)return Error::target_not_local;
-    if(e.origin_boot_id!=scope_.peer_boot_id||e.destination_boot_id!=scope_.local_boot_id)return Error::stale_boot;
     // Synchronization barriers reconcile only the current authenticated stream.
     // The runtime correlates their exact round/target; ordinary work retains
     // the exact configuration fence even if a previous exchange partly applied.

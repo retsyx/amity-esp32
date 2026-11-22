@@ -63,7 +63,7 @@ std::shared_ptr<Active> connection(bool receiver){
  active->status.id=active->peer;active->status.boot_id=sc.peer_boot_id;active->status.config_revision=1;active->status.ready=true;
  links.push_back(active);current_link=active;return active;
 }
-Envelope message(const std::shared_ptr<Active>& active,Kind kind,const Json& payload){auto sc=active->session.scope();Envelope e;e.consortium_id=sc.consortium_id;e.origin_octopus_id=sc.peer_id;e.destination_octopus_id=sc.local_id;e.origin_boot_id=sc.peer_boot_id;e.destination_boot_id=sc.local_boot_id;e.config_revision=1;e.kind=kind;e.ttl_ms=1000;e.payload=payload;return e;}
+Envelope message(const std::shared_ptr<Active>&,Kind kind,const Json& payload){Envelope e;e.config_revision=1;e.kind=kind;e.ttl_ms=1000;e.payload=payload;return e;}
 Envelope write_message(const std::shared_ptr<Active>& active,unsigned request=20,const Json* body=nullptr){auto content=body?*body:core();return message(active,Kind::settings_write,parsed("{\"request_id\":\""+ident<model::MessageId>(request).str()+"\",\"settings\":"+settings_json(content)+"}"));}
 void codec_tests(){
  reset(true);auto snap=parsed(snapshot());assert(valid_settings_snapshot(snap));snap.get("adapters")->array[0].get("configured")->boolean=false;assert(valid_settings_snapshot(snap));
@@ -114,7 +114,6 @@ void wifi_signal_tests(){
  assert(active->status.hostname.empty()&&hostnames.entries().empty());
  auto both=message(active,Kind::device_status,parsed("{\"hostname\":\"amity-member\",\"wifi_rssi_negated\":55,\"wifi_channel\":1}"));
  assert(receive_live_device_status(*active,both,clock_ms)&&active->status.wifi_rssi==-55&&active->status.wifi_channel==1&&active->status.hostname=="amity-member");
- report.destination_boot_id=ident<model::BootId>(99);assert(!receive_live_device_status(*active,report,clock_ms)&&active->status.wifi_rssi==-55);
  assert(active->session.scope()==original&&!active->cancelled&&!restarts);
  reset(false);auto member=connection(true);
  network_diagnostics::fake_signal={};assert(report_wifi_signal(*member)&&sent.empty());
@@ -142,7 +141,6 @@ void live_hostname_tests(){
  assert(receive_live_device_status(*active,update,clock_ms)&&active->status.hostname=="renamed-member"&&hostnames.lookup(active->peer)=="renamed-member");
  registry_failure=true;update.payload.get("hostname")->string="live-member";
  assert(receive_live_device_status(*active,update,clock_ms)&&active->status.hostname=="live-member"&&hostnames.lookup(active->peer)=="renamed-member"&&!status.last_error.empty());
- update.destination_boot_id=ident<model::BootId>(99);assert(!receive_live_device_status(*active,update,clock_ms));
  assert(active->session.scope()==original&&active->tls==tls&&active->ready&&!active->cancelled&&!restarts);
  std::cout<<"PASS live hostname metadata: one update per changed name, same TLS/session/boot, authenticated admission, metadata storage failure keeps the healthy connection\n";
 }
@@ -152,7 +150,7 @@ void receiver_tests(){
  const auto original_scope=active->session.scope();const auto original_tls=active->tls;
  const auto next=core({},3);assert(settings_dispatch(active,write_message(active,21,&next),clock_ms)&&saves==2&&revision==4);
  assert(active->session.scope()==original_scope&&active->tls==original_tls&&active->ready&&!active->cancelled&&!restarts);
- for(unsigned failure=0;failure<7;++failure){reset(false);active=connection(true);request=write_message(active);if(failure==0)request.destination_boot_id=ident<model::BootId>(99);if(failure==1)request.origin_octopus_id=ident<model::OctopusId>(99);if(failure==2)request.config_revision=2;if(failure>=3&&failure<=5)effect_fault=failure-2;if(failure==6){active->session.disconnect();}assert(!settings_dispatch(active,request,clock_ms)||parsed(sent.back()).get("stage")->string=="failed");assert(!saves&&!restarts);}
+ for(unsigned failure=0;failure<5;++failure){reset(false);active=connection(true);request=write_message(active);if(failure==0)request.config_revision=2;if(failure>=1&&failure<=3)effect_fault=failure;if(failure==4){active->session.disconnect();}assert(!settings_dispatch(active,request,clock_ms)||parsed(sent.back()).get("stage")->string=="failed");assert(!saves&&!restarts);}
  reset(false);active=connection(true);send_success=false;request=write_message(active);assert(!settings_dispatch(active,request,clock_ms)&&saves==1&&restarts==0);send_success=true;assert(settings_dispatch(active,request,clock_ms)&&saves==1&&restarts==0); // Lost results do not resave or restart the live owner.
  reset(true);active=connection(false);request=write_message(active);assert(!settings_dispatch(active,request,clock_ms)&&!saves&&!restarts);
  std::cout<<"PASS actual target dispatch: originalmain scope/deadline/config/revocation guards, no memberforwarding, exact duplicate outcome, same-stream consecutive saves and lost-result safety\n";

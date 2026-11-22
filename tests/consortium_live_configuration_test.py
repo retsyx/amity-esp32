@@ -94,7 +94,7 @@ PREFIX += 'namespace amity::consortium {\n' + function(
 SUPPORT = r'''
 namespace amity::consortium {
 std::string packet(const Envelope& e){
- return "{\"protocol_version\":1,\"consortium_id\":\""+e.consortium_id.str()+"\",\"origin_octopus_id\":\""+e.origin_octopus_id.str()+"\",\"origin_boot_id\":\""+e.origin_boot_id.str()+"\",\"destination_octopus_id\":\""+e.destination_octopus_id.str()+"\",\"destination_boot_id\":\""+e.destination_boot_id.str()+"\",\"config_revision\":\""+std::to_string(e.config_revision)+"\",\"kind\":\""+kind_name(e.kind)+"\",\"ttl_ms\":"+std::to_string(e.ttl_ms)+",\"payload\":"+settings_json(e.payload)+"}";
+ return "{\"config_revision\":\""+std::to_string(e.config_revision)+"\",\"kind\":\""+kind_name(e.kind)+"\",\"ttl_ms\":"+std::to_string(e.ttl_ms)+",\"payload\":"+settings_json(e.payload)+"}";
 }
 bool send(Active& active,Kind kind,std::string_view payload,uint32_t ttl){
  auto e=outgoing(active,kind,ttl);JsonError error;
@@ -102,9 +102,9 @@ bool send(Active& active,Kind kind,std::string_view payload,uint32_t ttl){
  else assert(parse_json(payload,e.payload,error)&&valid_envelope_payload(kind,e.payload));
  active.tls->sent.push_back(e);if(on_send)on_send(active,e);return true;
 }
-Envelope inbound(const LinkScope& scope,uint64_t revision,Kind kind,std::string_view payload){
- Envelope e;e.consortium_id=scope.consortium_id;e.origin_octopus_id=scope.peer_id;e.destination_octopus_id=scope.local_id;
- e.origin_boot_id=scope.peer_boot_id;e.destination_boot_id=scope.local_boot_id;e.config_revision=revision;e.kind=kind;e.ttl_ms=1000;
+Envelope inbound(const LinkScope&,uint64_t revision,Kind kind,std::string_view payload){
+ Envelope e;
+ e.config_revision=revision;e.kind=kind;e.ttl_ms=1000;
  JsonError error;assert(parse_json(payload,e.payload,error)&&valid_envelope_payload(kind,e.payload));return e;
 }
 void feed(Active& active,const Envelope& e){active.tls->incoming.push_back(packet(e));}
@@ -151,7 +151,7 @@ void coordinator_refresh(){
  unsigned applied=0;std::optional<SnapshotManifest> config_manifest;std::optional<Envelope> stale,result;
  controls.snapshot=[](auto){return owner_state;};controls.configuration_snapshot=[&](auto owner,uint64_t revision){assert(owner==a->peer&&revision==8);return controller_slice(original,revision);};
  controls.synchronize=[&](auto owner,const Json& value){++applied;assert(owner==a->peer&&value.type==Json::Type::string&&value.string==owner_state&&cached.size()==3);return Error::none;};
- controls.control=[](auto,const auto&,auto,auto){assert(false&&"Observation refresh must not deliver a CEC completion");return Error::none;};
+ controls.control=[](const auto&,const auto&,auto){assert(false&&"Observation refresh must not deliver a CEC completion");return Error::none;};
  a->tls->before_receive=[&]{unchanged(*a,original,tls);assert(cached.size()==3);};
  on_send=[&](Active& active,const Envelope& e){
   unchanged(active,original,tls);SnapshotManifest m;std::string phase;uint32_t next=0;
@@ -212,7 +212,7 @@ void future_context_recaptures_after_slow_refresh(){
  unchanged(*a,original,a->tls.get());
 }
 void rejected_interleaved_observations(){
- for(unsigned failure=0;failure<6;++failure){
+ for(unsigned failure=0;failure<1;++failure){
   auto a=start(true);const auto original=a->session.scope();unsigned applied=0;
   controls.snapshot=[](auto){return owner_state;};controls.configuration_snapshot=[&](auto,uint64_t revision){return controller_slice(original,revision);};
   controls.synchronize=[&](auto,const Json&){++applied;return Error::none;};
@@ -220,12 +220,7 @@ void rejected_interleaved_observations(){
    assert(e.kind==Kind::snapshot_request);SnapshotManifest m;std::string phase;uint32_t next=0;assert(parse_snapshot_manifest(e.payload,m,phase,next)==Error::none&&phase=="begin");
    auto result=inbound(original,7,Kind::scoped_result,observation(original));
    switch(failure){
-    case 0:result.origin_boot_id=ident<model::BootId>(99);break;
-    case 1:result.destination_boot_id=ident<model::BootId>(99);break;
-    case 2:result.origin_octopus_id=ident<model::OctopusId>(99);break;
-    case 3:result.destination_octopus_id=ident<model::OctopusId>(99);break;
-    case 4:result.consortium_id=ident<model::ConsortiumId>(99);break;
-    case 5:result.config_revision=8;break;
+    case 0:result.config_revision=8;break;
    }
    feed(active,result);feed(active,inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(m,"ack",0)));
   };
@@ -258,10 +253,10 @@ void member_refresh(){
  assert(!a->context_ready);
 }
 void rejected_frames(){
- for(unsigned failure=0;failure<5;++failure){auto a=start(false);const auto original=a->session.scope();unsigned applied=0;
+ for(unsigned failure=0;failure<2;++failure){auto a=start(false);const auto original=a->session.scope();unsigned applied=0;
   controls.snapshot=[](auto){return owner_state;};controls.synchronize=[&](auto,const Json&){++applied;return Error::none;};
   const auto value=controller_slice(original,8);auto m=manifest(original.local_id,original.local_boot_id,8,"configuration",value);auto e=inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(m,"begin",0));
-  switch(failure){case 0:e.origin_boot_id=ident<model::BootId>(99);break;case 1:e.origin_octopus_id=ident<model::OctopusId>(99);break;case 2:e.config_revision=9;break;case 3:e.consortium_id=ident<model::ConsortiumId>(99);break;case 4:m.owner_octopus_id=original.peer_id;e=inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(m,"begin",0));break;}
+  switch(failure){case 0:e.config_revision=9;break;case 1:m.owner_octopus_id=original.peer_id;e=inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(m,"begin",0));break;}
   feed(*a,e);assert(!synchronize(*a,false,true,8)&&applied==0&&a->session.scope()==original);
  }
 }
