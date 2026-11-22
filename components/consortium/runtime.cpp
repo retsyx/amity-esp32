@@ -141,7 +141,6 @@ struct Active {
     std::atomic_bool execution_fenced{false};
     std::atomic_bool restart_requested{false};
     model::LinkId cleaned_link;
-    bool lifecycle_only=false;
     std::string endpoint_hint;
     model::MessageId removal_request;uint64_t removal_until=0;
     model::MessageId update_begin_id;
@@ -231,7 +230,7 @@ bool current_peer_credential(const Active &link,const Group &current){
     return false;
 }
 bool send(Active &link,Kind kind,std::string_view payload,uint32_t ttl=1000){
-    if(link.cancelled|| (link.lifecycle_only&&!lifecycle_kind(kind)) || (link.retiring&&kind!=Kind::membership_event&&kind!=Kind::membership_result))return false;
+    if(link.cancelled||(link.retiring&&kind!=Kind::membership_event&&kind!=Kind::membership_result))return false;
     if(link.management_ready&&!is_update_kind(kind)&&!is_log_kind(kind)&&!lifecycle_kind(kind))return false;
     if(link.restart_requested&&kind!=Kind::synchronization&&kind!=Kind::device_status&&!lifecycle_kind(kind))return false;
     // The TLS anchor snapshot may predate a roster mutation. Ordinary work must
@@ -327,7 +326,7 @@ bool finish_synchronization(Active& active,bool server,uint64_t revision,LinkTra
 bool synchronization_current(const Active& active){
     std::lock_guard<std::mutex> guard(lock);
     const auto scope=active.session.scope();
-    return !active.cancelled&&!active.retiring&&!active.lifecycle_only&&active.tls->usable()&&current_peer_credential(active,group)&&
+    return !active.cancelled&&!active.retiring&&active.tls->usable()&&current_peer_credential(active,group)&&
         group.consortium==scope.consortium_id&&group.authority==scope.coordinator_id&&
         ((group.role==Group::coordinator&&group.authority==scope.local_id)||(group.role==Group::member&&group.authority==scope.peer_id));
 }
@@ -557,7 +556,7 @@ bool refresh_local_hostname(Active& active){
 // a new scope, whose start may discard an old-scope report.
 bool report_wifi_signal(Active& active){
     const auto scope=active.session.scope();
-    if(!active.ready||active.management_ready||active.lifecycle_only||scope.peer_id!=scope.coordinator_id)return true;
+    if(!active.ready||active.management_ready||scope.peer_id!=scope.coordinator_id)return true;
     const auto signal=network_diagnostics::wifi_signal();if(!signal.known)return true;
     const auto now=now_ms();
     if(active.wifi_scope&&*active.wifi_scope==scope&&(now-active.wifi_reported_at<10000||
@@ -910,7 +909,7 @@ QueuedState prepare_queued(Active& active,const Queued& queued,std::string& payl
 void active_loop_work(void *arg){
     std::unique_ptr<std::shared_ptr<Active>> holder(static_cast<std::shared_ptr<Active>*>(arg));auto active=*holder;holder.reset();bool server=active->tls->server;
     LinkTrace trace;trace.phase="tls_handshake";const bool handshaken=active->tls->handshake();if(!handshaken)trace.fail("tls_handshake");
-    if(!handshaken||!establish(*active,server,&trace)){if(!active->lifecycle_only&&!active->cancelled)error("Operational authentication failed");active->cancelled=true;}else{
+    if(!handshaken||!establish(*active,server,&trace)){if(!active->cancelled)error("Operational authentication failed");active->cancelled=true;}else{
         {std::lock_guard<std::mutex> guard(lock);status.connected=true;status.synchronized=false;status.phase="membership_committed";}
         if(!synchronize_connection(*active,server,active->execution_supported,0,&trace))active->cancelled=true;
         else{std::lock_guard<std::mutex> guard(lock);status.synchronized=active->ready.load();status.phase=active->ready?"enrollment_ready":"membership_committed";}

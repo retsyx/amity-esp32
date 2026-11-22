@@ -266,7 +266,6 @@ void logical_recovery_keeps_security_and_transport_fences(){
  trace=LinkTrace{};trace.fail("cleanup_queue_full",Error::none,Recovery::recoverable);active->tls->healthy=false;assert(!application_failure_recoverable(*active,trace));
  active->tls->healthy=true;credentials_current=false;assert(!application_failure_recoverable(*active,trace));credentials_current=true;
  active->retiring=true;assert(!application_failure_recoverable(*active,trace));active->retiring=false;
- active->lifecycle_only=true;assert(!application_failure_recoverable(*active,trace));active->lifecycle_only=false;
  group.role=Group::prepared;assert(!application_failure_recoverable(*active,trace));
 }
 struct PairedResult {bool ready=false,scope_intact=false,context_withheld=false;unsigned applies=0,rounds=0;model::LinkId link;};
