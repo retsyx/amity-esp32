@@ -15,6 +15,9 @@ namespace system_services::updates {
 namespace {
 namespace c=amity::consortium;namespace m=amity::system;
 constexpr uint64_t peer_timeout_ms=120000,retry_ms=60000,activation_window_ms=10000;
+// Transfers and restart instructions proceed promptly; nothing else needs a
+// faster check than once a second.
+constexpr uint32_t step_ms=20,idle_ms=1000;
 struct Target {
     m::OctopusId owner;
     uint64_t offset=0,last_progress=0,next_attempt=0;
@@ -30,8 +33,10 @@ struct Cohort {
     uint64_t activate_at=0;
     std::vector<Target> targets;
 };
-std::mutex gate,worker_gate,ack_gate;
-std::condition_variable changed;
+std::mutex gate,worker_gate,ack_gate,wake_gate;
+std::condition_variable changed,woken;
+bool wake_pending=false;
+void wake_worker(){{std::lock_guard<std::mutex> lock(wake_gate);wake_pending=true;}woken.notify_all();}
 Cohort cohort;CohortHooks hooks;m::OctopusId local;
 std::string last_failed_upload="null";
 struct Pending {m::OctopusId owner;m::MessageId request;std::string release_id,image_hash;std::optional<c::Json> result;};
@@ -293,11 +298,13 @@ esp_err_t begin_system_upload(const ReleaseManifest& release,std::string& error)
 void system_upload_progress(uint64_t bytes){std::lock_guard<std::mutex> lock(gate);if(cohort.phase=="uploading")cohort.targets.front().offset=bytes;}
 esp_err_t finish_system_upload(std::string& error){
     ReleaseManifest release;std::string signature;if(partition_release(false,release,signature,error)!=ESP_OK)return ESP_FAIL;
-    std::lock_guard<std::mutex> lock(gate);
-    if(cohort.phase!="uploading"){error="The firmware upload is no longer active.";return ESP_ERR_INVALID_STATE;}
-    cohort.release=std::move(release);cohort.signature=std::move(signature);cohort.phase="distributing";cohort.targets.front().phase="staged";cohort.targets.front().offset=cohort.release.image_bytes;
-    for(const auto& p:c::runtime_peers())if(p.enrolled&&!p.provisional)cohort.targets.push_back({p.id,0,0,0,"queued",""});
-    return ESP_OK;
+    {
+        std::lock_guard<std::mutex> lock(gate);
+        if(cohort.phase!="uploading"){error="The firmware upload is no longer active.";return ESP_ERR_INVALID_STATE;}
+        cohort.release=std::move(release);cohort.signature=std::move(signature);cohort.phase="distributing";cohort.targets.front().phase="staged";cohort.targets.front().offset=cohort.release.image_bytes;
+        for(const auto& p:c::runtime_peers())if(p.enrolled&&!p.provisional)cohort.targets.push_back({p.id,0,0,0,"queued",""});
+    }
+    wake_worker();return ESP_OK;
 }
 void fail_system_upload(const std::string& error){fail_job(error);}
 std::string cohort_status_json(){
@@ -318,10 +325,18 @@ std::string cohort_status_json(){
     }
     return out+"]}";
 }
-void poll_group_update(){
-    std::unique_lock<std::mutex> worker(worker_gate,std::try_to_lock);if(!worker.owns_lock())return;
+uint32_t poll_group_update(){
+    std::unique_lock<std::mutex> worker(worker_gate,std::try_to_lock);if(!worker.owns_lock())return idle_ms;
     std::string phase;size_t current;{std::lock_guard<std::mutex> lock(gate);phase=cohort.phase;current=cohort.current;}
-    if(phase=="uploading"||(phase=="activating"&&current==SIZE_MAX))return;
+    if(phase=="uploading"||(phase=="activating"&&current==SIZE_MAX))return idle_ms;
     if(phase=="distributing")distribute();else if(phase=="activating")activate();else start_catchup();
+    // Waiting for a restarted Amity to return is not a step of its own.
+    std::lock_guard<std::mutex> lock(gate);
+    const bool stepping=cohort.phase=="distributing"||(cohort.phase=="activating"&&!(cohort.automatic&&cohort.current>=cohort.targets.size()));
+    return stepping?step_ms:idle_ms;
+}
+void wait_group_update(uint32_t milliseconds){
+    std::unique_lock<std::mutex> lock(wake_gate);
+    woken.wait_for(lock,std::chrono::milliseconds(milliseconds),[]{return wake_pending;});wake_pending=false;
 }
 } // namespace system_services::updates

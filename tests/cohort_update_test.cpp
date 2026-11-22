@@ -157,6 +157,12 @@ void distribution(){
     assert(phase()=="activating");const auto count=events.size();for(unsigned n=0;n<10;++n)poll();assert(events.size()==count&&disk_writes==0);
     std::cout<<"PASS one primary upload, ordered peer staging before any activation, common delayed restart and no persisted desired release\n";
 }
+void poll_intervals(){
+    alarm(5);setup();assert(u::poll_group_update()==1000);
+    add_peer(one);upload_once();const auto began=std::chrono::steady_clock::now();u::wait_group_update(60000);
+    assert(std::chrono::steady_clock::now()-began<std::chrono::seconds(2)&&u::poll_group_update()==20&&phase()=="distributing");
+    alarm(0);std::cout<<"PASS idle update work runs once a second; a finished upload wakes the worker and distribution steps promptly\n";
+}
 void skipped_offline(){
     setup();add_peer(one,false);add_peer(two);upload_once();const auto started=clock_ms;until([]{return nodes[local].selected;});
     const auto targets=cohort().get("targets")->array;assert(field(targets[1],"phase")=="skipped");
@@ -353,4 +359,4 @@ void rejected(){
     const auto count=events.size();for(unsigned turn=0;turn<8;++turn)poll();assert(phase()=="failed"&&events.size()==count);
     std::cout<<"PASS browser cohort with one staged member and a second full-image SHA rejection fails before any activation\n";
 }
-int main(int argc,char** argv){assert(argc==2);std::ifstream file(argv[1]);manifest.assign(std::istreambuf_iterator<char>(file),{});assert(!manifest.empty());run(distribution);run(offline);run(catchup);run(matching_hello_releases_sync_fence);run(same_image);run(receiver_staging);run(rejected);run(retry_transient);run(authority_denials);run(rollback_budget);run(logical_restart_during_chunk);run(streaming_without_chunk_results);run(binary_chunks_bind_to_the_accepted_begin);run(fifo_backpressure_is_local);run(missing_stream);run(bad_stream_hash);run(upload_failure_reporting);run(source_failure_reporting);run(multiple_failure_reporting);}
+int main(int argc,char** argv){assert(argc==2);std::ifstream file(argv[1]);manifest.assign(std::istreambuf_iterator<char>(file),{});assert(!manifest.empty());run(distribution);run(poll_intervals);run(offline);run(catchup);run(matching_hello_releases_sync_fence);run(same_image);run(receiver_staging);run(rejected);run(retry_transient);run(authority_denials);run(rollback_budget);run(logical_restart_during_chunk);run(streaming_without_chunk_results);run(binary_chunks_bind_to_the_accepted_begin);run(fifo_backpressure_is_local);run(missing_stream);run(bad_stream_hash);run(upload_failure_reporting);run(source_failure_reporting);run(multiple_failure_reporting);}

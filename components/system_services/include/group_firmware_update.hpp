@@ -16,6 +16,9 @@ void system_upload_progress(uint64_t bytes);
 esp_err_t finish_system_upload(std::string& error);
 void fail_system_upload(const std::string& error);
 std::string cohort_status_json();
-// Call only from the dedicated update task, never the owner/CEC task.
-void poll_group_update();
+// Call only from the dedicated update task, never the owner/CEC task. Runs one
+// step and returns how long the task may wait for the next one; a finished
+// browser upload ends that wait early.
+uint32_t poll_group_update();
+void wait_group_update(uint32_t milliseconds);
 } // namespace system_services::updates

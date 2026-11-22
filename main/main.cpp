@@ -272,10 +272,7 @@ esp_err_t volume(int16_t steps,void *) {
     return xQueueSend(volume_queue,&v,0)==pdTRUE?ESP_OK:ESP_ERR_NO_MEM;
 }
 void firmware_update_task(void *) {
-    for (;;) {
-        system_services::updates::poll_group_update();
-        vTaskDelay(pdMS_TO_TICKS(20));
-    }
+    for (;;) system_services::updates::wait_group_update(system_services::updates::poll_group_update());
 }
 void remote_battery_task(void *) {
     for (;;) {
