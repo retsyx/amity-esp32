@@ -80,7 +80,7 @@ class BLEActivityEvidence(BLEInputEvidence):
             remaining = (deadline_ns - time.monotonic_ns()) / 1_000_000_000
             if remaining <= 0:
                 raise TimeoutError("The BLE-selected activity did not become current")
-            state = self.dut.request("/api/status", timeout=min(15, remaining))
+            state = self.dut.request("/api/activity-editor/status", timeout=min(15, remaining))
             if (not isinstance(state, dict) or type(state.get("current_activity")) is not int
                     or state["current_activity"] < -1 or type(state.get("activity_settling")) is not bool
                     or not isinstance(state.get("activity_error"), str)):

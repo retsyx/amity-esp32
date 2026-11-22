@@ -292,7 +292,7 @@ class BLEActivityEvidenceTests(unittest.TestCase):
                                            ("current_activity", "activity_settling", "activity_error")}
 
             def request(path, *args, **kwargs):
-                self.assertEqual(path, "/api/status", "BLE handoffs may only read shipping readiness")
+                self.assertEqual(path, "/api/activity-editor/status", "BLE handoffs may only read shipping readiness")
                 self.assertEqual(args, ())
                 fixture.status_reads.append(time.monotonic_ns())
                 return fixture.read_status()
