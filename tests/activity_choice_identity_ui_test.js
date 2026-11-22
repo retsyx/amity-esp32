@@ -88,6 +88,30 @@ function assertOriginalReferences(document){
  failed.adapter.accept({stage:'failed',saved:false},failed.adapter.submission(failedDraft).activities);
  await assert.rejects(()=>failed.load(applied),/Activities changed in another session/);
 
+ // A saved activity edited to use unsaved equipment submits its native choice.
+ // The firmware saves that as a component with the same title and location,
+ // so the next read adopts the component instead of reporting a conflict.
+ const TV='native:'+'e'.repeat(64),AVR='native:'+'f'.repeat(64),D='component:'+'d'.repeat(32),E='component:'+'e'.repeat(32);
+ const tv={title:'New TV',location:'Adapter 1',roles:['display','audio']},avr={title:'New AVR',location:'Adapter 1',roles:['audio','switch']};
+ const unsaved={...original,device_choices:[...choices,{...tv,value:TV},{...avr,value:AVR}]};
+ const stored={...copy(original),expected_config_revision:'8',device_choices:[...choices,{...tv,value:D},{...avr,value:E}]};
+ stored.activities[0].display=D;stored.activities[1].switch.device=E;
+ const adopted=fixture(),adoptedDraft=await adopted.load(unsaved);
+ adoptedDraft.activities[0].display='New TV · Adapter 1';adoptedDraft.activities[1].switch.device='New AVR · Adapter 1';
+ const nativeSave=adopted.save(adoptedDraft);
+ assert.equal(nativeSave.activities[0].display,TV);assert.equal(nativeSave.activities[1].switch.device,AVR);
+ adopted.adapter.accept({stage:'applied',saved:true},nativeSave.activities);
+ const storedProjected=await adopted.load(stored);
+ assert.equal(storedProjected.activities[0].display,'New TV · Adapter 1');assert.equal(storedProjected.activities[1].switch.device,'New AVR · Adapter 1');
+ const resaved=adopted.save(storedProjected);
+ assert.equal(resaved.activities[0].display,D);assert.equal(resaved.activities[1].switch.device,E);
+ // Other fields of that activity still detect a hidden overwrite.
+ const overwritten=fixture(),overwrittenDraft=await overwritten.load(unsaved);
+ overwrittenDraft.activities[0].display='New TV · Adapter 1';
+ overwritten.adapter.accept({stage:'applied',saved:true},overwritten.save(overwrittenDraft).activities);
+ const hidden=copy(stored);hidden.activities[0].source=A;
+ await assert.rejects(()=>overwritten.load(hidden),/Activities changed in another session/);
+
  // A confirmed restore drops the old selectors, so the restored document
  // loads even where equal labels now name other equipment; so does a new session.
  const restore=fixture();await restore.load(original);

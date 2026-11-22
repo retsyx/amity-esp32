@@ -44,7 +44,8 @@ window.amityInterface=(()=>{
   if(document.version!==1||!Array.isArray(document.device_choices))throw Error('Amity returned an invalid activity document. Reload before continuing.');
   enabled=true;updateChoices(document);
   const next=selections(document);
-  for(const [id,current] of next){const previous=originalSelections.get(id);if(previous&&roles.some(role=>previous[role].visible===current[role].visible&&previous[role].value!==current[role].value))throw Error('Activities changed in another session. Reload the page before continuing.');}
+  // A saved native choice returns as new equipment with its own selector.
+  for(const [id,current] of next){const previous=originalSelections.get(id);if(previous&&roles.some(role=>previous[role].visible===current[role].visible&&previous[role].value!==current[role].value&&!String(previous[role].value).startsWith('native:')))throw Error('Activities changed in another session. Reload the page before continuing.');}
   originalSelections=next;
   const result=structuredClone(document);
   result.activities=(result.activities||[]).map(a=>{for(const role of roles){if(role==='switch'){if(a.switch)a.switch.device=visible(role,a.switch.device);}else a[role]=visible(role,a[role]);}return a;});
