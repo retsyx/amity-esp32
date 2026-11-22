@@ -59,10 +59,10 @@ function fixture(options={}){
 }
 (async()=>{
  const normal=fixture();await normal.open();assert.match(normal.dialog().textContent,/Hold the Reset button on the new Amity for 3 seconds\./);
- const scan=normal.posts[0][1].request_id;assert.equal(normal.posts[0][0],'membership/scan');assert.equal(scan.length,32);assert.equal(normal.label('Matter setup code'),undefined);assert.equal(normal.label('Name').hidden,false);
+ const scan=normal.posts[0][1].request_id;assert.equal(normal.posts[0][0],'membership/scan');assert.equal(scan.length,32);assert.equal(normal.label('Name').hidden,false);
  for(const bad of ['', 'bad name','-bad','bad-','café']){await normal.fill(normal.input('Name'),bad);await normal.click(normal.button('Add'));assert.equal(normal.posts.filter(([path])=>path.endsWith('/add')).length,0);}
  await normal.fill(normal.input('Name'),'  AMITY-OFFICE  ');await normal.click(normal.button('Add'));
- const addition=normal.posts.find(([path])=>path.endsWith('/add'))[1];assert.equal(addition.scan_id,scan);assert.equal(addition.candidate_token,'opaque-one');assert.equal(addition.name,'amity-office');assert.equal(Object.hasOwn(addition,'setup_code'),false);
+ const addition=normal.posts.find(([path])=>path.endsWith('/add'))[1];assert.equal(addition.scan_id,scan);assert.equal(addition.candidate_token,'opaque-one');assert.equal(addition.name,'amity-office');assert.deepEqual(Object.keys(addition).sort(),['candidate_token','name','request_id','scan_id']);
  assert.notEqual(addition.request_id,scan);normal.state.phase='finishing';await normal.tick();assert.match(normal.dialog().textContent,/Finishing setup/);assert.equal(normal.button('Add').disabled,true);
  normal.state.phase='complete';normal.setStage('complete');await normal.tick();assert.equal(normal.dialog(),undefined);assert.equal(normal.posts.filter(([path])=>path.endsWith('/cancel')).length,0);assert.equal(normal.messages.at(-1)[0],'Amity added.');
  const admitted=fixture();await admitted.open();

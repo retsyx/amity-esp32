@@ -81,7 +81,6 @@ int main(){
     assert(read(request("a"),selection));assert(read(request(std::string(32,'n')),selection));
     for(const auto* name:{"","bad name","-bad","bad-","amity.room","caf\xc3\xa9"})reject(request(name));
     reject(request(std::string(33,'n')));reject(request("office",",\"extra\":true"));reject(request("office",",\"name\":\"other\""));reject(request()+" trailing");
-    reject(request("office",",\"setup_code\":\"\""));
     for(const auto* field:{"scan_id","candidate_token","name"}){auto raw=request();Json root(cJSON_Parse(raw.c_str()),cJSON_Delete);cJSON_ReplaceItemInObjectCaseSensitive(root.get(),field,cJSON_CreateNumber(1));char* text=cJSON_PrintUnformatted(root.get());reject(text);cJSON_free(text);}
     for(const auto* field:{"scan_id","candidate_token","name"}){Json root(cJSON_Parse(request().c_str()),cJSON_Delete);cJSON_DeleteItemFromObjectCaseSensitive(root.get(),field);char* text=cJSON_PrintUnformatted(root.get());reject(text);cJSON_free(text);}
     for(const auto& token:{std::string{},std::string(129,'x'),std::string("bad")+char(1)+"token"}){Json root(cJSON_Parse(request().c_str()),cJSON_Delete);cJSON_ReplaceItemInObjectCaseSensitive(root.get(),"candidate_token",cJSON_CreateString(token.c_str()));char* text=cJSON_PrintUnformatted(root.get());reject(text);cJSON_free(text);}
@@ -100,7 +99,7 @@ int main(){
     operation.status="admitted";operation.candidate={};update_add(operation);assert(operation.status=="unknown"&&operation.error.find("Check the Amity devices list")!=std::string::npos);current.scan_id=id<m::MessageId>(2);
     operation.status="admitted";current.phase="failed";current.error="Could not connect";update_add(operation);assert(operation.status=="failed"&&operation.error==current.error);
     operation.status="admitted";current.phase="cancelled";update_add(operation);assert(operation.status=="cancelled");
-    current.candidates={{"token","Amity <nearby>"}};assert(admission_response(nullptr)==ESP_OK);Json status(cJSON_Parse(serialized.c_str()),cJSON_Delete);assert(!cJSON_GetObjectItemCaseSensitive(status.get(),"requires_setup_code"));auto* candidates=cJSON_GetObjectItemCaseSensitive(status.get(),"candidates");assert(cJSON_GetArraySize(candidates)==1&&string(cJSON_GetArrayItem(candidates,0),"label")=="Amity <nearby>");
+    current.candidates={{"token","Amity <nearby>"}};assert(admission_response(nullptr)==ESP_OK);Json status(cJSON_Parse(serialized.c_str()),cJSON_Delete);auto* candidates=cJSON_GetObjectItemCaseSensitive(status.get(),"candidates");assert(cJSON_GetArraySize(candidates)==1&&string(cJSON_GetArrayItem(candidates,0),"label")=="Amity <nearby>");
     std::cout<<"PASS admission API: closed typed scan/token/name contract, no connect before validation, stale scans, exact final peer/name and safe status JSON\n";
 }
 '''

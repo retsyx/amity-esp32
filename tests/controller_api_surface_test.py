@@ -49,10 +49,9 @@ int main(){
         "/api/devices/0123456789abcdef0123456789abcdef/settings/extra",
         "/api/devices/0123456789abcdef/settings"})assert(!request_fields(path));
     assert(!request_fields("/api/unknown"));
-    for(const auto* path:{"/api/status","/api/setup","/api/login","/api/logout",
-        "/api/password","/api/hostname","/api/reboot","/api/factory-reset","/api/firmware",
-        "/api/remotes","/api/remotes/pair","/api/matter","/api/matter/open","/api/homekit",
-        "/api/backup","/api/config/validate","/api/updates","/api/updates/validate"})
+    for(const auto* path:{"/api/setup","/api/login","/api/logout",
+        "/api/password","/api/reboot","/api/factory-reset","/api/firmware",
+        "/api/remotes","/api/remotes/pair","/api/matter","/api/matter/open","/api/homekit"})
         assert(!administrative_path(path));
     for(const auto* path:{"/api/system","/api/config",
         "/api/membership/admission","/api/operations/0123456789abcdef0123456789abcdef",

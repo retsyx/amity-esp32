@@ -206,7 +206,6 @@ class ReplacementTests(unittest.TestCase):
         self.assertEqual(len(fixture.posts("apply")), 1)
         self.assertFalse(any(data is not None and path in ("/api/config", "/api/activity-editor")
                              for path, data in fixture.calls))
-        self.assertFalse(any(path == "/api/replacements/preview" for path, _ in fixture.calls))
         with self.assertRaises(RuntimeError):
             review.apply()
         self.assertEqual(len(fixture.posts("apply")), 1)

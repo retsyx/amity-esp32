@@ -391,7 +391,6 @@ def main(argv=None):
             page.locator('#addAmity').click()
             dialog = page.locator('dialog:visible')
             expect(dialog).to_contain_text('Hold the Reset button on the new Amity for 3 seconds.')
-            expect(dialog.get_by_label('Matter setup code')).to_have_count(0)
             name = dialog.get_by_label('Name', exact=True)
             expect(name).to_have_attribute('required', '')
             expect(name).to_have_attribute('maxlength', '32')

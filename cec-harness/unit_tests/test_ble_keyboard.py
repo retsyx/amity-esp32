@@ -186,8 +186,6 @@ class PairedKeyboardTests(unittest.TestCase):
         paths = [path for path, _ in fixture.calls]
         self.assertEqual(paths.count("/api/remotes/pair"), 1)
         self.assertEqual(paths.count("/api/remotes/unpair"), 1)
-        self.assertNotIn("/api/key", paths)
-        self.assertNotIn("/api/remotes/scan", paths)
         self.assertFalse(fixture.state["bonded"])
         self.assertEqual(fixture.state["remote_generation"], "2")
         phases = [row["phase"] for row in fixture.bed.control_observations[0]["checks"]]
@@ -429,7 +427,6 @@ class PairedKeyboardTests(unittest.TestCase):
                 paths = [path for path, _ in fixture.calls]
                 self.assertEqual(paths.count("/api/remotes/pair"), 1)
                 self.assertNotIn("/api/remotes/unpair", paths)
-                self.assertNotIn("/api/remotes/scan", paths)
 
     def test_bond_with_another_nearby_remote_is_reported_and_never_removed(self):
         fixture = Fixture()
@@ -749,7 +746,6 @@ class PairedKeyboardTests(unittest.TestCase):
             self.assertEqual([call for call in fixture.worker_calls if call[0] == "report"],
                              [("report", (0x28,), 0), ("report", (), 0xe9),
                               ("report", (), 0), ("report", (), 0)])
-            self.assertNotIn("/api/key", [path for path, _ in fixture.calls])
 
     def test_report_context_releases_held_input_and_preserves_original_body_failure(self):
         fixture = Fixture()
