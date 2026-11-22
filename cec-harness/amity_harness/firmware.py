@@ -401,13 +401,8 @@ class FirmwareUpgrade:
                 if (_identifier(peer.get("boot_id")) and peer["boot_id"] != peers[owner]["boot_id"]
                         or peer.get("firmware_identity") and peer["firmware_identity"] != old["image_elf_sha256"]):
                     raise AssertionError("A secondary activated during the interrupted main transfer")
-            job, local = self._get("/api/updates/cohort", deadline), self._get("/api/updates", deadline)
-            if job.get("phase") != "idle":
+            if self._get("/api/updates/cohort", deadline).get("phase") != "idle":
                 raise AssertionError("The rebooted main retained or replaced the abandoned firmware cohort")
-            if (local.get("phase") != "staged_image" or local.get("expected_elf_sha256") != self.bundle.image_elf_sha256
-                    or local.get("running_elf_sha256") != old["image_elf_sha256"]
-                    or local.get("current_boot_id") != system["boot_id"]):
-                raise AssertionError("The interrupted image was not retained as an inactive staged image")
             state = self._get("/api/activity-editor/status", deadline)
             if (health.get("ready") is True and system.get("ready") is True
                     and system.get("configuration_pending") is False

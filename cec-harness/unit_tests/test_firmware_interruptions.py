@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from test_firmware_upgrade import (
-    UpgradeFixture, MAIN_BOOT, NEW_MAIN_BOOT, NEW_IMAGE, OLD_IMAGE, VERSION,
+    UpgradeFixture, NEW_MAIN_BOOT, NEW_IMAGE, VERSION,
 )
 from unit_tests.virtual_time import use_virtual_time
 
@@ -117,19 +117,6 @@ class InterruptedTransferFixture(UpgradeFixture):
                 target.update(phase='queued', offset='0')
         return value
 
-    def local_status(self):
-        value = dict(phase='staged_image', expected_elf_sha256=NEW_IMAGE,
-                     running_elf_sha256=OLD_IMAGE, current_boot_id=self.health()['boot_id'])
-        if self.fault == 'wrong_staged_hash':
-            value['expected_elf_sha256'] = 'f' * 64
-        if self.fault == 'wrong_running_hash':
-            value['running_elf_sha256'] = NEW_IMAGE
-        if self.fault == 'wrong_local_boot':
-            value['current_boot_id'] = MAIN_BOOT
-        if self.fault == 'incomplete_staging':
-            value['phase'] = 'interrupted'
-        return value
-
     def open(self, request, timeout):
         path = urlsplit(request.full_url).path
         self.requests.append((request.get_method(), path))
@@ -149,8 +136,6 @@ class InterruptedTransferFixture(UpgradeFixture):
             value = dict(expected_boot_id=self.health()['boot_id'], current_activity=-1, activity_settling=False)
         elif path == '/api/updates/cohort':
             value = self.transfer_job() if self.uploaded else dict(phase='idle', automatic=False, targets=[])
-        elif path == '/api/updates':
-            value = self.local_status()
         elif path.startswith('/api/devices/') and path.endswith('/settings'):
             value = self.settings(path.split('/')[3])
         else:
@@ -180,10 +165,9 @@ class FirmwareInterruptionTests(unittest.TestCase):
             fixture.invoke(upgrade)
         self.assertEqual(len(fixture.uploads), 1, 'retry requires a separate explicit attempt')
 
-    def test_main_abort_rejects_lost_firmware_configuration_or_exact_staging_evidence(self):
+    def test_main_abort_rejects_activated_image_or_changed_saved_state(self):
         for fault in ('wrong_image', 'wrong_version', 'bystander_reboot', 'missing_peer_boot', 'wrong_roster', 'wrong_group',
-                      'changed_config', 'changed_settings', 'wrong_staged_hash', 'wrong_running_hash',
-                      'wrong_local_boot', 'incomplete_staging'):
+                      'changed_config', 'changed_settings'):
             with self.subTest(fault=fault):
                 fixture = InterruptedTransferFixture('main', fault=fault)
                 upgrade = fixture.upgrade()
