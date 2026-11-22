@@ -2081,7 +2081,14 @@ bool HubService::refresh_owned_context(system::OctopusId owner,uint64_t revision
     return impl_->submit(c)==ESP_OK;
 }
 std::vector<system::OwnedAdapterSnapshot> HubService::owned_snapshots()const{
-    auto& p=*impl_;xSemaphoreTake(p.lock,portMAX_DELAY);auto reports=p.owned_reports;xSemaphoreGive(p.lock);return reports;
+    auto& p=*impl_;xSemaphoreTake(p.lock,portMAX_DELAY);auto reports=p.owned_reports;
+    // An accepted report counts before the owner task merges it, so a
+    // disconnect's cleared copy can replace it rather than be overtaken.
+    for(const auto& pending:p.pending_reports){
+        const auto found=std::find_if(reports.begin(),reports.end(),[&](const auto& r){return r.owner==pending.owner&&r.adapter==pending.adapter;});
+        if(found==reports.end())reports.push_back(pending);else *found=pending;
+    }
+    xSemaphoreGive(p.lock);return reports;
 }
 bool HubService::fence_owned(system::OctopusId controller,system::LinkId link){
     auto& p=*impl_;
