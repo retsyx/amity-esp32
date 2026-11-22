@@ -43,6 +43,9 @@ void vSemaphoreDelete(SemaphoreHandle_t);
 int xTaskCreateWithCaps(void (*)(void *), const char *, unsigned, void *, unsigned, TaskHandle_t *, unsigned);
 void vTaskDeleteWithCaps(TaskHandle_t);
 void vTaskDelay(uint32_t);
+uint32_t ulTaskNotifyTake(BaseType_t, uint32_t);
+void xTaskNotifyGive(TaskHandle_t);
+void vTaskNotifyGiveFromISR(TaskHandle_t, BaseType_t *);
 inline int allocation_budget = -1;
 inline void *heap_caps_malloc(size_t size, unsigned) {
     if (allocation_budget == 0) return nullptr;

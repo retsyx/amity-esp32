@@ -104,6 +104,11 @@ void vTaskDeleteWithCaps(TaskHandle_t h) {
     tasks.erase(std::remove(tasks.begin(), tasks.end(), task), tasks.end()); delete task;
 }
 void vTaskDelay(uint32_t ticks) { for (uint32_t i = 0; i < ticks * 20; ++i) step(); throw EmptyQueue{}; }
+// The scripted scheduler steps the full bound; notifications are counted.
+static unsigned task_notifications = 0;
+uint32_t ulTaskNotifyTake(BaseType_t, uint32_t ticks) { vTaskDelay(ticks); return 0; }
+void xTaskNotifyGive(TaskHandle_t) { ++task_notifications; }
+void vTaskNotifyGiveFromISR(TaskHandle_t, BaseType_t *) { ++task_notifications; }
 int64_t esp_timer_get_time() { return now; }
 esp_err_t gpio_config(const gpio_config_t *) { return ESP_OK; }
 void gpio_ll_set_level(Gpio *, gpio_num_t pin, int high) {
@@ -497,7 +502,8 @@ static void independent_epoch_fence_tests() {
         cec::Bus bus;assert(bus.start(36)==ESP_OK);
         const auto edges=pin_edges[36];cec::TxCompletion completion;
         // Changing only the second lifetime cancels queued work before dispatch.
-        assert(bus.send_async_guarded(frame,fence,completion,1));epoch.store(2);
+        // Queueing wakes the transmit task instead of waiting for its next tick.
+        auto notified=task_notifications;assert(bus.send_async_guarded(frame,fence,completion,1)&&task_notifications==notified+1);epoch.store(2);
         finish(completion);assert(completion.result.load()==cec::TxResult::Cancelled&&pin_edges[36]==edges);
         // The same guard is checked after Engine::begin while waiting for a
         // free wire, before the actual first edge.
@@ -510,8 +516,9 @@ static void independent_epoch_fence_tests() {
         // An already-started waveform finishes even if that lifetime changes.
         fence.expected_secondary_generation=3;
         before_tick=[&]{if(pin_edges[36]>edges)epoch.store(4);};
-        assert(bus.send_async_guarded(frame,fence,completion,1));finish(completion);
+        notified=task_notifications;assert(bus.send_async_guarded(frame,fence,completion,1));finish(completion);
         before_tick={};assert(completion.result.load()==cec::TxResult::Success&&epoch.load()==4);
+        assert(task_notifications>=notified+2); // Enqueue, then the finished attempt from the timer ISR.
         assert(!bus.send_async_guarded(frame,fence,completion,1));
         fence.expected_secondary_generation=4;
         auto unaligned=fence;

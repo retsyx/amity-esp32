@@ -101,7 +101,9 @@ struct Bus::Impl::Runtime {
             xSemaphoreTake(r.lifecycle, portMAX_DELAY);
             for (auto* p : r.ports) if (p && p->started) p->service();
             xSemaphoreGive(r.lifecycle);
-            vTaskDelay(1);
+            // Queued frames and finished attempts notify this task at once;
+            // the one-tick bound keeps attempt timeouts advancing.
+            ulTaskNotifyTake(pdTRUE, 1);
         }
     }
     esp_err_t start_worker() {
@@ -200,6 +202,7 @@ bool Bus::Impl::Runtime::tick(gptimer_handle_t, const gptimer_alarm_event_data_t
             // A later begin() or tick cannot overwrite the task's evidence.
             AttemptResult completed{status, p->engine.diagnostic(), p->engine.started()};
             xQueueSendFromISR(p->result, &completed, &wake);
+            if (r.task) vTaskNotifyGiveFromISR(r.task, &wake);
             if (status == TxResult::ArbitrationLost) ++p->stats.arbitration_losses;
             if (status == TxResult::LineError) ++p->stats.line_errors;
         }
@@ -288,7 +291,7 @@ bool Bus::Impl::enqueue(const Work& work) {
         free_slots(1);
     }
     xSemaphoreGive(admission);
-    if (queued) record_queue_depth();
+    if (queued) {record_queue_depth(); if (const auto task = runtime().task) xTaskNotifyGive(task);}
     else log_fifo_full(work.frame);
     return queued;
 }
