@@ -31,6 +31,8 @@ namespace amity_fake {
 int64_t now_us();
 void advance_us(int64_t microseconds);
 void advance_ms(int64_t milliseconds);
+// How many times esp_timer_get_time has read the clock.
+unsigned clock_reads();
 
 // The next count esp_timer_create calls fail with ESP_ERR_NO_MEM, or
 // esp_timer_start calls with ESP_FAIL.

@@ -50,6 +50,8 @@ void clock_timers() {
     CHECK(esp_log_timestamp() == 5 && xTaskGetTickCount() == 0);
     amity_fake::advance_ms(10);
     CHECK(xTaskGetTickCount() == 1);
+    // Only the two esp_timer_get_time calls read the clock.
+    CHECK(amity_fake::clock_reads() == 2);
 }
 
 void periodic_timer() {

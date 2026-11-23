@@ -66,6 +66,7 @@ using amity_fake::Task;
 std::mutex state;
 std::condition_variable changed;
 std::atomic<int64_t> clock_us{0};
+std::atomic<unsigned> clock_read_count{0};
 amity_fake::Waits wait_mode = amity_fake::Waits::advance;
 std::function<void(TickType_t)> delay_hook;
 unsigned delay_count = 0;
@@ -336,6 +337,7 @@ void advance_us(int64_t microseconds) {
     advance_to(lock, clock_us.load() + microseconds);
 }
 void advance_ms(int64_t milliseconds) { advance_us(milliseconds * 1000); }
+unsigned clock_reads() { return clock_read_count.load(); }
 
 void fail_timer_creations(unsigned count) {
     std::lock_guard<std::mutex> lock(state);
@@ -546,7 +548,10 @@ void esp_log_write(esp_log_level_t level, const char *tag, const char *format, .
     va_end(arguments);
 }
 
-int64_t esp_timer_get_time(void) { return clock_us.load(); }
+int64_t esp_timer_get_time(void) {
+    ++clock_read_count;
+    return clock_us.load();
+}
 esp_err_t esp_timer_create(const esp_timer_create_args_t *create_args, esp_timer_handle_t *out_handle) {
     if (!create_args || !create_args->callback || !out_handle) return ESP_ERR_INVALID_ARG;
     std::lock_guard<std::mutex> lock(state);
