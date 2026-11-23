@@ -53,5 +53,4 @@ web_redirect_test.py lint
 web_session_tcp_test.py lint
 web_stall_test.py pending:Z
 web_tls_identity_test.py pending:E3
-wifi_latency_policy_test.py pending:I
 wifi_signal_test.py whole-file

@@ -47,7 +47,9 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         matter-boot-without-authority matter-boot-enrollment-open matter-boot-firmware-not-ready
         matter-boot-without-consortium matter-boot-without-activation matter-boot-status-invalid matter-boot-open-retry
         matter-boot-status-retry matter-boot-open-exhausted matter-boot-status-exhausted matter-boot-open-invalid
-        matter-boot-fabric-appears matter-boot-role-changes matter-boot-authority-lost matter-button-reopens)
+        matter-boot-fabric-appears matter-boot-role-changes matter-boot-authority-lost matter-button-reopens
+        wifi-policy-unclaimed wifi-policy-member wifi-policy-already-off wifi-policy-max-modem wifi-policy-matter-fails
+        wifi-policy-read-fails wifi-policy-set-fails wifi-policy-verify-fails wifi-policy-stays-on)
     # app_main has two #if blocks. main_test builds with both settings off and
     # main_production_test with both on, so a step inside an #if block fails
     # one of them.
@@ -72,6 +74,5 @@ if(AMITY_TEST_TIER STREQUAL standalone)
     target_compile_options(main_production_test PRIVATE -Wno-error=unused-function)
     amity_python_tests(
         key_release_timing_test.py
-        wifi_latency_policy_test.py
     )
 endif()

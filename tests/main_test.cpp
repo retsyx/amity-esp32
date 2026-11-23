@@ -1451,6 +1451,128 @@ void matter_button_reopens() {
     CHECK(board.windows == 2 && !board.window_open);
 }
 
+// Wi-Fi power save: after Matter initialized networking and before network
+// diagnostics, the hardware profile and the consortium transport, app_main
+// reads the mode, turns power save off, reads it again and logs both modes,
+// once. Any failure, or a mode that stays on, stops the boot.
+const std::vector<std::string> wifi_policy_order{"amity_matter_start", "esp_wifi_get_ps", "esp_wifi_set_ps",
+                                                 "esp_wifi_get_ps", "amity::network_diagnostics::start",
+                                                 "amity::consortium::runtime_set_hardware_profile",
+                                                 "amity::consortium::runtime_start"};
+std::vector<std::string> wifi_policy_calls() {
+    return calls({"amity_matter_start", "esp_wifi_get_ps", "esp_wifi_set_ps", "amity::network_diagnostics::start",
+                  "amity::consortium::runtime_set_hardware_profile", "amity::consortium::runtime_start"});
+}
+// The modes are logged once, after they are read back, and diagnostics start
+// with power save off.
+void watch_wifi_policy() {
+    amity_fake::on_log([](const amity_fake::LogLine &line) {
+        if (line.message.rfind("Wi-Fi power save:", 0) != 0) return;
+        CHECK(line.level == ESP_LOG_INFO && line.tag == "amity");
+        CHECK(count("esp_wifi_get_ps") == 2 && count("esp_wifi_set_ps") == 1);
+        CHECK(count("amity::network_diagnostics::start") == 0);
+    });
+    install<&amity::network_diagnostics::start>([] {
+        CHECK(board.power_save == WIFI_PS_NONE && count("esp_wifi_get_ps") == 2 && count("esp_wifi_set_ps") == 1);
+    });
+}
+std::vector<std::string> wifi_policy_lines() {
+    std::vector<std::string> out;
+    for (const auto &line : amity_fake::log_lines()) {
+        if (line.message.rfind("Wi-Fi power save:", 0) == 0) out.push_back(line.message);
+    }
+    return out;
+}
+// The transport starts at the installed configuration's revision.
+void expect_transport_revision(uint64_t expected) {
+    install<&amity::consortium::runtime_start>([expected](model::ConsortiumId group, model::OctopusId local,
+                                                          model::BootId boot, uint64_t revision) {
+        CHECK(group == consortium && local == octopus && boot == boot_identity && revision == expected);
+        return ESP_OK;
+    });
+}
+void wifi_policy_unclaimed() {
+    install_boot();
+    watch_wifi_policy();
+    board.configuration = saved(configuration({"Watch"}), 11);
+    expect_transport_revision(11);
+    app_main();
+    CHECK(wifi_policy_calls() == wifi_policy_order && board.power_save == WIFI_PS_NONE);
+    CHECK(wifi_policy_lines() == std::vector<std::string>{"Wi-Fi power save: previous=1 current=0"});
+}
+// A member applies the same policy; without a saved configuration the
+// transport starts at revision 1.
+void wifi_policy_member() {
+    install_boot();
+    member();
+    watch_wifi_policy();
+    expect_transport_revision(1);
+    app_main();
+    CHECK(wifi_policy_calls() == wifi_policy_order && board.power_save == WIFI_PS_NONE);
+    CHECK(wifi_policy_lines() == std::vector<std::string>{"Wi-Fi power save: previous=1 current=0"});
+}
+void wifi_policy_already_off() {
+    install_boot();
+    watch_wifi_policy();
+    board.power_save = WIFI_PS_NONE;
+    app_main();
+    CHECK(wifi_policy_calls() == wifi_policy_order);
+    CHECK(wifi_policy_lines() == std::vector<std::string>{"Wi-Fi power save: previous=0 current=0"});
+}
+void wifi_policy_max_modem() {
+    install_boot();
+    watch_wifi_policy();
+    board.power_save = WIFI_PS_MAX_MODEM;
+    app_main();
+    CHECK(wifi_policy_calls() == wifi_policy_order);
+    CHECK(wifi_policy_lines() == std::vector<std::string>{"Wi-Fi power save: previous=2 current=0"});
+}
+
+// Boots and expects the boot to stop at the check of expression with error,
+// before the hardware profile and the transport.
+void expect_boot_stops(const char *expression, esp_err_t error) {
+    try {
+        app_main();
+        amity_test::fail(__FILE__, __LINE__, "the boot ignored a failed Wi-Fi policy");
+    } catch (const amity_fake::ErrorCheckFailed &failure) {
+        CHECK(failure.error == error && failure.expression == expression);
+    }
+    CHECK(count("amity::consortium::runtime_set_hardware_profile") == 0 && count("amity::consortium::runtime_start") == 0);
+    CHECK(count("amity::network_diagnostics::start") == 0);
+}
+void wifi_policy_matter_fails() {
+    install_boot();
+    board.matter_start = ESP_ERR_TIMEOUT;
+    expect_boot_stops("amity_matter_start(&callbacks)", ESP_ERR_TIMEOUT);
+    CHECK(count("esp_wifi_get_ps") == 0 && count("esp_wifi_set_ps") == 0 && wifi_policy_lines().empty());
+}
+void wifi_policy_read_fails() {
+    install_boot();
+    board.read_error = ESP_ERR_INVALID_SIZE;
+    expect_boot_stops("configure_wifi_latency_policy()", ESP_ERR_INVALID_SIZE);
+    CHECK(count("esp_wifi_get_ps") == 1 && count("esp_wifi_set_ps") == 0 && wifi_policy_lines().empty());
+}
+void wifi_policy_set_fails() {
+    install_boot();
+    board.set_error = ESP_ERR_NOT_SUPPORTED;
+    expect_boot_stops("configure_wifi_latency_policy()", ESP_ERR_NOT_SUPPORTED);
+    CHECK(count("esp_wifi_get_ps") == 1 && count("esp_wifi_set_ps") == 1 && wifi_policy_lines().empty());
+}
+void wifi_policy_verify_fails() {
+    install_boot();
+    board.verify_error = ESP_ERR_INVALID_RESPONSE;
+    expect_boot_stops("configure_wifi_latency_policy()", ESP_ERR_INVALID_RESPONSE);
+    CHECK(count("esp_wifi_get_ps") == 2 && count("esp_wifi_set_ps") == 1 && wifi_policy_lines().empty());
+}
+// Power save that stays on stops the boot after logging both modes.
+void wifi_policy_stays_on() {
+    install_boot();
+    board.power_save_ignored = true;
+    expect_boot_stops("configure_wifi_latency_policy()", ESP_ERR_INVALID_STATE);
+    CHECK(count("esp_wifi_get_ps") == 2 && count("esp_wifi_set_ps") == 1);
+    CHECK(wifi_policy_lines() == std::vector<std::string>{"Wi-Fi power save: previous=1 current=1"});
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -1505,5 +1627,14 @@ int main(int argc, char **argv) {
         {"matter-boot-role-changes", matter_boot_role_changes},
         {"matter-boot-authority-lost", matter_boot_authority_lost},
         {"matter-button-reopens", matter_button_reopens},
+        {"wifi-policy-unclaimed", wifi_policy_unclaimed},
+        {"wifi-policy-member", wifi_policy_member},
+        {"wifi-policy-already-off", wifi_policy_already_off},
+        {"wifi-policy-max-modem", wifi_policy_max_modem},
+        {"wifi-policy-matter-fails", wifi_policy_matter_fails},
+        {"wifi-policy-read-fails", wifi_policy_read_fails},
+        {"wifi-policy-set-fails", wifi_policy_set_fails},
+        {"wifi-policy-verify-fails", wifi_policy_verify_fails},
+        {"wifi-policy-stays-on", wifi_policy_stays_on},
     });
 }

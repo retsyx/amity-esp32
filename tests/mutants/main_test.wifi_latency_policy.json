@@ -1,0 +1,141 @@
+{
+  "ctest": "^main_(production_)?test\\.wifi-",
+  "baseline": {
+    "ctest": "^wifi_latency_policy_test\\.py$"
+  },
+  "mutants": [
+    {
+      "id": "stub-configure_wifi_latency_policy-fail",
+      "check": "stub: early return from configure_wifi_latency_policy()",
+      "file": "main/main.cpp",
+      "find": "esp_err_t configure_wifi_latency_policy(){",
+      "replace": "esp_err_t configure_wifi_latency_policy(){ return ESP_ERR_INVALID_STATE;"
+    },
+    {
+      "id": "wifi-without-first-read",
+      "check": "the previous mode is read",
+      "file": "main/main.cpp",
+      "find": "auto error=esp_wifi_get_ps(&previous);if(error!=ESP_OK)return error;",
+      "replace": "previous=WIFI_PS_NONE;auto error=ESP_OK;"
+    },
+    {
+      "id": "wifi-without-set",
+      "check": "power save is turned off",
+      "file": "main/main.cpp",
+      "find": "error=esp_wifi_set_ps(WIFI_PS_NONE);if(error!=ESP_OK)return error;",
+      "replace": ""
+    },
+    {
+      "id": "wifi-without-verification",
+      "check": "the mode is read back",
+      "file": "main/main.cpp",
+      "find": "error=esp_wifi_get_ps(&current);if(error!=ESP_OK)return error;",
+      "replace": "current=WIFI_PS_NONE;"
+    },
+    {
+      "id": "wifi-minimum-power-save",
+      "check": "power save is turned off, not reduced",
+      "file": "main/main.cpp",
+      "find": "error=esp_wifi_set_ps(WIFI_PS_NONE);",
+      "replace": "error=esp_wifi_set_ps(WIFI_PS_MIN_MODEM);"
+    },
+    {
+      "id": "wifi-ignores-read-error",
+      "check": "a failed read stops the boot",
+      "file": "main/main.cpp",
+      "find": "auto error=esp_wifi_get_ps(&previous);if(error!=ESP_OK)return error;",
+      "replace": "auto error=esp_wifi_get_ps(&previous);"
+    },
+    {
+      "id": "wifi-ignores-set-error",
+      "check": "a failed setting stops the boot",
+      "file": "main/main.cpp",
+      "find": "error=esp_wifi_set_ps(WIFI_PS_NONE);if(error!=ESP_OK)return error;",
+      "replace": "error=esp_wifi_set_ps(WIFI_PS_NONE);"
+    },
+    {
+      "id": "wifi-ignores-verification-error",
+      "check": "a failed read-back stops the boot",
+      "file": "main/main.cpp",
+      "find": "error=esp_wifi_get_ps(&current);if(error!=ESP_OK)return error;",
+      "replace": "error=esp_wifi_get_ps(&current);"
+    },
+    {
+      "id": "wifi-accepts-power-save",
+      "check": "power save that stays on stops the boot",
+      "file": "main/main.cpp",
+      "find": "return current==WIFI_PS_NONE?ESP_OK:ESP_ERR_INVALID_STATE;",
+      "replace": "return ESP_OK;"
+    },
+    {
+      "id": "wifi-log-swapped",
+      "check": "the log names the previous mode, then the current one",
+      "file": "main/main.cpp",
+      "find": "static_cast<int>(previous),static_cast<int>(current));",
+      "replace": "static_cast<int>(current),static_cast<int>(previous));"
+    },
+    {
+      "id": "wifi-log-before-verification",
+      "check": "the modes are logged after the read-back",
+      "file": "main/main.cpp",
+      "find": "wifi_ps_type_t previous,current;\n    auto error=esp_wifi_get_ps(&previous);if(error!=ESP_OK)return error;\n    error=esp_wifi_set_ps(WIFI_PS_NONE);if(error!=ESP_OK)return error;\n    error=esp_wifi_get_ps(&current);if(error!=ESP_OK)return error;\n    ESP_LOGI(\"amity\",\"Wi-Fi power save: previous=%d current=%d\",static_cast<int>(previous),static_cast<int>(current));",
+      "replace": "wifi_ps_type_t previous,current=WIFI_PS_NONE;\n    auto error=esp_wifi_get_ps(&previous);if(error!=ESP_OK)return error;\n    error=esp_wifi_set_ps(WIFI_PS_NONE);if(error!=ESP_OK)return error;\n    ESP_LOGI(\"amity\",\"Wi-Fi power save: previous=%d current=%d\",static_cast<int>(previous),static_cast<int>(current));\n    error=esp_wifi_get_ps(&current);if(error!=ESP_OK)return error;"
+    },
+    {
+      "id": "wifi-policy-before-matter",
+      "check": "the policy waits for Matter to initialize networking",
+      "file": "main/main.cpp",
+      "find": "    ESP_ERROR_CHECK(amity_matter_start(&callbacks));\n    ESP_ERROR_CHECK(configure_wifi_latency_policy());\n    amity::network_diagnostics::start();\n    const auto installed=hub.configuration_snapshot();\n    ESP_ERROR_CHECK(amity::consortium::runtime_set_hardware_profile(hub.supported_tentacles(),hub.configured_tentacles_mask()));\n    const auto group_start=amity::consortium::runtime_start(consortium_id,octopus_id,*boot,installed?installed->configuration.config_revision:1);",
+      "replace": "ESP_ERROR_CHECK(configure_wifi_latency_policy());\n    ESP_ERROR_CHECK(amity_matter_start(&callbacks));\n    amity::network_diagnostics::start();\n    const auto installed=hub.configuration_snapshot();\n    ESP_ERROR_CHECK(amity::consortium::runtime_set_hardware_profile(hub.supported_tentacles(),hub.configured_tentacles_mask()));\n    const auto group_start=amity::consortium::runtime_start(consortium_id,octopus_id,*boot,installed?installed->configuration.config_revision:1);"
+    },
+    {
+      "id": "wifi-policy-after-diagnostics",
+      "check": "the policy comes before network diagnostics",
+      "file": "main/main.cpp",
+      "find": "    ESP_ERROR_CHECK(amity_matter_start(&callbacks));\n    ESP_ERROR_CHECK(configure_wifi_latency_policy());\n    amity::network_diagnostics::start();\n    const auto installed=hub.configuration_snapshot();\n    ESP_ERROR_CHECK(amity::consortium::runtime_set_hardware_profile(hub.supported_tentacles(),hub.configured_tentacles_mask()));\n    const auto group_start=amity::consortium::runtime_start(consortium_id,octopus_id,*boot,installed?installed->configuration.config_revision:1);",
+      "replace": "ESP_ERROR_CHECK(amity_matter_start(&callbacks));\n    amity::network_diagnostics::start();\n    ESP_ERROR_CHECK(configure_wifi_latency_policy());\n    const auto installed=hub.configuration_snapshot();\n    ESP_ERROR_CHECK(amity::consortium::runtime_set_hardware_profile(hub.supported_tentacles(),hub.configured_tentacles_mask()));\n    const auto group_start=amity::consortium::runtime_start(consortium_id,octopus_id,*boot,installed?installed->configuration.config_revision:1);"
+    },
+    {
+      "id": "wifi-policy-unchecked",
+      "check": "a failed policy stops the boot",
+      "file": "main/main.cpp",
+      "find": "    ESP_ERROR_CHECK(configure_wifi_latency_policy());",
+      "replace": "(void)configure_wifi_latency_policy();"
+    },
+    {
+      "id": "wifi-policy-twice",
+      "check": "the policy applies once per boot",
+      "file": "main/main.cpp",
+      "find": "    ESP_ERROR_CHECK(configure_wifi_latency_policy());",
+      "replace": "ESP_ERROR_CHECK(configure_wifi_latency_policy());\n    ESP_ERROR_CHECK(configure_wifi_latency_policy());"
+    },
+    {
+      "id": "diagnostics-after-profile",
+      "check": "network diagnostics start before the hardware profile",
+      "file": "main/main.cpp",
+      "find": "    ESP_ERROR_CHECK(amity_matter_start(&callbacks));\n    ESP_ERROR_CHECK(configure_wifi_latency_policy());\n    amity::network_diagnostics::start();\n    const auto installed=hub.configuration_snapshot();\n    ESP_ERROR_CHECK(amity::consortium::runtime_set_hardware_profile(hub.supported_tentacles(),hub.configured_tentacles_mask()));\n    const auto group_start=amity::consortium::runtime_start(consortium_id,octopus_id,*boot,installed?installed->configuration.config_revision:1);",
+      "replace": "ESP_ERROR_CHECK(amity_matter_start(&callbacks));\n    ESP_ERROR_CHECK(configure_wifi_latency_policy());\n    const auto installed=hub.configuration_snapshot();\n    ESP_ERROR_CHECK(amity::consortium::runtime_set_hardware_profile(hub.supported_tentacles(),hub.configured_tentacles_mask()));\n    amity::network_diagnostics::start();\n    const auto group_start=amity::consortium::runtime_start(consortium_id,octopus_id,*boot,installed?installed->configuration.config_revision:1);"
+    },
+    {
+      "id": "profile-after-transport",
+      "check": "the hardware profile is set before the transport starts",
+      "file": "main/main.cpp",
+      "find": "    ESP_ERROR_CHECK(amity_matter_start(&callbacks));\n    ESP_ERROR_CHECK(configure_wifi_latency_policy());\n    amity::network_diagnostics::start();\n    const auto installed=hub.configuration_snapshot();\n    ESP_ERROR_CHECK(amity::consortium::runtime_set_hardware_profile(hub.supported_tentacles(),hub.configured_tentacles_mask()));\n    const auto group_start=amity::consortium::runtime_start(consortium_id,octopus_id,*boot,installed?installed->configuration.config_revision:1);",
+      "replace": "ESP_ERROR_CHECK(amity_matter_start(&callbacks));\n    ESP_ERROR_CHECK(configure_wifi_latency_policy());\n    amity::network_diagnostics::start();\n    const auto installed=hub.configuration_snapshot();\n    const auto group_start=amity::consortium::runtime_start(consortium_id,octopus_id,*boot,installed?installed->configuration.config_revision:1);\n    ESP_ERROR_CHECK(amity::consortium::runtime_set_hardware_profile(hub.supported_tentacles(),hub.configured_tentacles_mask()));"
+    },
+    {
+      "id": "transport-revision-shifted",
+      "check": "the transport starts at the installed revision",
+      "file": "main/main.cpp",
+      "find": "installed?installed->configuration.config_revision:1);",
+      "replace": "installed?installed->configuration.config_revision+1:1);"
+    },
+    {
+      "id": "transport-default-revision",
+      "check": "without a saved configuration the transport starts at revision 1",
+      "file": "main/main.cpp",
+      "find": "installed?installed->configuration.config_revision:1);",
+      "replace": "installed?installed->configuration.config_revision:2);"
+    }
+  ]
+}
