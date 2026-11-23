@@ -44,6 +44,8 @@ int ble_hs_pvcy_remove_entry(uint8_t addr_type, const uint8_t *addr);
 #if !CONFIG_BT_NIMBLE_ENABLED || !CONFIG_BT_NIMBLE_ROLE_CENTRAL
 #error "BLE remote requires the ESP-IDF NimBLE central options"
 #endif
+static_assert(ble::not_connected == BLE_HS_ENOTCONN && ble::hci_error_base == BLE_HS_ERR_HCI_BASE,
+              "The pairing policy reads NimBLE host results");
 
 namespace {
 constexpr char kTag[] = "ble_remote";
@@ -57,6 +59,8 @@ struct Candidate {
     ble_addr_t address;
     int8_t rssi;
     bool hid, connectable, attempted;
+    // Attempts repeated after links that failed before security.
+    unsigned link_retries = 0;
     ble::SiriGeneration siri = ble::SiriGeneration::None;
     bool supported() const { return siri != ble::SiriGeneration::Unsupported &&
         (hid || siri == ble::SiriGeneration::Gen2 || siri == ble::SiriGeneration::Gen3); }
@@ -110,6 +114,9 @@ ble_addr_t unpair_target{};
 // A failed pairing or Unpair could not remove the remote's bond or saved peer.
 // The next Pair retries it first; `selected` names the identity when set.
 bool bond_cleanup_failed;
+// The error that ended the last connection attempt when its link failed
+// before it carried security, or zero.
+int link_failure;
 // Filled by full discovery and saved once the remote is ready.
 ble::GattLayout discovered_layout;
 // Link timing and signal strength for the link up/down log lines and status.
@@ -963,15 +970,20 @@ void finish_peer(int err, ble::SiriGeneration advertised) {
             // The link dropped after the connect callback, before security.
             // A saved peer can reconnect; an initial pairing needs an outcome.
             if (!have_saved && !state.last_error) state.last_error = BLE_HS_ENOTCONN;
+            link_failure = ble::pairing_link_failure(ble::PairingStage::Connected, state.last_error)
+                ? state.last_error : 0;
             state.connecting = false;
             return;
         }
         state.connecting = !err;
     }
+    auto stage = ble::PairingStage::Connecting;
     if (!err) log_link_up();
     if (!err) {
+        stage = ble::PairingStage::Securing;
         begin_procedure(Procedure::Security);
         err = wait_procedure(ble_gap_security_initiate(connection_handle), 30000);
+        if (!err) stage = ble::PairingStage::Secured;
     }
     ble::GattLayout restored;
     bool reused = false;
@@ -1031,6 +1043,7 @@ void finish_peer(int err, ble::SiriGeneration advertised) {
         Guard lock;
         state.connecting = false;
         state.last_error = pairing_stopped.load() ? 0 : err;
+        link_failure = ble::pairing_link_failure(stage, err) ? state.last_error : 0;
         if (err) count_reconnect_failure();
         else reconnect_failures = 0;
         next_reconnect = esp_timer_get_time() + reconnect_backoff_us();
@@ -1045,10 +1058,11 @@ void finish_peer(int err, ble::SiriGeneration advertised) {
     ble_gap_terminate(handle, BLE_ERR_REM_USER_CONN_TERM);
 }
 
-void open_peer(const ble_addr_t &address) {
+void open_peer(const ble_addr_t &address, int32_t connect_ms = ble::pairing_connect_ms) {
     ble::SiriGeneration advertised = ble::SiriGeneration::None;
     {
         Guard lock;
+        link_failure = 0;
         if (setup_cancelled.load()||radio_paused.load()||state.unpairing) return;
         ble_gap_disc_cancel();
         pending_scan_seconds = 0;
@@ -1071,8 +1085,8 @@ void open_peer(const ble_addr_t &address) {
     int err = ble_hs_id_copy_addr(BLE_ADDR_PUBLIC, public_address, nullptr);
     if (!err) {
         void *token = begin_procedure(Procedure::Connect);
-        err = wait_procedure(ble_gap_connect(BLE_OWN_ADDR_PUBLIC, &address, 10000, nullptr,
-                                            on_gap_event, token), 12000);
+        err = wait_procedure(ble_gap_connect(BLE_OWN_ADDR_PUBLIC, &address, connect_ms, nullptr,
+                                            on_gap_event, token), static_cast<uint32_t>(connect_ms) + 2000);
     }
     finish_peer(err, advertised);
 }
@@ -1220,6 +1234,7 @@ void worker(void *) {
         ble_addr_t automatic_peer{};
         bool pair_now = false, resume_search = false, stop_search = false;
         uint32_t remaining_seconds = 0;
+        int32_t connect_ms = 0;
         {
             Guard lock;
             if (state.pairing && !state.connecting) {
@@ -1238,8 +1253,15 @@ void worker(void *) {
                     });
                     if (found != candidates.end()) {
                         found->attempted = true;
+                        // A retry too close to the end of the search is not started.
+                        connect_ms = ble::pairing_attempt_ms(found->link_retries, remaining / 1000);
+                    }
+                    if (connect_ms) {
                         automatic_peer = found->address;
                         pair_now = true;
+                        if (found->link_retries)
+                            ESP_LOGI(kTag, "Retrying the remote after its link failed before security, attempt %u",
+                                     found->link_retries + 1);
                     } else if (!state.scanning) {
                         resume_search = true;
                         remaining_seconds = static_cast<uint32_t>((remaining + 999999) / 1000000);
@@ -1250,9 +1272,19 @@ void worker(void *) {
         if (stop_search) ble_gap_disc_cancel();
         if (resume_search) start_scan(remaining_seconds, false);
         if (pair_now) {
-            open_peer(automatic_peer);
+            open_peer(automatic_peer, connect_ms);
             Guard lock;
             if (state.bonded) state.pairing = false;
+            // A link that failed before it carried security says nothing about
+            // whether the remote accepts a bond: try it again on the next turn.
+            auto tried = std::find_if(candidates.begin(), candidates.end(), [&](const Candidate &c) {
+                return same_address(c.address, automatic_peer);
+            });
+            if (!state.bonded && tried != candidates.end() &&
+                ble::retry_pairing_link(link_failure != 0, tried->link_retries, bond_cleanup_failed)) {
+                ++tried->link_retries;
+                tried->attempted = false;
+            }
         }
         int reconnect_result = 0;
         bool reconnect_complete = false;

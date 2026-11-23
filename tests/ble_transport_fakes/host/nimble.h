@@ -33,6 +33,9 @@
 #define BLE_HS_ATT_ERR(code) (BLE_HS_ERR_ATT_BASE + (code))
 #define BLE_HS_ERR_HCI_BASE 0x200
 #define BLE_HS_HCI_ERR(code) (BLE_HS_ERR_HCI_BASE + (code))
+#define BLE_HS_ERR_SM_PEER_BASE 0x500
+#define BLE_HS_SM_PEER_ERR(code) (BLE_HS_ERR_SM_PEER_BASE + (code))
+#define BLE_SM_ERR_PAIR_NOT_SUPP 5
 #define BLE_ADDR_PUBLIC 0
 #define BLE_OWN_ADDR_PUBLIC 0
 #define BLE_ERR_AUTH_FAIL 5

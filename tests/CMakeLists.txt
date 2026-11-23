@@ -293,7 +293,11 @@ if(AMITY_HOST_TESTS MATCHES "^(all|standalone)$")
         SCENARIOS unpair-privacy unpair-privacy-cancel unpair-privacy-error unpair-privacy-connected
             pairing-cleanup-privacy pairing-cleanup-privacy-error pairing-disconnected-privacy
             pairing-disconnected-before-security pairing-resolved-identity-error pairing-resolved-random-error
-            pairing-cleanup-retry absence success unpair unpair-delete-error unpair-storage-error
+            pairing-cleanup-retry pairing-retry-establishment pairing-retry-supervision pairing-retry-unencrypted
+            pairing-retry-exhausted pairing-retry-refusal pairing-retry-deadline pairing-retry-search-end
+            pairing-retry-late-remote pairing-retry-connect-timeout pairing-retry-setup-failure
+            pairing-retry-cleanup-failure
+            absence success unpair unpair-delete-error unpair-storage-error
             unpair-before-completion unpair-pairing unpair-cancel-error connect-error async-error
             discovery-error disconnect-before-setup unreported-link-lost reconnect-backoff host-reset pairing
             stop-pairing-search stop-pairing-connect stop-pairing-security saved-layout disconnect-held-key
