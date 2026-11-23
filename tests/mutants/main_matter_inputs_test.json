@@ -1,0 +1,148 @@
+{
+  "ctest": "^main_matter_inputs_test\\.",
+  "baseline": {
+    "ctest": "^matter_input_names_test\\.py$"
+  },
+  "mutants": [
+    {
+      "id": "stub-matter_inputs-empty",
+      "check": "stub: early return from matter_inputs()",
+      "file": "main/main.cpp",
+      "find": "size_t matter_inputs(amity_matter_input_t *inputs,size_t capacity,void *) {",
+      "replace": "size_t matter_inputs(amity_matter_input_t *inputs,size_t capacity,void *) { return {};"
+    },
+    {
+      "id": "stub-publish_matter_state-return",
+      "check": "stub: early return from publish_matter_state()",
+      "file": "main/main.cpp",
+      "find": "void publish_matter_state(const amity::Snapshot &s) {",
+      "replace": "void publish_matter_state(const amity::Snapshot &s) { return;"
+    },
+    {
+      "id": "stub-external_inputs-empty",
+      "check": "stub: early return from external_inputs()",
+      "file": "components/config_store/system_configuration.cpp",
+      "find": "std::vector<ExternalInput> external_inputs(const Configuration& c) {",
+      "replace": "std::vector<ExternalInput> external_inputs(const Configuration& c) { return {};"
+    },
+    {
+      "id": "inputs-without-configuration",
+      "check": "no inputs before a configuration is saved",
+      "file": "main/main.cpp",
+      "find": "if(config)for(const auto &input:config_store::external_inputs(*config)){",
+      "replace": "if(true)for(const auto &input:config_store::external_inputs(*config)){"
+    },
+    {
+      "id": "inputs-shows-hidden",
+      "check": "hidden slots are not inputs",
+      "file": "main/main.cpp",
+      "find": "if(input.hidden)continue;",
+      "replace": ""
+    },
+    {
+      "id": "inputs-capacity-overrun",
+      "check": "Matter gets at most the inputs it has room for",
+      "file": "main/main.cpp",
+      "find": "if(count==capacity)break;",
+      "replace": "if(count>capacity)break;"
+    },
+    {
+      "id": "inputs-index-not-slot",
+      "check": "an input's index is its slot",
+      "file": "main/main.cpp",
+      "find": "inputs[count].index=static_cast<uint8_t>(input.slot);",
+      "replace": "inputs[count].index=static_cast<uint8_t>(count);"
+    },
+    {
+      "id": "inputs-name-short",
+      "check": "names fill Matter's buffer",
+      "file": "main/main.cpp",
+      "find": "snprintf(inputs[count].name,sizeof(inputs[count].name),\"%s\",input.name.c_str());",
+      "replace": "snprintf(inputs[count].name,sizeof(inputs[count].name)-1,\"%s\",input.name.c_str());"
+    },
+    {
+      "id": "publish-while-disabled",
+      "check": "nothing is published while the original's interfaces are off",
+      "file": "main/main.cpp",
+      "find": "void publish_matter_state(const amity::Snapshot &s) {\n    if(!original_interfaces_enabled.load())return;",
+      "replace": "void publish_matter_state(const amity::Snapshot &s) {"
+    },
+    {
+      "id": "publish-power-first-activity",
+      "check": "the first activity playing is power on",
+      "file": "main/main.cpp",
+      "find": "state.power=s.current_activity>=0;",
+      "replace": "state.power=s.current_activity>0;"
+    },
+    {
+      "id": "publish-current-input",
+      "check": "the current input is the slot of the playing activity",
+      "file": "main/main.cpp",
+      "find": "state.current_input=input.value_or(0);",
+      "replace": "state.current_input=input.value_or(0)>0?1:0;"
+    },
+    {
+      "id": "publish-mute-dropped",
+      "check": "the observed mute is published",
+      "file": "main/main.cpp",
+      "find": "state.mute_known=s.audio_status_known;state.muted=s.muted;",
+      "replace": "state.mute_known=s.audio_status_known;state.muted=false;"
+    },
+    {
+      "id": "publish-volume-range",
+      "check": "a CEC volume above 100 is unknown",
+      "file": "main/main.cpp",
+      "find": "state.volume_known=s.audio_status_known&&s.volume<=100;",
+      "replace": "state.volume_known=s.audio_status_known&&s.volume<=127;"
+    },
+    {
+      "id": "publish-volume-scale",
+      "check": "the CEC volume is rounded to Matter's scale",
+      "file": "main/main.cpp",
+      "find": "(s.volume*254+50)/100",
+      "replace": "(s.volume*254)/100"
+    },
+    {
+      "id": "publish-config-revision",
+      "check": "the applied configuration revision is published",
+      "file": "main/main.cpp",
+      "find": "state.config_revision=s.applied_config_revision;",
+      "replace": "state.config_revision=s.applied_presentation_revision;"
+    },
+    {
+      "id": "publish-presentation-revision",
+      "check": "the applied presentation revision is published",
+      "file": "main/main.cpp",
+      "find": "state.presentation_revision=s.applied_presentation_revision;",
+      "replace": "state.presentation_revision=s.applied_config_revision;"
+    },
+    {
+      "id": "external-shows-tombstones",
+      "check": "a tombstone is not an input",
+      "file": "components/config_store/system_configuration.cpp",
+      "find": "if (s.tombstone) continue;",
+      "replace": ""
+    },
+    {
+      "id": "external-ignores-alias",
+      "check": "a slot's alias names its input",
+      "file": "components/config_store/system_configuration.cpp",
+      "find": "s.alias.empty() ? a->label : s.alias",
+      "replace": "a->label"
+    },
+    {
+      "id": "external-drops-hidden",
+      "check": "hidden slots stay hidden",
+      "file": "components/config_store/system_configuration.cpp",
+      "find": "s.alias.empty() ? a->label : s.alias, s.hidden});",
+      "replace": "s.alias.empty() ? a->label : s.alias, false});"
+    },
+    {
+      "id": "external-unsorted",
+      "check": "inputs are in slot order",
+      "file": "components/config_store/system_configuration.cpp",
+      "find": "std::sort(result.begin(), result.end(), [](const auto& x, const auto& y) { return x.slot < y.slot; });",
+      "replace": ""
+    }
+  ]
+}

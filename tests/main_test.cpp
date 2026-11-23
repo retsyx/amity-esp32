@@ -695,8 +695,9 @@ void check_boot() {
           *registered.hostname.target<esp_err_t (*)(const std::string &, const std::string &)>() == rename_hostname);
     CHECK(registered.lifecycle.retire.target<esp_err_t (*)()>() &&
           *registered.lifecycle.retire.target<esp_err_t (*)()>() == retire_original_interfaces);
-    CHECK(registered.setup == setup_button && registered.wifi_events && registered.on_change &&
-          registered.matter.inputs == matter_inputs);
+    CHECK(registered.setup == setup_button && registered.wifi_events && registered.matter.inputs == matter_inputs);
+    CHECK(registered.on_change.target<void (*)(const amity::Snapshot &)>() &&
+          *registered.on_change.target<void (*)(const amity::Snapshot &)>() == publish_matter_state);
     CHECK(tasks_named("firmware_update").size() == 1 && tasks_named("remote_battery").size() == 1);
     const auto firmware = tasks_named("firmware_update").front();
     CHECK(firmware.with_caps && firmware.stack_bytes == 12288 && firmware.caps == (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));

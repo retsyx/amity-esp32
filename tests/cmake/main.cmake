@@ -5,23 +5,23 @@
 # License, or (at your option) any later version.
 
 # Firmware startup and the main task: main/main.cpp.
-if(AMITY_TEST_TIER STREQUAL standalone)
-    set(main_includes "${T}/core_fakes" "${T}/main_fakes" "${T}/web_request_fakes" "${T}" "${ROOT}/main"
-        "${C}/amity_hub/include" "${C}/amity_matter/include" "${C}/amity_homekit/include" "${C}/ble_remote/include"
-        "${C}/config_store/include" "${C}/consortium/include" "${C}/amity_system/include" "${C}/system_sync/include"
-        "${C}/radio_control/include" "${C}/device_settings/include" "${C}/system_services/include"
-        "${C}/network_diagnostics/include" "${C}/web_admin/include" "${C}/cec/include")
+
+# What every main.cpp test builds with, defined in the first tier read.
+set(main_includes "${T}/core_fakes" "${T}/main_fakes" "${T}/web_request_fakes" "${T}" "${ROOT}/main"
+    "${C}/amity_hub/include" "${C}/amity_matter/include" "${C}/amity_homekit/include" "${C}/ble_remote/include"
+    "${C}/config_store/include" "${C}/consortium/include" "${C}/amity_system/include" "${C}/system_sync/include"
+    "${C}/radio_control/include" "${C}/device_settings/include" "${C}/system_services/include"
+    "${C}/network_diagnostics/include" "${C}/web_admin/include" "${C}/cec/include")
+if(NOT TARGET main_host_sources)
     # Strict seams for the SDK calls of tests/main_fakes and for the firmware
     # files main.cpp calls that tests/component_seams does not cover.
-    set(main_seams)
     foreach(file sdk web_admin system_sync config_store json_memory system_configuration)
         add_library(main_${file}_seams OBJECT "${T}/main_fakes/${file}_seams.cpp")
         target_include_directories(main_${file}_seams PRIVATE ${main_includes} "${T}/fakes")
         target_compile_options(main_${file}_seams PRIVATE ${amity_seam_warnings})
         target_link_libraries(main_${file}_seams PRIVATE strict)
-        list(APPEND main_seams main_${file}_seams)
     endforeach()
-    # main.cpp builds on its own, and inside main_test, which includes it. The
+    # main.cpp builds on its own, and inside each test, which includes it. The
     # firmware files it reaches that build on the host are linked: the hub
     # facade, the configuration journal and the remote input decoders.
     amity_host_compile(main_source SOURCES "${ROOT}/main/main.cpp" INCLUDES ${main_includes})
@@ -30,11 +30,15 @@ if(AMITY_TEST_TIER STREQUAL standalone)
             "${C}/config_store/configuration_journal.cpp" "${C}/ble_remote/remote_input.cpp"
             "${C}/ble_remote/atomic_remote.cpp" "${C}/ble_remote/siri_remote.cpp"
         INCLUDES ${main_includes})
-    set(main_libs main_host_sources ${main_seams} consortium_runtime_seams system_services_seams
-        adapter_settings_seams member_removal_seams firmware_update_seams group_firmware_update_seams
-        peer_firmware_update_seams device_settings_seams factory_reset_seams reset_button_seams
-        network_diagnostics_seams wifi_signal_seams system_identity_seams hub_service_seams amity_matter_seams
-        homekit_seams ble_remote_seams radio_seams core_fakes amity_model)
+endif()
+# Without the configuration codec, system_configuration.cpp, which needs cJSON.
+set(main_libs main_host_sources main_sdk_seams main_web_admin_seams main_system_sync_seams main_config_store_seams
+    main_json_memory_seams consortium_runtime_seams system_services_seams adapter_settings_seams member_removal_seams
+    firmware_update_seams group_firmware_update_seams peer_firmware_update_seams device_settings_seams
+    factory_reset_seams reset_button_seams network_diagnostics_seams wifi_signal_seams system_identity_seams
+    hub_service_seams amity_matter_seams homekit_seams ble_remote_seams radio_seams core_fakes amity_model)
+
+if(AMITY_TEST_TIER STREQUAL standalone)
     set(main_scenarios
         boot-unclaimed boot-member boot-original boot-original-unnamed-responder boot-original-without-consortium
         boot-original-unreadable boot-original-without-authority
@@ -61,7 +65,7 @@ if(AMITY_TEST_TIER STREQUAL standalone)
     amity_test(main_test
         SOURCES "${T}/main_test.cpp"
         INCLUDES ${main_includes}
-        LIBS ${main_libs}
+        LIBS ${main_libs} main_system_configuration_seams
         PTHREAD
         REGISTRY
         SCENARIOS ${main_scenarios})
@@ -69,7 +73,7 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         SOURCES "${T}/main_test.cpp"
         INCLUDES ${main_includes}
         DEFINES CONFIG_SPIRAM_USE_MALLOC=1 CONFIG_AMITY_PRODUCTION_UPDATES=1
-        LIBS ${main_libs}
+        LIBS ${main_libs} main_system_configuration_seams
         PTHREAD
         REGISTRY
         SCENARIOS ${main_scenarios})
@@ -86,4 +90,14 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         LIBS amity_model
         REGISTRY
         SCENARIOS queue-owner-handoff owner-repeats-unlogged)
+elseif(AMITY_TEST_TIER STREQUAL sdk)
+    # The Matter inputs and state from saved configurations, with the real
+    # configuration codec.
+    amity_test(main_matter_inputs_test
+        SOURCES "${T}/main_matter_inputs_test.cpp" "${C}/config_store/system_configuration.cpp"
+        INCLUDES ${main_includes} "${json}"
+        LIBS ${main_libs} cjson OpenSSL::Crypto
+        REGISTRY
+        SCENARIOS inputs-follow-saves inputs-playback inputs-tombstone inputs-capacity inputs-slot-order
+            inputs-unconfigured state-audio state-while-disabled)
 endif()
