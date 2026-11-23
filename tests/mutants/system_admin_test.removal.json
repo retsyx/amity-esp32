@@ -293,7 +293,8 @@
       "check": "completion waits for the owner to apply the saved revision",
       "file": "components/web_admin/system_admin.cpp",
       "find": "if(applied.applied_config_revision<operation.removal_revisions.config_revision||",
-      "replace": "if(false||"
+      "replace": "if(false||",
+      "survives": "SystemControl::execution_snapshot reports the applied revisions only as those of the published configuration or as zero, and valid revisions start at 1, so the presentation check alone decides whether a removal is applied"
     },
     {
       "id": "replacement-completes",

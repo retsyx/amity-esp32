@@ -433,12 +433,15 @@ void read_failure() {
     CHECK(!system.control.configuration_snapshot() && stages() == 0 && commits() == 0 && system.events.empty());
 }
 
-// Only the original main loads the active configuration: another controller's
-// record is refused and nothing is published.
+// Only the original main loads the active configuration: a record that names
+// another controller is refused, even on an Amity it lists, and nothing is
+// published.
 void foreign_controller() {
     System system;
-    system.save(direct_configuration());
-    system.control.set_identity(id<m::ConsortiumId>(1), id<m::OctopusId>(3));
+    auto config = direct_configuration();
+    config.octopuses.push_back({id<m::OctopusId>(9), 1});
+    system.save(config);
+    system.control.set_identity(id<m::ConsortiumId>(1), id<m::OctopusId>(9));
     amity_seam::clear_calls();
     CHECK(web_admin::load_configuration(system.control) == ESP_ERR_INVALID_STATE);
     CHECK(!system.control.configuration_snapshot() && stages() == 0 && system.events.empty());
@@ -1097,14 +1100,15 @@ void request_fields() {
     }
 }
 
-// The router owns exactly the administration paths; any other path is left
-// to the caller untouched.
+// The router owns exactly the administration paths; any other path, including
+// one that holds an administration prefix after its start, is left to the
+// caller untouched.
 void administrative_paths() {
     System system;
     for (const auto *path : {"/api/setup", "/api/login", "/api/logout", "/api/password", "/api/reboot",
                              "/api/factory-reset", "/api/firmware", "/api/remotes", "/api/remotes/pair", "/api/matter",
                              "/api/matter/open", "/api/homekit", "/api/logs", "/api/activities", "/api/systems",
-                             "/api/configuration", "/api/update", "/api/membership"}) {
+                             "/api/configuration", "/api/update", "/api/membership", "/api/remotes/api/membership/scan"}) {
         CHECK(!web_admin::administrative_path(path));
         const auto reply = send(HTTP_POST, path, "{}");
         CHECK(!reply.handled && !reply.response.head_sent && reply.unread());
