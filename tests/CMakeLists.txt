@@ -236,6 +236,13 @@ if(AMITY_HOST_TESTS MATCHES "^(all|standalone)$")
         SCENARIOS settings-commit ipc-full ipc-slots fifo-full-drop display-other-adapter source-other-adapter reaction-frame
             authority-loss authority-kept lookup-waiter-first lookup-step-first route-commit audio-key-released audio-key-held
             audio-key-held-deferred context-lookup-keys context-lookup-repair context-lookup-selection)
+    amity_test(main_reboot_member_test
+        SOURCES "${C}/amity_hub/hub.cpp" "${C}/amity_hub/hub_service.cpp" "${T}/main_reboot_member_test.cpp"
+        INCLUDES ${hub_includes}
+        LIBS amity_model
+        SCENARIOS one-adapter one-adapter-hold two-adapters unreferenced-adapter roster-only reselect-after-forced-standby
+            member-settings shared-after-forced-standby reboot-mid-recipe standby-after-reboot dropped-equipment outage-keeps-activity
+            release-before-adoption)
     amity_test(activity_sequence_test
         SOURCES "${C}/amity_hub/hub.cpp" "${C}/amity_hub/hub_service.cpp" "${C}/ble_remote/remote_input.cpp"
             "${C}/ble_remote/siri_remote.cpp" "${T}/activity_sequence_test.cpp"

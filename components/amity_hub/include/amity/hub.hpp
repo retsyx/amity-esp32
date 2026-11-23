@@ -179,6 +179,8 @@ public:
     bool standby(ActionReady ready = {});
     bool activity_pending() const { return activity_execution_.has_value(); }
     void cancel_activity(){activity_execution_.reset();next_owned_generation_.reset();}
+    // Nothing is current any more; the next selection starts from no activity.
+    void clear_selection(){if(selected_>=0){selected_=-1;++activity_generation_;}}
     Snapshot snapshot() const;
     bool update_snapshot(Snapshot&)const;
     struct AudioStatus {bool known,muted;uint8_t volume;};

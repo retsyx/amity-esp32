@@ -1036,9 +1036,7 @@ struct HubService::Impl : Adapter {
             if(command->discovery_sides||command->owned_waiting)command->action().auth.deadline_ms=0;
             deferred.push_back(std::move(command));return;
         }
-        if(command->kind==Kind::OwnedBind&&command->management().controller==owned_controller&&(owner_activity_pending()||owner_activity_commands.load())){
-            deferred.push_back(std::move(command));return;
-        }
+        if(command->kind==Kind::OwnedBind&&bind_waits(*command)){deferred.push_back(std::move(command));return;}
         const bool earlier_activity=std::any_of(deferred.begin(),deferred.end(),[](const auto& pending){return activity_request(*pending);});
         if(activity_request(*command)&&(earlier_activity||activity_hub.activity_pending()||
             ((command->kind==Kind::Select||command->kind==Kind::Standby)&&
@@ -1083,7 +1081,7 @@ struct HubService::Impl : Adapter {
                 auto* engine=adapter((*i)->received().received_adapter);
                 if(engine&&(engine->pending_scan_sides()&(*i)->discovery_sides)){++i;continue;}
             }else if((*i)->kind==Kind::OwnedBind){
-                if((*i)->management().controller==owned_controller&&(owner_activity_pending()||owner_activity_commands.load())){++i;continue;}
+                if(bind_waits(**i)){++i;continue;}
             }else if(activity){
                 if(((*i)->kind==Kind::Select||(*i)->kind==Kind::Standby)&&
                    step_pending&&!activity_hub.activity_pending()){++i;continue;}
@@ -1108,6 +1106,32 @@ struct HubService::Impl : Adapter {
         return changed;
     }
 
+    // The main this owner follows restarted: same controller, another boot.
+    bool controller_restarted(const ManagementCommand& bind)const{
+        return bind.controller==owned_controller&&accepted_controller_boot&&bind.controller_boot!=accepted_controller_boot;
+    }
+    // A bind waits behind admitted activity work. A restarted main also ends
+    // the current activity, so, like a selection, its bind waits until the old
+    // activity's key releases have resolved their recipients.
+    bool bind_waits(const Command& command)const{
+        const auto& bind=command.management();
+        if(bind.controller!=owned_controller)return false;
+        return owner_activity_pending()||owner_activity_commands.load()||(controller_restarted(bind)&&key_cleanup_roles);
+    }
+    // A main always boots with no current activity: nothing restores a
+    // selection across its reboot. Adopt that on every configured adapter and
+    // in this owner's recipe baseline once the new boot is observed. No frame
+    // is sent; device caches, discovery and connections are untouched.
+    void adopt_no_activity(){
+        OWNER_DEBUG_ASSERT(!activity_hub.activity_pending()&&"The bind waits for admitted owner activity");
+        ESP_LOGI(TAG,"Main boot changed; no activity is current boot=%s",accepted_controller_boot.str().c_str());
+        system::OwnedIntent none;none.kind=system::OwnedIntentKind::context;none.generation=1;none.config_revision=owned_config_revision;
+        none.target.port={consortium,octopus,0,system::Side::front};
+        owner_context=none;activity_hub.clear_selection();
+        for(uint8_t id=0;id<amity::max_tentacles;++id)if(connector_configured(id))if(auto* engine=adapter(id)){
+            none.target.port.tentacle_id=id;engine->hub.execute_owned(none);
+        }
+    }
     static bool same_selection(const system::OwnedIntent& a,const system::OwnedIntent& b){
         return a.selected==b.selected&&a.reselect==b.reselect&&a.source==b.source&&a.audio==b.audio&&a.display==b.display&&
             a.switch_device==b.switch_device&&a.input==b.input;
@@ -1386,10 +1410,15 @@ struct HubService::Impl : Adapter {
             finish(command.reply,published?system::AdmissionResult{system::AdmissionCode::accepted,{}}:
                 system::AdmissionResult{system::AdmissionCode::overloaded,"Current equipment context could not enter the owner transport"});
             return true;}
-        case K::OwnedBind:
+        case K::OwnedBind:{
+            const bool restarted=controller_restarted(command.management());
             if(owned_controller!=command.management().controller)for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=adapter(id)){engine->owned_wire_generation.fetch_add(1);engine->stop_holds();engine->received_generation=0;}
             refresh_configuration_revision(command.management().controller,command.management().config_revision);execution_enabled=true;
-            finish(command.reply,{system::AdmissionCode::accepted,{}});return true;
+            // The bind names the main's authenticated boot. A restarted main
+            // has nothing selected.
+            observe_controller_boot(command.management().controller_boot);
+            if(restarted)adopt_no_activity();
+            finish(command.reply,{system::AdmissionCode::accepted,{}});return true;}
         case K::OwnedFence:
             if(!command.management().controller||command.management().controller==owned_controller)for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=adapter(id))if(!command.management().link||command.management().link==engine->received_link){engine->stop_holds();}
             finish(command.reply,{system::AdmissionCode::accepted,{}});return true;

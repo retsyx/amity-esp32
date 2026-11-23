@@ -533,6 +533,8 @@ static void retired_owner_does_not_resume_admitted_activity(){
     auto intent=owners.latest_selection();assert(!owners.send(intent));owners.pump(4);
     assert(owners.count(4,8,{0x44,0x6d})==0&&!owners.owner.activity_setup_in_progress());
 }
+// An intent from a new controller boot that arrives before any bind naming
+// that boot still cancels the old boot's work.
 static void new_controller_boot_cancels_old_activity_and_restarts_generation(){
     RecoveryOwners owners;fixture_tick=0;fixture_async_autocomplete=false;
     assert(owners.main.request_activity(1)==ESP_OK);owners.pump(4);
@@ -553,4 +555,38 @@ static void new_controller_boot_cancels_old_activity_and_restarts_generation(){
     assert(owners.owner.submit_owned(old,old_auth).code==m::AdmissionCode::unauthorized);
     owners.pump(4);assert(fixture_sent.size()==sent);
 }
-int main(){transport_admitted_selection_recovers_its_physical_recipe();owner_admitted_selection_survives_recovery(false);owner_admitted_selection_survives_recovery(true);same_target_selection_is_fresh_but_recovery_is_not();reselected_target_still_transitions_an_owner_that_missed_it();recovery_of_newer_queued_selection_preserves_order();conflicting_duplicate_and_stale_repair_are_rejected();standby_recovery_does_not_repeat_one_shot_repairs();new_controller_boot_cancels_old_activity_and_restarts_generation();never_admitted_selection_delivery();never_admitted_selection_is_not_current();never_admitted_selection_idle_progress();saved_edits_preserve_current();owner_revision_preserves_admitted_press_and_hold();scoped_save_preserves_admitted_frames_and_timed_release();retired_owner_does_not_resume_admitted_activity();std::puts("PASS scoped edits preserve current activity and holds; recovery delivers lost selections once and preserves admitted local progress; duplicate recovery is nonemitting; same-target and Standby decisions remain fresh; repairs stay one-shot");}
+// The main restarts while this owner runs its admitted part of New. The new
+// session's bind names the new main boot and waits for that recipe; then
+// nothing from the old boot is current here, and the new boot's first
+// selection is accepted although its generation restarts lower.
+static void new_controller_boot_bind_adopts_no_activity_and_restarts_generation(){
+    RecoveryOwners owners;fixture_tick=0;fixture_async_autocomplete=false;
+    assert(owners.main.request_activity(1)==ESP_OK);owners.pump(4);
+    assert(owners.pending(4,0x36)==1&&owners.count(4,8,{0x44,0x6d})==0);
+    const auto old=owners.latest_selection();assert(old.generation>2);
+    latest_task=owners.owner_task;assert(owners.owner.fence_owned(owners.controller,owners.current_link));
+    owners.current_controller_boot=id<m::BootId>('9');owners.current_link=id<m::LinkId>('8');
+    fixture_delay=[]{fixture_complete_next(cec::TxResult::Success);};
+    assert(owners.owner.bind_owned_controller(owners.controller,owners.revision,owners.current_controller_boot)==ESP_OK);
+    fixture_delay={};fixture_async_autocomplete=true;fixture_tick=100000;
+    for(unsigned pass=0;pass<8;++pass)run_idle(1);
+    assert(owners.count(4,4,{0x36})==1&&owners.count(4,8,{0x44,0x6d})==1&&owners.count(4,15,{0x86,0x20,0})==1);
+    assert(!owners.owner.activity_setup_in_progress()&&owners.owner.snapshot().current_activity==-1);
+    // Rebinding the same boot (a revision advance or session restart) is a no-op.
+    const auto bound=fixture_sent.size();const auto receipt=owners.owner.activity_selection(),epoch=owners.owner.input_epoch();
+    assert(owners.owner.bind_owned_controller(owners.controller,owners.revision,owners.current_controller_boot)==ESP_OK);run_idle(4);
+    assert(fixture_sent.size()==bound&&owners.owner.activity_selection()==receipt&&owners.owner.input_epoch()==epoch);
+    // Nothing is current: the selected Next announcing itself is no longer
+    // the current source; the no-activity policy broadcasts Standby.
+    fixture_incoming.push_back({4,{{0x8f,0x82,0x20,0x00},4}});for(unsigned pass=0;pass<8;++pass)run_idle(1);
+    assert(owners.count(3,15,{0x36})==1&&owners.count(4,15,{0x36})==1&&owners.count(4,15,{0x86,0x20,0})==1);
+    m::OwnedAuthorization old_auth{owners.controller,owners.controller_boot,owners.member_boot,owners.current_link,owners.revision,0};
+    assert(owners.owner.submit_owned(old,old_auth).code==m::AdmissionCode::unauthorized);
+    // The new boot's first selection restarts the generation below the old one.
+    auto fresh=old;fresh.generation=2;
+    assert(owners.send(fresh)&&owners.last_admission==m::AdmissionCode::accepted);
+    for(unsigned pass=0;pass<32&&(owners.owner.activity_setup_in_progress()||!fixture_pending.empty());++pass)run_idle(1);
+    assert(owners.owner.snapshot().current_activity>=0&&owners.count(4,8,{0x44,0x6d})==2&&owners.count(4,15,{0x86,0x20,0})==2);
+    assert(owners.count(4,4,{0x36})==1&&"The forgotten activity's devices get no Standby");
+}
+int main(){transport_admitted_selection_recovers_its_physical_recipe();owner_admitted_selection_survives_recovery(false);owner_admitted_selection_survives_recovery(true);same_target_selection_is_fresh_but_recovery_is_not();reselected_target_still_transitions_an_owner_that_missed_it();recovery_of_newer_queued_selection_preserves_order();conflicting_duplicate_and_stale_repair_are_rejected();standby_recovery_does_not_repeat_one_shot_repairs();new_controller_boot_cancels_old_activity_and_restarts_generation();new_controller_boot_bind_adopts_no_activity_and_restarts_generation();never_admitted_selection_delivery();never_admitted_selection_is_not_current();never_admitted_selection_idle_progress();saved_edits_preserve_current();owner_revision_preserves_admitted_press_and_hold();scoped_save_preserves_admitted_frames_and_timed_release();retired_owner_does_not_resume_admitted_activity();std::puts("PASS scoped edits preserve current activity and holds; recovery delivers lost selections once and preserves admitted local progress; duplicate recovery is nonemitting; same-target and Standby decisions remain fresh; repairs stay one-shot");}
