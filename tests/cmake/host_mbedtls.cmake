@@ -29,17 +29,24 @@ foreach(name IN ITEMS bignum ecp)
     file(CONFIGURE OUTPUT "${shims}/mbedtls/${name}.h" CONTENT "#include \"mbedtls/private/${name}.h\"\n")
 endforeach()
 
+# library/ also holds a copy of the crypto library, but Mbed TLS refreshes that
+# copy only when it relinks libmbedtls.
 set(libraries)
-foreach(name IN ITEMS mbedtls mbedx509 tfpsacrypto)
-    set(${name} "${AMITY_HOST_MBEDTLS_BUILD}/library/${CMAKE_STATIC_LIBRARY_PREFIX}${name}")
+foreach(path IN ITEMS library/mbedtls library/mbedx509 tf-psa-crypto/core/tfpsacrypto)
+    get_filename_component(name "${path}" NAME)
+    get_filename_component(directory "${path}" DIRECTORY)
+    set(${name} "${AMITY_HOST_MBEDTLS_BUILD}/${directory}/${CMAKE_STATIC_LIBRARY_PREFIX}${name}")
     string(APPEND ${name} "${CMAKE_STATIC_LIBRARY_SUFFIX}")
     list(APPEND libraries "${${name}}")
 endforeach()
+# The sources are not downloaded, so only the library's own build notices
+# when they change; BUILD_ALWAYS runs it on every build.
 ExternalProject_Add(host_mbedtls
     SOURCE_DIR "${AMITY_HOST_MBEDTLS_SOURCE}"
     BINARY_DIR "${AMITY_HOST_MBEDTLS_BUILD}"
     CMAKE_ARGS "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}" -DCMAKE_BUILD_TYPE=Debug "-DCMAKE_C_FLAGS=-I${shims}"
         -DGEN_FILES=OFF -DENABLE_PROGRAMS=OFF -DENABLE_TESTING=OFF
+    BUILD_ALWAYS ON
     BUILD_BYPRODUCTS ${libraries}
     INSTALL_COMMAND "")
 
@@ -68,6 +75,9 @@ endfunction()
 
 unset(shims)
 unset(libraries)
+unset(path)
+unset(name)
+unset(directory)
 unset(mbedtls)
 unset(mbedx509)
 unset(tfpsacrypto)
