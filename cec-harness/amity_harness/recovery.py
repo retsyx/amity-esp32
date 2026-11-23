@@ -143,7 +143,18 @@ class LookupScans:
         return frames, check
 
     def _drain(self, through):
-        deadline = time.monotonic() + self.scan.dut._runtime.cec_timeout
+        """Require an empty receive poll begun at or after ``through`` on every witness wire.
+
+        Responders answer queued identity requests with synchronous wire
+        transmissions under the session lock. Until those answers are sent,
+        their wire cannot poll empty and other workers may be unable to
+        record empty polls. The CEC timeout therefore runs from the later of
+        this call and the latest physical transmission, within the operation
+        timeout.
+        """
+        runtime = self.scan.dut._runtime
+        started = time.monotonic_ns()
+        window, limit = int(runtime.cec_timeout * 1e9), started + int(runtime.timeout * 1e9)
         while True:
             self.session.assert_healthy()
             if self.session._stop.is_set():
@@ -151,7 +162,8 @@ class LookupScans:
             with self.session._lock:
                 if all(self.session._wire_idle_since_ns.get(c.gpio, 0) >= through for c in self.witnesses):
                     return
-            if time.monotonic() >= deadline:
+                answered = self.session._transmitted_ns
+            if time.monotonic_ns() >= min(limit, max(started, answered) + window):
                 raise TimeoutError("Lookup observation did not drain physical CEC receive coverage")
             with self._condition:
                 self._condition.wait(.02)

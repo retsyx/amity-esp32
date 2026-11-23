@@ -373,6 +373,10 @@ class CecSession:
         self._backends = {}
         self._threads = []
         self._wire_idle_since_ns = {}
+        # When the latest physical transmission returned. Transmissions hold
+        # the session lock, so no worker records an empty receive poll while
+        # one is in progress.
+        self._transmitted_ns = 0
         self._error = None
         self._started = False
         self._virtual_depth = 0
@@ -571,6 +575,8 @@ class CecSession:
                     except Exception as virtual_error:
                         raise wire_error from virtual_error
                 raise
+            finally:
+                self._transmitted_ns = time.monotonic_ns()
             self._record(component, "tx", frame, wire_timestamp_ns=result.timestamp_ns,
                          status=result.status, ok=result.ok)
             if frame.destination == 15:
