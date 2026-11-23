@@ -9,7 +9,7 @@ from pathlib import Path
 import os
 import subprocess
 import tempfile
-from slice_support import function
+from slice_support import block, function
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -25,9 +25,11 @@ functions='\n'.join([body(controller,'esp_err_t dispatch_key('), body(matter,'es
     'extern "C" void __wrap__ZN4chip3app11DnssdServer11StartServerEv(']])
 # The SDK calls the controller logic makes, compiled against the fakes below.
 port='\n'.join(body(matter,s) for s in [
-    'bool schedule(', 'void with_stack_lock(', 'bool fail_safe_disarmed(', 'bool has_fabric(', 'bool station_provisioned(',
-    'bool station_connected(', 'bool commit_wifi(', 'void stop_dns_sd(', 'void unregister_attribute_access(',
-    'void shutdown_server('])
+    'bool schedule(', 'void report(Attribute attribute)', 'void with_stack_lock(', 'bool fail_safe_disarmed(',
+    'bool has_fabric(', 'bool station_provisioned(', 'bool station_connected(', 'bool commit_wifi(', 'void stop_dns_sd(',
+    'void unregister_attribute_access(', 'void shutdown_server('])
+# The attributes the controller reports, as the controller declares them.
+attributes=block((ROOT/'components/amity_matter/controller.hpp').read_text(),'enum class Attribute')+';'
 # The member branch must occur before credentials, node and endpoint creation.
 s=(ROOT/matter).read_text();start=s[s.index('extern "C" esp_err_t amity_matter_start('):]
 assert start.index('if (!controller_enabled.load()) return start_actuator_substrate();')<start.index('amity_matter_prepare_credentials()')<start.index('node::create(')
@@ -55,6 +57,8 @@ source=r'''
 #include <algorithm>
 #include <map>
 #include <functional>
+#include <string>
+#include <tuple>
 #include <vector>
 using esp_err_t=int;
 constexpr int ESP_OK=0,ESP_FAIL=-1,ESP_ERR_INVALID_STATE=1,ESP_ERR_NO_MEM=2,ESP_ERR_TIMEOUT=3;
@@ -96,13 +100,40 @@ void Shutdown(){++shutdowns;udp=sessions=false;--memrefs;}};
 }
 namespace esp_matter::lock {struct ScopedChipStackLock{explicit ScopedChipStackLock(unsigned){} };}
 namespace amity_matter {int stops=0;void stop_apple_fabric_cleanup(){assert(stops==shutdowns);++stops;}}
+''' + attributes + r'''
+// Each reported attribute's endpoint, cluster and attribute, by the names the
+// CHIP glue uses.
+constexpr unsigned player_endpoint=1,speaker_endpoint=2;
+namespace OnOff {inline constexpr const char*Id="OnOff";namespace Attributes::OnOff {inline constexpr const char*Id="OnOff.OnOff";}}
+namespace LevelControl {inline constexpr const char*Id="LevelControl";
+namespace Attributes::CurrentLevel {inline constexpr const char*Id="LevelControl.CurrentLevel";}}
+namespace MediaInput {inline constexpr const char*Id="MediaInput";
+namespace Attributes::CurrentInput {inline constexpr const char*Id="MediaInput.CurrentInput";}
+namespace Attributes::InputList {inline constexpr const char*Id="MediaInput.InputList";}}
+namespace MediaPlayback {inline constexpr const char*Id="MediaPlayback";
+namespace Attributes::CurrentState {inline constexpr const char*Id="MediaPlayback.CurrentState";}}
+using Report=std::tuple<unsigned,std::string,std::string>;
+std::vector<Report> reported;
+void MatterReportingAttributeChangeCallback(unsigned endpoint,const char*cluster,const char*attribute){reported.emplace_back(endpoint,cluster,attribute);}
 namespace chip_port {
 ''' + port + r'''
 }
 void event_callback(const void*,long){}int initialize_station_interface(){return ESP_OK;}int install_consortium_network_hooks(){++hooks;return 0;}
 extern "C" void __real__ZN4chip3app11DnssdServer11StartServerEv(void*){++dns;}
 ''' + functions + r'''
+void reports(){
+ // Each changed attribute is reported on its own endpoint, cluster and attribute.
+ const std::pair<Attribute,Report> expected[]={
+  {Attribute::power,{player_endpoint,"OnOff","OnOff.OnOff"}},
+  {Attribute::current_input,{player_endpoint,"MediaInput","MediaInput.CurrentInput"}},
+  {Attribute::input_list,{player_endpoint,"MediaInput","MediaInput.InputList"}},
+  {Attribute::mute,{speaker_endpoint,"OnOff","OnOff.OnOff"}},
+  {Attribute::volume,{speaker_endpoint,"LevelControl","LevelControl.CurrentLevel"}},
+  {Attribute::playback_state,{player_endpoint,"MediaPlayback","MediaPlayback.CurrentState"}}};
+ for(const auto& [attribute,report]:expected){reported.clear();chip_port::report(attribute);assert(reported==std::vector<Report>{report});}
+}
 void tests(){
+ reports();
  assert(!amity_matter_controller_enrollment_complete()&&!scheduled);
  // A pending/failed or network-less commissioning cannot choose the original.
  started=stack_started=true;fabrics=1;failsafe=true;station_connected=station_provisioned=true;
@@ -221,7 +252,7 @@ void tests(){
  }
 }
 }
-int main(){M::tests();H::tests();N::tests();std::cout<<"PASS actual Matter/HAP lifecycle and enrollment hostname hook: single shared live-service delegation, no duplicate hostname/network access and exact error propagation\n";}
+int main(){M::tests();H::tests();N::tests();std::cout<<"PASS actual Matter/HAP lifecycle, attribute reports and enrollment hostname hook: single shared live-service delegation, no duplicate hostname/network access and exact error propagation\n";}
 '''
 with tempfile.TemporaryDirectory() as directory:
     path=Path(directory);file=path/'controller_integration.cpp';binary=path/'test';file.write_text(source)

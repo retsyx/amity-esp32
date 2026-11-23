@@ -1,0 +1,181 @@
+{
+  "ctest": "^(controller_integration_test|matter_state_publication_test|matter_input_names_test)\\.py$",
+  "mutants": [
+    {
+      "id": "stub-start_actuator_substrate-fail",
+      "check": "stub: early return from start_actuator_substrate()",
+      "file": "components/amity_matter/amity_matter.cpp",
+      "find": "esp_err_t start_actuator_substrate() {",
+      "replace": "esp_err_t start_actuator_substrate() { return ESP_FAIL;"
+    },
+    {
+      "id": "stub-schedule-false",
+      "check": "stub: early return from schedule()",
+      "file": "components/amity_matter/amity_matter.cpp",
+      "find": "bool schedule(void (*work)(intptr_t))\n{",
+      "replace": "bool schedule(void (*work)(intptr_t))\n{ return false;"
+    },
+    {
+      "id": "stub-schedule-true",
+      "check": "stub: early return from schedule()",
+      "file": "components/amity_matter/amity_matter.cpp",
+      "find": "bool schedule(void (*work)(intptr_t))\n{",
+      "replace": "bool schedule(void (*work)(intptr_t))\n{ return true;"
+    },
+    {
+      "id": "stub-report-return",
+      "check": "stub: early return from report()",
+      "file": "components/amity_matter/amity_matter.cpp",
+      "find": "void report(Attribute attribute)\n{",
+      "replace": "void report(Attribute attribute)\n{ return;"
+    },
+    {
+      "id": "stub-with_stack_lock-return",
+      "check": "stub: early return from with_stack_lock()",
+      "file": "components/amity_matter/amity_matter.cpp",
+      "find": "void with_stack_lock(void (*fn)())\n{",
+      "replace": "void with_stack_lock(void (*fn)())\n{ return;"
+    },
+    {
+      "id": "stub-fail_safe_disarmed-false",
+      "check": "stub: early return from fail_safe_disarmed()",
+      "file": "components/amity_matter/amity_matter.cpp",
+      "find": "bool fail_safe_disarmed() {",
+      "replace": "bool fail_safe_disarmed() { return false;"
+    },
+    {
+      "id": "stub-fail_safe_disarmed-true",
+      "check": "stub: early return from fail_safe_disarmed()",
+      "file": "components/amity_matter/amity_matter.cpp",
+      "find": "bool fail_safe_disarmed() {",
+      "replace": "bool fail_safe_disarmed() { return true;"
+    },
+    {
+      "id": "stub-has_fabric-false",
+      "check": "stub: early return from has_fabric()",
+      "file": "components/amity_matter/amity_matter.cpp",
+      "find": "bool has_fabric()\n{",
+      "replace": "bool has_fabric()\n{ return false;"
+    },
+    {
+      "id": "stub-has_fabric-true",
+      "check": "stub: early return from has_fabric()",
+      "file": "components/amity_matter/amity_matter.cpp",
+      "find": "bool has_fabric()\n{",
+      "replace": "bool has_fabric()\n{ return true;"
+    },
+    {
+      "id": "stub-station_provisioned-false",
+      "check": "stub: early return from station_provisioned()",
+      "file": "components/amity_matter/amity_matter.cpp",
+      "find": "bool station_provisioned() {",
+      "replace": "bool station_provisioned() { return false;"
+    },
+    {
+      "id": "stub-station_provisioned-true",
+      "check": "stub: early return from station_provisioned()",
+      "file": "components/amity_matter/amity_matter.cpp",
+      "find": "bool station_provisioned() {",
+      "replace": "bool station_provisioned() { return true;",
+      "survives": "the test keeps the station provisioned throughout, so it cannot tell this stub from the SDK call"
+    },
+    {
+      "id": "stub-station_connected-false",
+      "check": "stub: early return from station_connected()",
+      "file": "components/amity_matter/amity_matter.cpp",
+      "find": "bool station_connected() {",
+      "replace": "bool station_connected() { return false;"
+    },
+    {
+      "id": "stub-station_connected-true",
+      "check": "stub: early return from station_connected()",
+      "file": "components/amity_matter/amity_matter.cpp",
+      "find": "bool station_connected() {",
+      "replace": "bool station_connected() { return true;"
+    },
+    {
+      "id": "stub-commit_wifi-false",
+      "check": "stub: early return from commit_wifi()",
+      "file": "components/amity_matter/amity_matter.cpp",
+      "find": "bool commit_wifi()\n{",
+      "replace": "bool commit_wifi()\n{ return false;"
+    },
+    {
+      "id": "stub-commit_wifi-true",
+      "check": "stub: early return from commit_wifi()",
+      "file": "components/amity_matter/amity_matter.cpp",
+      "find": "bool commit_wifi()\n{",
+      "replace": "bool commit_wifi()\n{ return true;"
+    },
+    {
+      "id": "stub-stop_dns_sd-return",
+      "check": "stub: early return from stop_dns_sd()",
+      "file": "components/amity_matter/amity_matter.cpp",
+      "find": "void stop_dns_sd() {",
+      "replace": "void stop_dns_sd() { return;"
+    },
+    {
+      "id": "stub-unregister_attribute_access-return",
+      "check": "stub: early return from unregister_attribute_access()",
+      "file": "components/amity_matter/amity_matter.cpp",
+      "find": "void unregister_attribute_access()\n{",
+      "replace": "void unregister_attribute_access()\n{ return;"
+    },
+    {
+      "id": "stub-shutdown_server-return",
+      "check": "stub: early return from shutdown_server()",
+      "file": "components/amity_matter/amity_matter.cpp",
+      "find": "void shutdown_server() {",
+      "replace": "void shutdown_server() { return;"
+    },
+    {
+      "id": "input-list-reported-as-current-input",
+      "check": "an input list change is reported as the player's MediaInput InputList attribute",
+      "file": "components/amity_matter/amity_matter.cpp",
+      "find": "MatterReportingAttributeChangeCallback(player_endpoint, MediaInput::Id, MediaInput::Attributes::InputList::Id);",
+      "replace": "MatterReportingAttributeChangeCallback(player_endpoint, MediaInput::Id, MediaInput::Attributes::CurrentInput::Id);"
+    },
+    {
+      "id": "current-input-reported-as-input-list",
+      "check": "a current input change is reported as the player's MediaInput CurrentInput attribute",
+      "file": "components/amity_matter/amity_matter.cpp",
+      "find": "MatterReportingAttributeChangeCallback(player_endpoint, MediaInput::Id, MediaInput::Attributes::CurrentInput::Id);",
+      "replace": "MatterReportingAttributeChangeCallback(player_endpoint, MediaInput::Id, MediaInput::Attributes::InputList::Id);"
+    },
+    {
+      "id": "power-reported-on-speaker",
+      "check": "a power change is reported on the player's OnOff attribute",
+      "file": "components/amity_matter/amity_matter.cpp",
+      "find": "case Attribute::power:\n        MatterReportingAttributeChangeCallback(player_endpoint, OnOff::Id,",
+      "replace": "case Attribute::power:\n        MatterReportingAttributeChangeCallback(speaker_endpoint, OnOff::Id,"
+    },
+    {
+      "id": "mute-reported-on-player",
+      "check": "a mute change is reported on the speaker's OnOff attribute",
+      "file": "components/amity_matter/amity_matter.cpp",
+      "find": "case Attribute::mute:\n        MatterReportingAttributeChangeCallback(speaker_endpoint, OnOff::Id,",
+      "replace": "case Attribute::mute:\n        MatterReportingAttributeChangeCallback(player_endpoint, OnOff::Id,"
+    },
+    {
+      "id": "volume-reported-as-on-off",
+      "check": "a volume change is reported as the speaker's LevelControl CurrentLevel attribute",
+      "file": "components/amity_matter/amity_matter.cpp",
+      "find": "MatterReportingAttributeChangeCallback(speaker_endpoint, LevelControl::Id, LevelControl::Attributes::CurrentLevel::Id);",
+      "replace": "MatterReportingAttributeChangeCallback(speaker_endpoint, OnOff::Id, OnOff::Attributes::OnOff::Id);"
+    },
+    {
+      "id": "playback-state-not-reported",
+      "check": "a playback state change is reported as the player's MediaPlayback CurrentState attribute",
+      "file": "components/amity_matter/amity_matter.cpp",
+      "find": "MatterReportingAttributeChangeCallback(player_endpoint, MediaPlayback::Id, MediaPlayback::Attributes::CurrentState::Id);",
+      "replace": ""
+    },
+    {
+      "id": "power-falls-through",
+      "check": "a power change reports only the power attribute",
+      "file": "components/amity_matter/amity_matter.cpp",
+      "find": "MatterReportingAttributeChangeCallback(player_endpoint, OnOff::Id, OnOff::Attributes::OnOff::Id);\n        break;",
+      "replace": "MatterReportingAttributeChangeCallback(player_endpoint, OnOff::Id, OnOff::Attributes::OnOff::Id);"
+    }
+  ]
+}
