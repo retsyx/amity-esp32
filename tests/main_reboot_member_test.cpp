@@ -183,10 +183,9 @@ static void main_tv(){peers.push_back({1,0,"TV",0x0000,0});}
 static void expect_no_activity_policy(Bench& bench,int front,int back,uint8_t address,uint16_t physical,const char* what){
     const auto from=fixture_sent.size();fixture_incoming.push_back({back,active_source(address,physical)});bench.pump(6);
     const auto sent=messages(from,{front,back});
-    const bool forced=count(from,front,15,{0x36})==1&&count(from,back,15,{0x36})==1;
-    const bool old_policy=count(from,back,address,{0x36})>0||std::any_of(sent.begin(),sent.end(),[](const auto& tx){return tx.frame.data[1]==0x86;});
-    if(!forced||old_policy)print("member policy frames",sent);
-    CHECK(forced&&!old_policy,"%s: an Active Source on member wire %d gets the no-activity policy (Standby broadcast on both sides), not the old activity's",what,back);
+    const bool forced=sent.size()==2&&count(from,front,15,{0x36})==1&&count(from,back,15,{0x36})==1;
+    if(!forced)print("member policy frames",sent);
+    CHECK(forced,"%s: an Active Source on member wire %d gets the no-activity policy (Standby broadcast on both sides, nothing else)",what,back);
 }
 
 // The member adapter's reply to its TV's Give Device Power Status (0x8f):
