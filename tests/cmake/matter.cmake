@@ -70,4 +70,17 @@ if(AMITY_TEST_TIER STREQUAL standalone)
             address-at-deadline address-after-deadline single-budget deadline-between-polls remove-failure add-failure
             stored-networks refused commit-and-rollback transaction-busy driver-calls exported-credentials
             hostname-hooks install-failure)
+
+    # The CHIP-free controller logic of amity_matter, built against a port the
+    # test implements.
+    set(controller_includes "${T}/core_fakes" "${C}/amity_matter/include")
+    amity_host_compile(matter_controller SOURCES "${C}/amity_matter/controller.cpp" INCLUDES ${controller_includes})
+    amity_test(matter_controller_test PTHREAD RACE
+        SOURCES "${T}/matter_controller_test.cpp"
+        INCLUDES ${controller_includes}
+        LIBS core_fakes
+        REGISTRY
+        SCENARIOS before-start coalesced refused-publication reentrant-publication revoked-publication revoked-retry
+            input-list fenced-entry-points enrollment enrollment-fenced revocation revocation-before-start
+            revocation-during-startup)
 endif()

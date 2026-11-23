@@ -1,0 +1,555 @@
+{
+  "ctest": "^matter_controller_test\\.",
+  "targets": [
+    "matter_controller_test"
+  ],
+  "baseline": {
+    "ctest": "^(matter_state_publication_test|matter_input_names_test|controller_integration_test)\\.py$",
+    "targets": []
+  },
+  "mutants": [
+    {
+      "id": "stub-publish_state-return",
+      "check": "stub: early return from publish_state()",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "void publish_state(intptr_t)\n{",
+      "replace": "void publish_state(intptr_t)\n{return;"
+    },
+    {
+      "id": "stub-finish_controller_enrollment-return",
+      "check": "stub: early return from finish_controller_enrollment()",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "void finish_controller_enrollment(intptr_t)\n{",
+      "replace": "void finish_controller_enrollment(intptr_t)\n{return;"
+    },
+    {
+      "id": "stub-report-return",
+      "check": "stub: early return from report()",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "void report(Attribute attribute)\n{",
+      "replace": "void report(Attribute attribute)\n{return;"
+    },
+    {
+      "id": "stub-dispatch_key-invalid-state",
+      "check": "stub: early return from dispatch_key()",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "esp_err_t dispatch_key(uint8_t key)\n{",
+      "replace": "esp_err_t dispatch_key(uint8_t key)\n{return ESP_ERR_INVALID_STATE;"
+    },
+    {
+      "id": "stub-current_inputs-empty",
+      "check": "stub: early return from current_inputs()",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "size_t current_inputs()\n{",
+      "replace": "size_t current_inputs()\n{return {};"
+    },
+    {
+      "id": "stub-enrollment_complete-false",
+      "check": "stub: early return from amity_matter_controller_enrollment_complete()",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "extern \"C\" bool amity_matter_controller_enrollment_complete(void)\n{",
+      "replace": "extern \"C\" bool amity_matter_controller_enrollment_complete(void)\n{return false;"
+    },
+    {
+      "id": "stub-enrollment_complete-true",
+      "check": "stub: early return from amity_matter_controller_enrollment_complete()",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "extern \"C\" bool amity_matter_controller_enrollment_complete(void)\n{",
+      "replace": "extern \"C\" bool amity_matter_controller_enrollment_complete(void)\n{return true;"
+    },
+    {
+      "id": "stub-update_state-fail",
+      "check": "stub: early return from amity_matter_update_state()",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "extern \"C\" esp_err_t amity_matter_update_state(const amity_matter_state_t *next)\n{",
+      "replace": "extern \"C\" esp_err_t amity_matter_update_state(const amity_matter_state_t *next)\n{return ESP_FAIL;"
+    },
+    {
+      "id": "stub-flush_state-fail",
+      "check": "stub: early return from amity_matter_flush_state()",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "extern \"C\" esp_err_t amity_matter_flush_state(void)\n{",
+      "replace": "extern \"C\" esp_err_t amity_matter_flush_state(void)\n{return ESP_FAIL;"
+    },
+    {
+      "id": "stub-set_controller_enabled-fail",
+      "check": "stub: early return from amity_matter_set_controller_enabled()",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "extern \"C\" esp_err_t amity_matter_set_controller_enabled(bool enabled) {",
+      "replace": "extern \"C\" esp_err_t amity_matter_set_controller_enabled(bool enabled) {return ESP_FAIL;"
+    },
+    {
+      "id": "stub-dns-wrapper-return",
+      "check": "stub: early return from the DNS-SD start wrapper",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "extern \"C\" void __wrap__ZN4chip3app11DnssdServer11StartServerEv(void* self) {",
+      "replace": "extern \"C\" void __wrap__ZN4chip3app11DnssdServer11StartServerEv(void* self) {return;"
+    },
+    {
+      "id": "update-accepts-null",
+      "check": "a null state is refused",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "if (!next || (next->volume_known && next->volume > 254)) return ESP_ERR_INVALID_ARG;",
+      "replace": "if (next && next->volume_known && next->volume > 254) return ESP_ERR_INVALID_ARG;"
+    },
+    {
+      "id": "update-volume-255",
+      "check": "a known volume above 254 is refused",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "next->volume > 254)",
+      "replace": "next->volume > 255)"
+    },
+    {
+      "id": "update-volume-unknown-checked",
+      "check": "an unknown volume is not range-checked",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "(next->volume_known && next->volume > 254)",
+      "replace": "(next->volume > 254)"
+    },
+    {
+      "id": "update-before-start-not-stored",
+      "check": "an update before start stores the state at once",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "if (!started.load()) { state=*next;return ESP_OK; }",
+      "replace": "if (!started.load()) { return ESP_OK; }"
+    },
+    {
+      "id": "update-before-start-scheduled",
+      "check": "an update before start schedules nothing",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "if (!started.load()) { state=*next;return ESP_OK; }",
+      "replace": "if (!started.load()) { state=*next; }"
+    },
+    {
+      "id": "update-takes-stack-lock",
+      "check": "an update never takes the stack lock",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "return amity_matter_flush_state();\n}",
+      "replace": "chip_port::with_stack_lock([]{});return amity_matter_flush_state();\n}"
+    },
+    {
+      "id": "update-revoked-stored",
+      "check": "updates after revocation are dropped",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "if (!controller_enabled.load()) return ESP_OK;\n        latest_state=*next;",
+      "replace": "latest_state=*next;"
+    },
+    {
+      "id": "flush-not-coalesced",
+      "check": "one publication is queued at a time",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "|| !state_dirty || state_publication_pending)",
+      "replace": "|| !state_dirty)"
+    },
+    {
+      "id": "flush-clean-scheduled",
+      "check": "a clean state schedules nothing",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "|| !state_dirty || state_publication_pending)",
+      "replace": "|| state_publication_pending)"
+    },
+    {
+      "id": "flush-before-start",
+      "check": "nothing is published before start",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "if (!started.load() || !controller_enabled.load() || !state_dirty",
+      "replace": "if (!controller_enabled.load() || !state_dirty",
+      "survives": "the state is marked dirty only once Matter has started, and started is cleared only after the controller is revoked, so the revocation check already stops this publication"
+    },
+    {
+      "id": "flush-after-revocation",
+      "check": "nothing is published after revocation",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "if (!started.load() || !controller_enabled.load() || !state_dirty",
+      "replace": "if (!started.load() || !state_dirty"
+    },
+    {
+      "id": "publish-early-copy",
+      "check": "the publication copies the latest observation when it runs",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "next=latest_state;state_dirty=false;",
+      "replace": "next=state;state_dirty=false;"
+    },
+    {
+      "id": "publish-stays-dirty",
+      "check": "a publication clears the dirty mark",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "next=latest_state;state_dirty=false;",
+      "replace": "next=latest_state;"
+    },
+    {
+      "id": "publish-stays-pending",
+      "check": "a run publication allows the next one",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "state_publication_pending=false;\n        if (!controller_enabled.load() || !started.load()) { state_dirty=false;return; }",
+      "replace": "if (!controller_enabled.load() || !started.load()) { state_dirty=false;return; }"
+    },
+    {
+      "id": "publish-without-change",
+      "check": "a clean publication reports nothing",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "if (!state_dirty) return;",
+      "replace": "",
+      "survives": "one publication is pending at a time and runs only after an update marked the state dirty; a clean state equals the latest observation, so publishing it changes and reports nothing"
+    },
+    {
+      "id": "publish-power-unreported",
+      "check": "a power change is reported",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "if (old.power != state.power)\n        report(Attribute::power);",
+      "replace": ""
+    },
+    {
+      "id": "publish-input-unreported",
+      "check": "an input change is reported",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "if (old.current_input != state.current_input)\n        report(Attribute::current_input);",
+      "replace": ""
+    },
+    {
+      "id": "publish-config-revision-unreported",
+      "check": "a configuration change republishes the input list",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "old.config_revision != state.config_revision || ",
+      "replace": ""
+    },
+    {
+      "id": "publish-presentation-unreported",
+      "check": "a presentation change republishes the input list",
+      "file": "components/amity_matter/controller.cpp",
+      "find": " || old.presentation_revision != state.presentation_revision",
+      "replace": ""
+    },
+    {
+      "id": "publish-list-on-input",
+      "check": "an input change does not republish the input list",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "if (old.config_revision != state.config_revision || old.presentation_revision != state.presentation_revision)",
+      "replace": "if (old.config_revision != state.config_revision || old.presentation_revision != state.presentation_revision || old.current_input != state.current_input)"
+    },
+    {
+      "id": "publish-mute-known-unreported",
+      "check": "a change in whether mute is known is reported",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "old.mute_known != state.mute_known || ",
+      "replace": ""
+    },
+    {
+      "id": "publish-muted-unreported",
+      "check": "a mute change is reported",
+      "file": "components/amity_matter/controller.cpp",
+      "find": " || old.muted != state.muted",
+      "replace": ""
+    },
+    {
+      "id": "publish-volume-known-unreported",
+      "check": "a change in whether volume is known is reported",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "old.volume_known != state.volume_known || ",
+      "replace": ""
+    },
+    {
+      "id": "publish-volume-unreported",
+      "check": "a volume change is reported",
+      "file": "components/amity_matter/controller.cpp",
+      "find": " || old.volume != state.volume",
+      "replace": ""
+    },
+    {
+      "id": "publish-wrong-attribute",
+      "check": "the speaker reports mute as mute",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "report(Attribute::mute);",
+      "replace": "report(Attribute::power);"
+    },
+    {
+      "id": "refusal-stays-pending",
+      "check": "a refused publication can be retried",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "state_publication_pending=false; // Keep the dirty final observation for the background retry.",
+      "replace": "// Keep the dirty final observation for the background retry."
+    },
+    {
+      "id": "refusal-reported-ok",
+      "check": "a refused publication is reported",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "state_publication_pending=false; // Keep the dirty final observation for the background retry.\n    return ESP_FAIL;",
+      "replace": "state_publication_pending=false; // Keep the dirty final observation for the background retry.\n    return ESP_OK;"
+    },
+    {
+      "id": "refusal-drops-state",
+      "check": "a refused publication keeps the state dirty",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "state_publication_pending=false; // Keep the dirty final observation for the background retry.",
+      "replace": "state_publication_pending=false;state_dirty=false;"
+    },
+    {
+      "id": "schedule-under-mailbox-lock",
+      "check": "scheduling happens outside the publication lock",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "state_publication_pending=true;\n    }",
+      "replace": "state_publication_pending=true;\n    if (!chip_port::schedule(publish_state)) state_publication_pending=false;\n    }return ESP_OK;"
+    },
+    {
+      "id": "report-under-mailbox-lock",
+      "check": "reports happen outside the publication lock",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "next=latest_state;state_dirty=false;\n    }\n    const auto old=state;\n    state=next;\n    if (old.power != state.power)\n        report(Attribute::power);\n    if (old.current_input != state.current_input)\n        report(Attribute::current_input);\n    if (old.config_revision != state.config_revision || old.presentation_revision != state.presentation_revision)\n        report(Attribute::input_list);\n    if (old.mute_known != state.mute_known || old.muted != state.muted)\n        report(Attribute::mute);\n    if (old.volume_known != state.volume_known || old.volume != state.volume)\n        report(Attribute::volume);\n}",
+      "replace": "next=latest_state;state_dirty=false;\n    const auto old=state;\n    state=next;\n    if (old.power != state.power)\n        report(Attribute::power);\n    if (old.current_input != state.current_input)\n        report(Attribute::current_input);\n    if (old.config_revision != state.config_revision || old.presentation_revision != state.presentation_revision)\n        report(Attribute::input_list);\n    if (old.mute_known != state.mute_known || old.muted != state.muted)\n        report(Attribute::mute);\n    if (old.volume_known != state.volume_known || old.volume != state.volume)\n        report(Attribute::volume);\n    }\n}"
+    },
+    {
+      "id": "publish-after-revocation",
+      "check": "queued publications do nothing after revocation",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "if (!controller_enabled.load() || !started.load()) { state_dirty=false;return; }",
+      "replace": "if (!started.load()) { state_dirty=false;return; }"
+    },
+    {
+      "id": "publish-after-stop",
+      "check": "queued publications do nothing after the controller stops",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "if (!controller_enabled.load() || !started.load()) { state_dirty=false;return; }",
+      "replace": "if (!controller_enabled.load()) { state_dirty=false;return; }",
+      "survives": "a publication is queued only once Matter has started, and started is cleared only after the controller is revoked, so the revocation check already stops it"
+    },
+    {
+      "id": "report-after-revocation",
+      "check": "reports stop at revocation",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "if (controller_enabled.load() && started.load()) chip_port::report(attribute);",
+      "replace": "if (started.load()) chip_port::report(attribute);"
+    },
+    {
+      "id": "report-before-start",
+      "check": "reports wait for the controller to start",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "if (controller_enabled.load() && started.load()) chip_port::report(attribute);",
+      "replace": "if (controller_enabled.load()) chip_port::report(attribute);"
+    },
+    {
+      "id": "inputs-unbounded",
+      "check": "an input count above capacity reads as none",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "return count <= AMITY_MATTER_MAX_INPUTS ? count : 0;",
+      "replace": "return count;"
+    },
+    {
+      "id": "inputs-off-by-one",
+      "check": "a full input list is read",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "return count <= AMITY_MATTER_MAX_INPUTS ? count : 0;",
+      "replace": "return count < AMITY_MATTER_MAX_INPUTS ? count : 0;"
+    },
+    {
+      "id": "inputs-wrong-context",
+      "check": "the input callback gets its context",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "callbacks.inputs(listed_inputs, AMITY_MATTER_MAX_INPUTS, callbacks.context)",
+      "replace": "callbacks.inputs(listed_inputs, AMITY_MATTER_MAX_INPUTS, nullptr)"
+    },
+    {
+      "id": "key-after-revocation",
+      "check": "keys stop at revocation",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "return controller_enabled.load() && callbacks.key ?",
+      "replace": "return callbacks.key ?"
+    },
+    {
+      "id": "key-wrong-context",
+      "check": "the key callback gets its context",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "callbacks.key(key, callbacks.context)",
+      "replace": "callbacks.key(key, nullptr)"
+    },
+    {
+      "id": "dns-after-revocation",
+      "check": "DNS-SD does not restart after revocation",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "if (controller_enabled.load()) __real__ZN4chip3app11DnssdServer11StartServerEv(self);",
+      "replace": "__real__ZN4chip3app11DnssdServer11StartServerEv(self);"
+    },
+    {
+      "id": "enrollment-ignores-fail-safe",
+      "check": "enrollment needs a disarmed fail-safe",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "!chip_port::fail_safe_disarmed() ||",
+      "replace": ""
+    },
+    {
+      "id": "enrollment-ignores-fabric",
+      "check": "enrollment needs a fabric",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "!chip_port::has_fabric() ||",
+      "replace": ""
+    },
+    {
+      "id": "enrollment-ignores-provisioning",
+      "check": "enrollment needs a provisioned station",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "!chip_port::station_provisioned() ||",
+      "replace": ""
+    },
+    {
+      "id": "enrollment-ignores-connection",
+      "check": "enrollment needs a connected station",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "||\n        !chip_port::station_connected()) return;",
+      "replace": ") return;"
+    },
+    {
+      "id": "enrollment-ignores-commit",
+      "check": "enrollment needs the Wi-Fi commit",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "if (!chip_port::commit_wifi()) {",
+      "replace": "if (!chip_port::commit_wifi() && false) {"
+    },
+    {
+      "id": "enrollment-commit-first",
+      "check": "the Wi-Fi commit runs only after the conditions hold",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "if (!chip_port::fail_safe_disarmed() ||",
+      "replace": "if (!chip_port::commit_wifi() || !chip_port::fail_safe_disarmed() ||"
+    },
+    {
+      "id": "enrollment-not-latched",
+      "check": "a completed enrollment is latched",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "controller_enrollment_complete.store(true);",
+      "replace": ""
+    },
+    {
+      "id": "enrollment-rederived",
+      "check": "a latched enrollment is not checked again",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "if (controller_enrollment_complete.load()) return true;",
+      "replace": ""
+    },
+    {
+      "id": "enrollment-unfenced",
+      "check": "queued checks do nothing once the controller stops",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "enrollment_check_pending.store(false);\n    if (!controller_enabled.load() || !started.load()) return;",
+      "replace": "enrollment_check_pending.store(false);"
+    },
+    {
+      "id": "enrollment-before-start",
+      "check": "nothing is checked before the controller runs",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "if (!controller_enabled.load() || !started.load()) return false;\n    if (controller_enrollment_complete",
+      "replace": "if (controller_enrollment_complete"
+    },
+    {
+      "id": "enrollment-checks-pile-up",
+      "check": "one check is queued at a time",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "if (enrollment_check_pending.compare_exchange_strong(expected, true) &&",
+      "replace": "if ((enrollment_check_pending.compare_exchange_strong(expected, true) || true) &&"
+    },
+    {
+      "id": "enrollment-check-stays-pending",
+      "check": "a run check allows the next one",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "enrollment_check_pending.store(false);\n    if (!controller_enabled.load() || !started.load()) return;",
+      "replace": "if (!controller_enabled.load() || !started.load()) return;"
+    },
+    {
+      "id": "enrollment-refusal-stays-pending",
+      "check": "a refused check can be queued again",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "!chip_port::schedule(finish_controller_enrollment))\n        enrollment_check_pending.store(false);",
+      "replace": "!chip_port::schedule(finish_controller_enrollment))\n        ;"
+    },
+    {
+      "id": "revoke-after-waiting",
+      "check": "disabling revokes before waiting for startup",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "if (!enabled) { controller_revoked.store(true); controller_enabled.store(false); } // revoke before waiting\n    std::lock_guard<std::mutex> lifecycle(lifecycle_mutex);",
+      "replace": "std::lock_guard<std::mutex> lifecycle(lifecycle_mutex);\n    if (!enabled) { controller_revoked.store(true); controller_enabled.store(false); }"
+    },
+    {
+      "id": "revocation-not-latched",
+      "check": "a revocation cannot be undone",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "if (controller_revoked.load()) return ESP_ERR_INVALID_STATE;",
+      "replace": ""
+    },
+    {
+      "id": "revocation-unrecorded",
+      "check": "disabling records the revocation",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "if (!enabled) { controller_revoked.store(true); controller_enabled.store(false); }",
+      "replace": "if (!enabled) { controller_enabled.store(false); }"
+    },
+    {
+      "id": "enable-ignored",
+      "check": "enabling before a revocation enables",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "controller_enabled.store(true); return ESP_OK;",
+      "replace": "return ESP_OK;",
+      "survives": "the controller starts enabled and only a revocation disables it, after which enabling is refused, so enabling never finds it disabled"
+    },
+    {
+      "id": "stop-before-start",
+      "check": "services stop only once the controller runs",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "if (!stack_started.load() || !started.load()) return ESP_OK;",
+      "replace": "if (!stack_started.load()) return ESP_OK;"
+    },
+    {
+      "id": "stop-without-stack",
+      "check": "services stop only once the stack runs",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "if (!stack_started.load() || !started.load()) return ESP_OK;",
+      "replace": "if (!started.load()) return ESP_OK;"
+    },
+    {
+      "id": "stop-unlocked",
+      "check": "services stop under the stack lock",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "chip_port::with_stack_lock([] {",
+      "replace": "[](void (*fn)()) { fn(); }([] {"
+    },
+    {
+      "id": "stop-keeps-dns-sd",
+      "check": "disabling stops DNS-SD",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "chip_port::stop_dns_sd();",
+      "replace": ""
+    },
+    {
+      "id": "stop-keeps-attributes",
+      "check": "disabling unregisters attribute access",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "chip_port::unregister_attribute_access();",
+      "replace": ""
+    },
+    {
+      "id": "stop-keeps-apple-cleanup",
+      "check": "disabling stops Apple cleanup",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "amity_matter::stop_apple_fabric_cleanup();",
+      "replace": ""
+    },
+    {
+      "id": "stop-keeps-server",
+      "check": "disabling shuts down the server",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "chip_port::shutdown_server();",
+      "replace": ""
+    },
+    {
+      "id": "stop-apple-after-shutdown",
+      "check": "Apple cleanup stops before the server shuts down",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "amity_matter::stop_apple_fabric_cleanup();\n        chip_port::shutdown_server();",
+      "replace": "chip_port::shutdown_server();\n        amity_matter::stop_apple_fabric_cleanup();"
+    },
+    {
+      "id": "stop-stays-started",
+      "check": "a stopped controller is not started",
+      "file": "components/amity_matter/controller.cpp",
+      "find": "started.store(false);\n        ESP_LOGI",
+      "replace": "ESP_LOGI"
+    }
+  ]
+}
