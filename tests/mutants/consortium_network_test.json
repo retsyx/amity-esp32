@@ -1,0 +1,496 @@
+{
+  "ctest": "^consortium_network_test\\.",
+  "targets": [
+    "consortium_network_test"
+  ],
+  "baseline": {
+    "ctest": "^consortium_network_connect_test\\.py$",
+    "targets": []
+  },
+  "mutants": [
+    {
+      "id": "stub-stage_connect-fail",
+      "check": "stub: early return from stage_connect()",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "esp_err_t stage_connect(const std::string& ssid,const std::string& password){",
+      "replace": "esp_err_t stage_connect(const std::string& ssid,const std::string& password){return ESP_FAIL;"
+    },
+    {
+      "id": "stub-OnResult-return",
+      "check": "stub: early return from Callback::OnResult()",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "void OnResult(nc::Status status,chip::CharSpan,int32_t)override{",
+      "replace": "void OnResult(nc::Status status,chip::CharSpan,int32_t)override{return;"
+    },
+    {
+      "id": "stub-usable_ip-false",
+      "check": "stub: early return from usable_ip()",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "bool usable_ip(){",
+      "replace": "bool usable_ip(){return false;"
+    },
+    {
+      "id": "stub-usable_ip-true",
+      "check": "stub: early return from usable_ip()",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "bool usable_ip(){",
+      "replace": "bool usable_ip(){return true;"
+    },
+    {
+      "id": "stub-driver_call-fail",
+      "check": "stub: early return from driver_call()",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "esp_err_t driver_call(const std::function<esp_err_t()>& fn){",
+      "replace": "esp_err_t driver_call(const std::function<esp_err_t()>& fn){return ESP_FAIL;"
+    },
+    {
+      "id": "stub-configured-false",
+      "check": "stub: early return from configured()",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "bool configured(std::string& ssid,std::string& password){",
+      "replace": "bool configured(std::string& ssid,std::string& password){return false;"
+    },
+    {
+      "id": "stub-export_credentials-false",
+      "check": "stub: early return from export_credentials()",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "bool export_credentials(std::string& ssid,std::string& password){",
+      "replace": "bool export_credentials(std::string& ssid,std::string& password){return false;"
+    },
+    {
+      "id": "stub-remove_other-false",
+      "check": "stub: early return from remove_other()",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "bool remove_other(nc::ESPWiFiDriver& driver,const std::string& desired){",
+      "replace": "bool remove_other(nc::ESPWiFiDriver& driver,const std::string& desired){return false;"
+    },
+    {
+      "id": "stub-remove_other-true",
+      "check": "stub: early return from remove_other()",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "bool remove_other(nc::ESPWiFiDriver& driver,const std::string& desired){",
+      "replace": "bool remove_other(nc::ESPWiFiDriver& driver,const std::string& desired){return true;"
+    },
+    {
+      "id": "stub-commit-fail",
+      "check": "stub: early return from commit()",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "esp_err_t commit(){",
+      "replace": "esp_err_t commit(){return ESP_FAIL;"
+    },
+    {
+      "id": "stub-rollback-return",
+      "check": "stub: early return from rollback()",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "void rollback(){",
+      "replace": "void rollback(){return;"
+    },
+    {
+      "id": "stub-install-fail",
+      "check": "stub: early return from install_consortium_network_hooks()",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "esp_err_t install_consortium_network_hooks(){",
+      "replace": "esp_err_t install_consortium_network_hooks(){return ESP_FAIL;"
+    },
+    {
+      "id": "budget-36s",
+      "check": "the connection budget is 35 seconds",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "const auto deadline=esp_timer_get_time()+35000000;",
+      "replace": "const auto deadline=esp_timer_get_time()+36000000;"
+    },
+    {
+      "id": "budget-after-admission",
+      "check": "driver admission counts against the budget",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "const auto deadline=esp_timer_get_time()+35000000;\n    const auto remaining_ms=[&]{return std::max<int64_t>(0,(deadline-esp_timer_get_time())/1000);};\n    const auto admitted=driver_call([&]{auto& driver=nc::ESPWiFiDriver::GetInstance();if(!remove_other(driver,ssid))return ESP_ERR_INVALID_STATE;char debug[128];chip::MutableCharSpan text(debug);uint8_t index=0;\n        if(driver.AddOrUpdateNetwork(chip::ByteSpan(reinterpret_cast<const uint8_t*>(ssid.data()),ssid.size()),chip::ByteSpan(reinterpret_cast<const uint8_t*>(password.data()),password.size()),text,index)!=nc::Status::kSuccess||index!=0)return ESP_ERR_INVALID_STATE;\n        driver.ConnectNetwork(chip::ByteSpan(reinterpret_cast<const uint8_t*>(ssid.data()),ssid.size()),&callback);return ESP_OK;});\n    if(admitted!=ESP_OK){pending.store(false);xSemaphoreGive(transaction);return admitted;}",
+      "replace": "auto deadline=esp_timer_get_time()+35000000;\n    const auto remaining_ms=[&]{return std::max<int64_t>(0,(deadline-esp_timer_get_time())/1000);};\n    const auto admitted=driver_call([&]{auto& driver=nc::ESPWiFiDriver::GetInstance();if(!remove_other(driver,ssid))return ESP_ERR_INVALID_STATE;char debug[128];chip::MutableCharSpan text(debug);uint8_t index=0;\n        if(driver.AddOrUpdateNetwork(chip::ByteSpan(reinterpret_cast<const uint8_t*>(ssid.data()),ssid.size()),chip::ByteSpan(reinterpret_cast<const uint8_t*>(password.data()),password.size()),text,index)!=nc::Status::kSuccess||index!=0)return ESP_ERR_INVALID_STATE;\n        driver.ConnectNetwork(chip::ByteSpan(reinterpret_cast<const uint8_t*>(ssid.data()),ssid.size()),&callback);return ESP_OK;});\n    if(admitted!=ESP_OK){pending.store(false);xSemaphoreGive(transaction);return admitted;}\n    deadline=esp_timer_get_time()+35000000;"
+    },
+    {
+      "id": "success-without-address",
+      "check": "staging needs the IPv4 address",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "if(usable_ip()){success=true;break;}",
+      "replace": "success=true;break;"
+    },
+    {
+      "id": "dhcp-not-awaited",
+      "check": "an association before DHCP keeps waiting for the address",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "while(finished&&callback.success.load()&&esp_timer_get_time()<deadline){",
+      "replace": "for(int once=0;once<1&&finished&&callback.success.load()&&esp_timer_get_time()<deadline;++once){"
+    },
+    {
+      "id": "poll-200ms",
+      "check": "each address poll waits at most 100 ms",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "pdMS_TO_TICKS(std::min<int64_t>(100,remaining_ms()))",
+      "replace": "pdMS_TO_TICKS(std::min<int64_t>(200,remaining_ms()))"
+    },
+    {
+      "id": "poll-past-deadline",
+      "check": "polls stop at the deadline",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "pdMS_TO_TICKS(std::min<int64_t>(100,remaining_ms()))",
+      "replace": "pdMS_TO_TICKS(int64_t(100))"
+    },
+    {
+      "id": "success-stays-unstaged",
+      "check": "a successful staging is staged",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "staged=success;if(!success)",
+      "replace": "staged=false;if(!success)"
+    },
+    {
+      "id": "success-rolls-back",
+      "check": "a successful staging is not rolled back",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "staged=success;if(!success)driver_call(",
+      "replace": "staged=success;driver_call("
+    },
+    {
+      "id": "staging-keeps-transaction",
+      "check": "staging releases the transaction",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "xSemaphoreGive(transaction);return success?ESP_OK:ESP_ERR_TIMEOUT;",
+      "replace": "return success?ESP_OK:ESP_ERR_TIMEOUT;"
+    },
+    {
+      "id": "failure-treated-as-success",
+      "check": "a failed association is not a usable network",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "success.store(status==nc::Status::kSuccess);",
+      "replace": "success.store(status==nc::Status::kSuccess||true);"
+    },
+    {
+      "id": "result-keeps-pending",
+      "check": "an association result ends the pending connection",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "success.store(status==nc::Status::kSuccess);pending.store(false);",
+      "replace": "success.store(status==nc::Status::kSuccess);"
+    },
+    {
+      "id": "result-not-signalled",
+      "check": "an association result wakes the staging",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "pending.store(false);xSemaphoreGive(completed);}",
+      "replace": "pending.store(false);}"
+    },
+    {
+      "id": "stale-result-kept",
+      "check": "a stale association result is drained before connecting",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "while(xSemaphoreTake(completed,0)==pdTRUE){}",
+      "replace": ""
+    },
+    {
+      "id": "stale-success-kept",
+      "check": "a new attempt clears the last association result",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "callback.success.store(false);pending.store(true);",
+      "replace": "pending.store(true);",
+      "survives": "the drain and this store run back to back, and every result that reaches the semaphore after them stores its own success first, so only a thread scheduled between the two statements could read a stale value"
+    },
+    {
+      "id": "timeout-no-rollback",
+      "check": "a failed staging rolls back",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "staged=success;if(!success)driver_call([]{return nc::ESPWiFiDriver::GetInstance().RevertConfiguration()==CHIP_NO_ERROR?ESP_OK:ESP_FAIL;});",
+      "replace": "staged=success;if(!success&&false)driver_call([]{return nc::ESPWiFiDriver::GetInstance().RevertConfiguration()==CHIP_NO_ERROR?ESP_OK:ESP_FAIL;});"
+    },
+    {
+      "id": "admission-failure-keeps-pending",
+      "check": "a failed admission clears the pending connection",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "if(admitted!=ESP_OK){pending.store(false);xSemaphoreGive(transaction);return admitted;}",
+      "replace": "if(admitted!=ESP_OK){xSemaphoreGive(transaction);return admitted;}"
+    },
+    {
+      "id": "admission-failure-keeps-transaction",
+      "check": "a failed admission releases the transaction",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "if(admitted!=ESP_OK){pending.store(false);xSemaphoreGive(transaction);return admitted;}",
+      "replace": "if(admitted!=ESP_OK){pending.store(false);return admitted;}"
+    },
+    {
+      "id": "admission-ignores-remove",
+      "check": "a failed removal fails admission",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "if(!remove_other(driver,ssid))return ESP_ERR_INVALID_STATE;",
+      "replace": "remove_other(driver,ssid);"
+    },
+    {
+      "id": "admission-ignores-add",
+      "check": "a failed addition fails admission",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "text,index)!=nc::Status::kSuccess||index!=0)return ESP_ERR_INVALID_STATE;",
+      "replace": "text,index)!=nc::Status::kSuccess&&false)return ESP_ERR_INVALID_STATE;"
+    },
+    {
+      "id": "admission-ignores-index",
+      "check": "the network must be at index 0",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "!=nc::Status::kSuccess||index!=0)return",
+      "replace": "!=nc::Status::kSuccess)return"
+    },
+    {
+      "id": "remove-keeps-other",
+      "check": "another stored network is removed",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "text,index)==nc::Status::kSuccess;\n}",
+      "replace": "text,index)==nc::Status::kSuccess||true;\n}"
+    },
+    {
+      "id": "remove-same-network",
+      "check": "the network being staged is kept",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "if(!found||std::string(reinterpret_cast<char*>(network.networkID),network.networkIDLen)==desired)return true;",
+      "replace": "if(!found||(std::string(reinterpret_cast<char*>(network.networkID),network.networkIDLen)==desired&&false))return true;"
+    },
+    {
+      "id": "remove-several-networks",
+      "check": "a driver with several networks fails admission",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "bool valid=iterator->Count()<=1;",
+      "replace": "bool valid=true;"
+    },
+    {
+      "id": "remove-leaks-iterator",
+      "check": "the network iterator is released",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "const bool found=iterator->Next(network);iterator->Release();",
+      "replace": "const bool found=iterator->Next(network);"
+    },
+    {
+      "id": "driver-call-inline",
+      "check": "driver work runs on the CHIP task",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "const auto queued=chip::DeviceLayer::PlatformMgr().ScheduleWork(",
+      "replace": "const auto queued=[](void(*run)(intptr_t),intptr_t argument){run(argument);return CHIP_ERROR(0);}("
+    },
+    {
+      "id": "driver-call-skips-stack-check",
+      "check": "driver work needs an internal-RAM stack",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "int marker=0;if(esp_ptr_internal(&marker))item.result=item.action();",
+      "replace": "item.result=item.action();"
+    },
+    {
+      "id": "driver-call-locked-skips-stack-check",
+      "check": "locked driver work needs an internal-RAM stack",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "int marker=0;if(!esp_ptr_internal(&marker))return ESP_ERR_INVALID_STATE;return fn();",
+      "replace": "return fn();"
+    },
+    {
+      "id": "driver-call-ignores-lock",
+      "check": "a caller holding the stack lock runs driver work at once",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "if(chip::DeviceLayer::PlatformMgr().IsChipStackLockedByCurrentThread()){",
+      "replace": "if(false){"
+    },
+    {
+      "id": "driver-call-ignores-refusal",
+      "check": "refused CHIP work fails the call",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "return queued==CHIP_NO_ERROR?work.result:ESP_FAIL;",
+      "replace": "return work.result==ESP_FAIL&&queued!=CHIP_NO_ERROR?ESP_OK:work.result;"
+    },
+    {
+      "id": "wait-on-chip-task",
+      "check": "the association wait never runs on the CHIP task",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "driver.ConnectNetwork(chip::ByteSpan(reinterpret_cast<const uint8_t*>(ssid.data()),ssid.size()),&callback);return ESP_OK;",
+      "replace": "driver.ConnectNetwork(chip::ByteSpan(reinterpret_cast<const uint8_t*>(ssid.data()),ssid.size()),&callback);vTaskDelay(1);return ESP_OK;"
+    },
+    {
+      "id": "ssid-33",
+      "check": "an SSID has at most 32 bytes",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "ssid.size()>32",
+      "replace": "ssid.size()>33"
+    },
+    {
+      "id": "password-65",
+      "check": "a password has at most 64 bytes",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "password.size()>64",
+      "replace": "password.size()>65"
+    },
+    {
+      "id": "ssid-nul",
+      "check": "an SSID has no NUL",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "ssid.find('\\0')!=std::string::npos||",
+      "replace": ""
+    },
+    {
+      "id": "password-nul",
+      "check": "a password has no NUL",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "||password.find('\\0')!=std::string::npos",
+      "replace": ""
+    },
+    {
+      "id": "empty-ssid",
+      "check": "an SSID is not empty",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "if(ssid.empty()||",
+      "replace": "if("
+    },
+    {
+      "id": "stage-while-staged",
+      "check": "staging while staged is refused",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "if(staged||pending.load()||usable_ip()){",
+      "replace": "if(pending.load()||usable_ip()){"
+    },
+    {
+      "id": "stage-while-pending",
+      "check": "staging while a connection is pending is refused",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "if(staged||pending.load()||usable_ip()){",
+      "replace": "if(staged||usable_ip()){"
+    },
+    {
+      "id": "stage-with-address",
+      "check": "staging while the station has an address is refused",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "if(staged||pending.load()||usable_ip()){",
+      "replace": "if(staged||pending.load()){"
+    },
+    {
+      "id": "busy-keeps-transaction",
+      "check": "a refused staging releases the transaction",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "{xSemaphoreGive(transaction);return ESP_ERR_INVALID_STATE;}",
+      "replace": "{return ESP_ERR_INVALID_STATE;}"
+    },
+    {
+      "id": "stage-ignores-transaction",
+      "check": "staging needs the transaction",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "if(xSemaphoreTake(transaction,0)!=pdTRUE)return ESP_ERR_INVALID_STATE;\n    if(staged",
+      "replace": "xSemaphoreTake(transaction,0);\n    if(staged"
+    },
+    {
+      "id": "ip-ignores-up",
+      "check": "an address needs the interface up",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "return netif&&esp_netif_is_netif_up(netif)&&",
+      "replace": "return netif&&"
+    },
+    {
+      "id": "ip-ignores-address",
+      "check": "a usable interface has an address",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "esp_netif_get_ip_info(netif,&info)==ESP_OK&&info.ip.addr;",
+      "replace": "esp_netif_get_ip_info(netif,&info)==ESP_OK;"
+    },
+    {
+      "id": "commit-unstaged",
+      "check": "commit needs staging",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "const auto result=!staged||!usable_ip()?",
+      "replace": "const auto result=!usable_ip()?"
+    },
+    {
+      "id": "commit-without-address",
+      "check": "commit needs the address",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "const auto result=!staged||!usable_ip()?",
+      "replace": "const auto result=!staged?"
+    },
+    {
+      "id": "commit-keeps-staged",
+      "check": "a commit ends staging",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "if(result==ESP_OK)staged=false;",
+      "replace": ""
+    },
+    {
+      "id": "commit-failure-ends-staging",
+      "check": "a failed commit keeps staging",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "if(result==ESP_OK)staged=false;",
+      "replace": "staged=false;"
+    },
+    {
+      "id": "commit-ignores-driver",
+      "check": "commit reports the driver result",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "return nc::ESPWiFiDriver::GetInstance().CommitConfiguration()==CHIP_NO_ERROR?ESP_OK:ESP_FAIL;",
+      "replace": "nc::ESPWiFiDriver::GetInstance().CommitConfiguration();return ESP_OK;"
+    },
+    {
+      "id": "commit-keeps-transaction",
+      "check": "commit releases the transaction",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "if(result==ESP_OK)staged=false;\n    xSemaphoreGive(transaction);return result;",
+      "replace": "if(result==ESP_OK)staged=false;\n    return result;"
+    },
+    {
+      "id": "rollback-keeps-staged",
+      "check": "rollback ends staging",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "return nc::ESPWiFiDriver::GetInstance().RevertConfiguration()==CHIP_NO_ERROR?ESP_OK:ESP_FAIL;});staged=false;xSemaphoreGive(transaction);}",
+      "replace": "return nc::ESPWiFiDriver::GetInstance().RevertConfiguration()==CHIP_NO_ERROR?ESP_OK:ESP_FAIL;});xSemaphoreGive(transaction);}"
+    },
+    {
+      "id": "rollback-ignores-transaction",
+      "check": "rollback needs the transaction",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "void rollback(){if(xSemaphoreTake(transaction,0)!=pdTRUE)return;",
+      "replace": "void rollback(){xSemaphoreTake(transaction,0);"
+    },
+    {
+      "id": "export-without-address",
+      "check": "credentials are exported only with an address",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "return usable_ip()&&configured(ssid,password);",
+      "replace": "return configured(ssid,password);"
+    },
+    {
+      "id": "export-unlocked",
+      "check": "the station configuration is read under the stack lock",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);wifi_config_t configuration{};",
+      "replace": "wifi_config_t configuration{};"
+    },
+    {
+      "id": "export-ignores-error",
+      "check": "a failed configuration read exports nothing",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "mbedtls_platform_zeroize(&configuration,sizeof(configuration));return result==ESP_OK;",
+      "replace": "mbedtls_platform_zeroize(&configuration,sizeof(configuration));return true;"
+    },
+    {
+      "id": "export-password-truncated",
+      "check": "the password keeps its stored length",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "strnlen(reinterpret_cast<char*>(configuration.sta.password),64)",
+      "replace": "strnlen(reinterpret_cast<char*>(configuration.sta.password),63)"
+    },
+    {
+      "id": "hostname-not-delegated",
+      "check": "the enrollment hostname is applied by the device settings",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "return device_settings::apply_enrollment_hostname(name);",
+      "replace": "device_settings::apply_enrollment_hostname(name);return ESP_OK;"
+    },
+    {
+      "id": "hostname-read-swapped",
+      "check": "get_hostname reads the device settings",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "hooks.get_hostname=[]{return std::string(device_settings::hostname());};",
+      "replace": "hooks.get_hostname=[]{return std::string();};"
+    },
+    {
+      "id": "install-ignores-failure",
+      "check": "installing needs both semaphores",
+      "file": "components/amity_matter/consortium_network.cpp",
+      "find": "if(!transaction||!completed)return ESP_ERR_NO_MEM;",
+      "replace": "if(!transaction&&!completed)return ESP_ERR_NO_MEM;"
+    }
+  ]
+}

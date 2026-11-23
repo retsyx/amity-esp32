@@ -51,7 +51,23 @@ if(AMITY_TEST_TIER STREQUAL standalone)
             hci-connection-forms hci-minimum-lengths hci-before-delivery hci-under-radio-mutex controller-reset start
             start-failures remote-hooks advertising-refused)
 
-    amity_python_tests(
-        consortium_network_connect_test.py
-    )
+    # As in the firmware build, the hooks' aggregate initializer may leave the
+    # hostname hooks to the assignments that follow it.
+    set(network_includes ${matter_includes} "${T}/crypto_fakes" "${C}/consortium/include" "${C}/amity_system/include"
+        "${C}/device_settings/include")
+    set_source_files_properties("${C}/amity_matter/consortium_network.cpp" "${T}/consortium_network_test.cpp"
+        PROPERTIES COMPILE_OPTIONS -Wno-missing-field-initializers)
+    amity_host_compile(consortium_network
+        SOURCES "${C}/amity_matter/consortium_network.cpp"
+        INCLUDES ${network_includes})
+    amity_test(consortium_network_test PTHREAD
+        SOURCES "${T}/consortium_network_test.cpp"
+        INCLUDES ${network_includes}
+        LIBS amity_matter_fakes core_fakes crypto_fakes consortium_runtime_seams device_settings_seams amity_consortium
+            amity_model
+        REGISTRY
+        SCENARIOS address-at-6s address-at-34900ms immediate-address failed-association absent-callback address-never
+            address-at-deadline address-after-deadline single-budget deadline-between-polls remove-failure add-failure
+            stored-networks refused commit-and-rollback transaction-busy driver-calls exported-credentials
+            hostname-hooks install-failure)
 endif()
