@@ -1,0 +1,335 @@
+{
+  "ctest": "^consortium_admission_crypto_test\\.",
+  "targets": [
+    "consortium_admission_crypto_test"
+  ],
+  "baseline": {
+    "ctest": "^consortium_admission_crypto_test\\.py$",
+    "targets": []
+  },
+  "mutants": [
+    {
+      "id": "stub-wipe-return",
+      "check": "stub: early return from wipe()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "void wipe(std::string& value){",
+      "replace": "void wipe(std::string& value){return;"
+    },
+    {
+      "id": "stub-equal-false",
+      "check": "stub: early return from equal()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "bool equal(std::string_view a,std::string_view b){",
+      "replace": "bool equal(std::string_view a,std::string_view b){return false;"
+    },
+    {
+      "id": "stub-equal-true",
+      "check": "stub: early return from equal()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "bool equal(std::string_view a,std::string_view b){",
+      "replace": "bool equal(std::string_view a,std::string_view b){return true;",
+      "survives": "the bindings are compared after AEAD opens them under keys derived from the transcript, so a transcript mismatch fails before equal() runs"
+    },
+    {
+      "id": "stub-hash-empty",
+      "check": "stub: early return from hash()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "std::string hash(std::string_view input){",
+      "replace": "std::string hash(std::string_view input){return {};"
+    },
+    {
+      "id": "stub-valid_id-false",
+      "check": "stub: early return from valid_id()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "bool valid_id(std::string_view id){",
+      "replace": "bool valid_id(std::string_view id){return false;"
+    },
+    {
+      "id": "stub-valid_id-true",
+      "check": "stub: early return from valid_id()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "bool valid_id(std::string_view id){",
+      "replace": "bool valid_id(std::string_view id){return true;"
+    },
+    {
+      "id": "stub-packet-empty",
+      "check": "stub: early return from packet()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "std::string packet(Message kind,std::string_view payload){",
+      "replace": "std::string packet(Message kind,std::string_view payload){return {};"
+    },
+    {
+      "id": "stub-unpack-false",
+      "check": "stub: early return from unpack()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "bool unpack(std::string_view value,Message kind,std::string_view& payload){",
+      "replace": "bool unpack(std::string_view value,Message kind,std::string_view& payload){return false;"
+    },
+    {
+      "id": "stub-unpack-true",
+      "check": "stub: early return from unpack()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "bool unpack(std::string_view value,Message kind,std::string_view& payload){",
+      "replace": "bool unpack(std::string_view value,Message kind,std::string_view& payload){return true;"
+    },
+    {
+      "id": "stub-prepare-false",
+      "check": "stub: early return from prepare()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "bool prepare(){",
+      "replace": "bool prepare(){return false;"
+    },
+    {
+      "id": "stub-prepare-true",
+      "check": "stub: early return from prepare()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "bool prepare(){",
+      "replace": "bool prepare(){return true;"
+    },
+    {
+      "id": "stub-derive-false",
+      "check": "stub: early return from derive()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "bool derive(std::string_view peer,std::string_view transcript,bool server){",
+      "replace": "bool derive(std::string_view peer,std::string_view transcript,bool server){return false;"
+    },
+    {
+      "id": "stub-derive-true",
+      "check": "stub: early return from derive()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "bool derive(std::string_view peer,std::string_view transcript,bool server){",
+      "replace": "bool derive(std::string_view peer,std::string_view transcript,bool server){return true;"
+    },
+    {
+      "id": "stub-seal-false",
+      "check": "stub: early return from seal()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "bool seal(std::string_view plain,std::string& output){",
+      "replace": "bool seal(std::string_view plain,std::string& output){return false;"
+    },
+    {
+      "id": "stub-seal-true",
+      "check": "stub: early return from seal()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "bool seal(std::string_view plain,std::string& output){",
+      "replace": "bool seal(std::string_view plain,std::string& output){return true;"
+    },
+    {
+      "id": "stub-open-false",
+      "check": "stub: early return from open()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "bool open(std::string_view input,std::string& plain){",
+      "replace": "bool open(std::string_view input,std::string& plain){return false;"
+    },
+    {
+      "id": "stub-open-true",
+      "check": "stub: early return from open()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "bool open(std::string_view input,std::string& plain){",
+      "replace": "bool open(std::string_view input,std::string& plain){return true;"
+    },
+    {
+      "id": "stub-binding-empty",
+      "check": "stub: early return from binding()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "std::string binding(std::string_view role,const Channel& channel){",
+      "replace": "std::string binding(std::string_view role,const Channel& channel){return {};"
+    },
+    {
+      "id": "stub-client-handshake-false",
+      "check": "stub: early return from client-handshake()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "bool AdmissionClient::handshake(const std::function<bool(std::string_view,std::string&)>& exchange){",
+      "replace": "bool AdmissionClient::handshake(const std::function<bool(std::string_view,std::string&)>& exchange){return false;"
+    },
+    {
+      "id": "stub-client-handshake-true",
+      "check": "stub: early return from client-handshake()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "bool AdmissionClient::handshake(const std::function<bool(std::string_view,std::string&)>& exchange){",
+      "replace": "bool AdmissionClient::handshake(const std::function<bool(std::string_view,std::string&)>& exchange){return true;"
+    },
+    {
+      "id": "stub-client-encrypt-false",
+      "check": "stub: early return from client-encrypt()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "bool AdmissionClient::encrypt(std::string_view value,std::string& out){",
+      "replace": "bool AdmissionClient::encrypt(std::string_view value,std::string& out){return false;"
+    },
+    {
+      "id": "stub-client-encrypt-true",
+      "check": "stub: early return from client-encrypt()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "bool AdmissionClient::encrypt(std::string_view value,std::string& out){",
+      "replace": "bool AdmissionClient::encrypt(std::string_view value,std::string& out){return true;"
+    },
+    {
+      "id": "stub-client-decrypt-false",
+      "check": "stub: early return from client-decrypt()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "bool AdmissionClient::decrypt(std::string_view value,std::string& out){",
+      "replace": "bool AdmissionClient::decrypt(std::string_view value,std::string& out){return false;"
+    },
+    {
+      "id": "stub-client-decrypt-true",
+      "check": "stub: early return from client-decrypt()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "bool AdmissionClient::decrypt(std::string_view value,std::string& out){",
+      "replace": "bool AdmissionClient::decrypt(std::string_view value,std::string& out){return true;"
+    },
+    {
+      "id": "stub-server-authenticated-false",
+      "check": "stub: early return from server-authenticated()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "bool AdmissionServer::authenticated()const{",
+      "replace": "bool AdmissionServer::authenticated()const{return false;"
+    },
+    {
+      "id": "stub-server-authenticated-true",
+      "check": "stub: early return from server-authenticated()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "bool AdmissionServer::authenticated()const{",
+      "replace": "bool AdmissionServer::authenticated()const{return true;"
+    },
+    {
+      "id": "stub-server-handshake-false",
+      "check": "stub: early return from server-handshake()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "bool AdmissionServer::handshake(std::string_view input,std::string& output){",
+      "replace": "bool AdmissionServer::handshake(std::string_view input,std::string& output){return false;"
+    },
+    {
+      "id": "stub-server-handshake-true",
+      "check": "stub: early return from server-handshake()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "bool AdmissionServer::handshake(std::string_view input,std::string& output){",
+      "replace": "bool AdmissionServer::handshake(std::string_view input,std::string& output){return true;"
+    },
+    {
+      "id": "stub-server-encrypt-false",
+      "check": "stub: early return from server-encrypt()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "bool AdmissionServer::encrypt(std::string_view value,std::string& out){",
+      "replace": "bool AdmissionServer::encrypt(std::string_view value,std::string& out){return false;"
+    },
+    {
+      "id": "stub-server-encrypt-true",
+      "check": "stub: early return from server-encrypt()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "bool AdmissionServer::encrypt(std::string_view value,std::string& out){",
+      "replace": "bool AdmissionServer::encrypt(std::string_view value,std::string& out){return true;"
+    },
+    {
+      "id": "stub-server-decrypt-false",
+      "check": "stub: early return from server-decrypt()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "bool AdmissionServer::decrypt(std::string_view value,std::string& out){",
+      "replace": "bool AdmissionServer::decrypt(std::string_view value,std::string& out){return false;"
+    },
+    {
+      "id": "stub-server-decrypt-true",
+      "check": "stub: early return from server-decrypt()",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "bool AdmissionServer::decrypt(std::string_view value,std::string& out){",
+      "replace": "bool AdmissionServer::decrypt(std::string_view value,std::string& out){return true;"
+    },
+    {
+      "id": "keys-not-destroyed",
+      "check": "every PSA key a channel creates is destroyed with it",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "~Channel(){if(ephemeral)psa_destroy_key(ephemeral);if(tx)psa_destroy_key(tx);if(rx)psa_destroy_key(rx);}",
+      "replace": "~Channel(){}"
+    },
+    {
+      "id": "ephemeral-kept",
+      "check": "the ephemeral key is destroyed once the shared secret exists",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "psa_destroy_key(ephemeral);ephemeral=0;",
+      "replace": ";"
+    },
+    {
+      "id": "shared-direction-key",
+      "check": "each direction has its own key",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "psa_import_key(&attributes,keys.data()+(server?0:32),32,&rx)",
+      "replace": "psa_import_key(&attributes,keys.data()+(server?32:0),32,&rx)"
+    },
+    {
+      "id": "replay-accepted",
+      "check": "a replayed record is rejected",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "sequence!=rx_sequence+1",
+      "replace": "sequence>rx_sequence+1"
+    },
+    {
+      "id": "header-failure-not-latched",
+      "check": "a rejected record header ends the channel",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "sequence!=rx_sequence+1){failed=true;return false;}",
+      "replace": "sequence!=rx_sequence+1){return false;}"
+    },
+    {
+      "id": "tag-failure-not-latched",
+      "check": "a record that fails authentication ends the channel",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "{wipe(plain);failed=true;return false;}",
+      "replace": "{wipe(plain);return false;}"
+    },
+    {
+      "id": "aad-without-transcript",
+      "check": "records are bound to the handshake transcript",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "const auto aad=transcript_hash+header;",
+      "replace": "const auto aad=header;"
+    },
+    {
+      "id": "server-transcript-request-only",
+      "check": "the server derives keys over the whole hello and welcome transcript",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "std::string(input)+output,true)",
+      "replace": "std::string(input),true)"
+    },
+    {
+      "id": "key-generation-failure-ignored",
+      "check": "a failed key generation fails the handshake",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "if(psa_generate_key(&attributes,&ephemeral)!=PSA_SUCCESS)return false;",
+      "replace": "psa_generate_key(&attributes,&ephemeral);"
+    },
+    {
+      "id": "confirmation-unchecked",
+      "check": "the client verifies the server confirmation",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "!s.channel.open(body,plain)||!equal(plain,binding(\"server\",s.channel))",
+      "replace": "false"
+    },
+    {
+      "id": "handshake-repeatable",
+      "check": "a client handshake runs once",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "if(s.started||!exchange)return false;",
+      "replace": "if(!exchange)return false;"
+    },
+    {
+      "id": "plain-limit-plus-one",
+      "check": "a record carries at most 4000 bytes",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "plain.size()>max_plain",
+      "replace": "plain.size()>max_plain+1"
+    },
+    {
+      "id": "zero-id-accepted",
+      "check": "the all-zero identity is not a valid server identity",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "id!=std::string(32,'0')&&",
+      "replace": ""
+    },
+    {
+      "id": "server-replies-after-confirmation",
+      "check": "the server handshake ends after confirmation",
+      "file": "components/consortium/admission_crypto.cpp",
+      "find": "output=packet(confirmed,encrypted);s.phase=2;s.ready=true;return true;",
+      "replace": "output=packet(confirmed,encrypted);s.phase=1;s.ready=true;return true;"
+    }
+  ]
+}

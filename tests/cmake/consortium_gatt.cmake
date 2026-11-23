@@ -6,8 +6,18 @@
 
 # Consortium GATT transport and the admission exchange it carries.
 if(AMITY_TEST_TIER STREQUAL standalone)
+    amity_host_compile(consortium_admission_crypto
+        SOURCES "${C}/consortium/admission_crypto.cpp"
+        INCLUDES "${T}/crypto_fakes" "${C}/consortium")
+    amity_test(consortium_admission_crypto_test
+        SOURCES "${T}/consortium_admission_crypto_test.cpp"
+        INCLUDES "${T}/crypto_fakes" "${C}/consortium"
+        LIBS consortium_admission_crypto crypto_fakes
+        REGISTRY
+        SCENARIOS round-trip replay key-generation-failure reflected-direction skipped-sequence tampered-ciphertext
+            tampered-tag malformed-header cross-session edited-transcript tampered-confirmation invalid-server-id
+            one-handshake record-size-limit repeated-finish)
     amity_python_tests(
-        consortium_admission_crypto_test.py
         consortium_gatt_admission_test.py
         consortium_gatt_callback_test.py
         consortium_gatt_fragment_test.py

@@ -11,7 +11,6 @@ apple_fabric_lifecycle_test.py pending:G1
 board_profile_config_test.py whole-file
 configuration_snapshot_web_test.py pending:E1
 console_latency_observer_test.py pending:F
-consortium_admission_crypto_test.py pending:P0e
 consortium_admission_startup_test.py pending:A1
 consortium_enrollment_restart_test.py pending:A2
 consortium_firmware_identity_test.py pending:A2

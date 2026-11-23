@@ -81,6 +81,13 @@ target_include_directories(core_fakes PRIVATE "${T}/core_fakes" "${T}")
 target_compile_options(core_fakes PRIVATE ${amity_seam_warnings})
 target_link_libraries(core_fakes PRIVATE strict)
 
+# PSA Crypto over OpenSSL, with the SDK's types and constants, and opaque but
+# complete Mbed TLS types. Tests list "${T}/crypto_fakes" among their INCLUDES.
+add_library(crypto_fakes OBJECT "${T}/crypto_fakes/crypto_fakes.cpp")
+target_include_directories(crypto_fakes PRIVATE "${T}/crypto_fakes" "${T}")
+target_compile_options(crypto_fakes PRIVATE ${amity_seam_warnings})
+target_link_libraries(crypto_fakes PRIVATE strict PUBLIC OpenSSL::Crypto)
+
 # AMITY_TEST_TIER is set only while the area files are read. The functions
 # below label each test with it, and fail anywhere else.
 function(amity_require_tier name)
