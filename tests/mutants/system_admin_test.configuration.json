@@ -1,5 +1,5 @@
 {
-  "ctest": "^(system_admin_test\\.|configuration_snapshot_web_test\\.py$)",
+  "ctest": "^system_admin_test\\.",
   "targets": [
     "system_admin_test"
   ],

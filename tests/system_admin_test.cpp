@@ -383,9 +383,7 @@ void initial_configuration() {
 // A staged configuration waits for an updated image's health. Coordinator
 // authority is withdrawn first, the candidate is published only as passive
 // metadata and the saved record keeps its revision. Until the image is
-// healthy, activation changes nothing. Activation once healthy stays in
-// configuration_snapshot_web_test.py: the hub refuses that save, because
-// nothing has applied the passive metadata the facade compares it with.
+// healthy, activation changes nothing.
 void pending_image() {
     System system(4);
     system.save(direct_configuration());
@@ -404,6 +402,56 @@ void pending_image() {
     CHECK(web_admin::finish_configuration_activation() == ESP_ERR_INVALID_STATE);
     CHECK(commits() == 0 && system.saved == old && system.events.size() == 1);
     CHECK(web_admin::deferred_configuration == candidate && web_admin::configuration_passive);
+}
+
+// Once the updated image is healthy, activation restores coordinator
+// authority and commits the deferred record, which the owner then applies,
+// and changes are accepted again. A failed commit withdraws authority again
+// and keeps the record for the next activation. Activation happens once.
+void pending_image_healthy() {
+    System system(4);
+    system.save(direct_configuration());
+    const auto old = system.saved;
+    system.pending_image = true;
+    system.healthy = false;
+    amity_seam::clear_calls();
+    CHECK(web_admin::load_configuration(system.control) == ESP_OK);
+    const auto candidate = system.journal->staged();
+    CHECK(candidate && web_admin::deferred_configuration == candidate && system.hub.applied_config_revision == 0);
+    system.healthy = true;
+    system.commit_error = ESP_FAIL;
+    system.events.clear();
+    CHECK(web_admin::finish_configuration_activation() == ESP_FAIL);
+    CHECK(commits() == 1 && system.saved == old && system.hub.applied_config_revision == 0);
+    CHECK(system.events == std::vector<std::string>({"enable", "reserve", "commit", "disable"}));
+    CHECK(web_admin::configuration_passive && web_admin::deferred_configuration == candidate);
+    CHECK(system.control.configuration_snapshot() == candidate && !system.control.accepts_local_input());
+    system.commit_error = ESP_OK;
+    system.events.clear();
+    CHECK(web_admin::finish_configuration_activation() == ESP_OK);
+    CHECK(commits() == 2 && system.saved == candidate && system.control.configuration_snapshot() == candidate);
+    CHECK(system.events == std::vector<std::string>({"enable", "reserve", "commit"}));
+    CHECK(!web_admin::configuration_passive && !web_admin::deferred_configuration);
+    CHECK(!web_admin::configuration_is_passive() && system.control.accepts_local_input());
+    CHECK(system.hub.applied_config_revision == candidate->configuration.config_revision);
+    CHECK(web_admin::finish_configuration_activation() == ESP_OK && commits() == 2 && system.events.size() == 3);
+    CHECK(old->configuration.octopuses.front().supported_tentacles == 1);
+}
+
+// The same for a first configuration staged on an updated image.
+void pending_initial_healthy() {
+    System system;
+    system.pending_image = true;
+    system.healthy = false;
+    amity_seam::clear_calls();
+    CHECK(web_admin::load_configuration(system.control) == ESP_OK);
+    const auto candidate = system.journal->staged();
+    CHECK(candidate && !system.saved && web_admin::deferred_configuration == candidate);
+    system.healthy = true;
+    CHECK(web_admin::finish_configuration_activation() == ESP_OK);
+    CHECK(commits() == 1 && system.saved == candidate && system.control.configuration_snapshot() == candidate);
+    CHECK(!web_admin::configuration_passive && !web_admin::deferred_configuration);
+    CHECK(system.hub.applied_config_revision == candidate->configuration.config_revision);
 }
 
 // A failed reservation or commit keeps the snapshot already published and
@@ -1284,6 +1332,8 @@ int main(int argc, char **argv) {
                                {"hardware-change", hardware_change},
                                {"initial-configuration", initial_configuration},
                                {"pending-image", pending_image},
+                               {"pending-image-healthy", pending_image_healthy},
+                               {"pending-initial-healthy", pending_initial_healthy},
                                {"reservation-failure", reservation_failure},
                                {"commit-failure", commit_failure},
                                {"read-failure", read_failure},

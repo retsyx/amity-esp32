@@ -35,14 +35,11 @@ if(AMITY_TEST_TIER STREQUAL sdk)
             httpd_fake amity_model amity_consortium cjson OpenSSL::Crypto
         REGISTRY
         SCENARIOS error-response rejection-before-body retained retained-pending-image hardware-change
-            initial-configuration pending-image reservation-failure commit-failure read-failure foreign-controller
-            deferred-load passive-states config-read config-unavailable admission-contract admission-start
-            admission-completes admission-wrong-name admission-scan-change admission-failure admission-status
-            scan-refusals removal-review removal-reservation-failure removal-update-required removal-marker-failure
-            removal-success removal-forget-failure removal-saved-only removal-metadata-only replacement
-            replacement-review request-fields administrative-paths unknown-change update-cohort system-snapshot
-            system-peers sanity)
-    amity_python_tests(
-        configuration_snapshot_web_test.py
-    )
+            initial-configuration pending-image pending-image-healthy pending-initial-healthy reservation-failure
+            commit-failure read-failure foreign-controller deferred-load passive-states config-read config-unavailable
+            admission-contract admission-start admission-completes admission-wrong-name admission-scan-change
+            admission-failure admission-status scan-refusals removal-review removal-reservation-failure
+            removal-update-required removal-marker-failure removal-success removal-forget-failure removal-saved-only
+            removal-metadata-only replacement replacement-review request-fields administrative-paths unknown-change
+            update-cohort system-snapshot system-peers sanity)
 endif()
