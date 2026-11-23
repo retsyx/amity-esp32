@@ -1259,8 +1259,11 @@ struct HubService::Impl : Adapter {
             const bool added=found==owned_reports.end();
             if(added){owned_reports.emplace_back();found=owned_reports.end()-1;found->owner=octopus;found->boot=local_boot;found->adapter=id;}
             bool changed=engine->hub.update_observation(*found)||added;
-            if(found->discovering!=engine->scan_running||found->discovery_generation!=engine->discovery_generation){
-                found->discovering=engine->scan_running;found->discovery_generation=engine->discovery_generation;changed=true;
+            // A requested scan is in progress from the request, including
+            // while the adapter finishes its current address claim.
+            const bool scanning=engine->pending_scan_sides()!=0;
+            if(found->discovering!=scanning||found->discovery_generation!=engine->discovery_generation){
+                found->discovering=scanning;found->discovery_generation=engine->discovery_generation;changed=true;
             }
             if(changed){observations_changed=true;changed_reports.push_back(*found);}
         }
@@ -1269,7 +1272,7 @@ struct HubService::Impl : Adapter {
         const auto assign=[&](auto& previous,const auto& value){if(!(previous==value)){previous=value;changed=true;}};
         bool discovering=false;uint32_t discovery_generation=0,tx_errors=0,rx_dropped=0;
         for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=adapter(id))if(connector_configured(id)){
-            discovering=discovering||engine->scan_running;discovery_generation+=engine->discovery_generation;
+            discovering=discovering||engine->pending_scan_sides()!=0;discovery_generation+=engine->discovery_generation;
             const auto front_stats=engine->front.statistics(),back_stats=engine->back.statistics();
             tx_errors+=engine->dropped_tx+front_stats.tx_errors+back_stats.tx_errors;
             rx_dropped+=front_stats.rx_dropped+back_stats.rx_dropped;
