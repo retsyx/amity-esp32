@@ -188,6 +188,25 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         scenario_main_test.unknown-scenario scenario_main_test.unregistered-scenario
         scenario_main_test.missing-scenario PROPERTIES WILL_FAIL TRUE)
 
+    # Shared SDK fakes. The scenarios with a pass expression are the cases that must fail.
+    amity_test(core_fakes_test PTHREAD RACE
+        SOURCES "${T}/core_fakes_test.cpp"
+        INCLUDES "${T}/core_fakes"
+        LIBS core_fakes
+        REGISTRY
+        SCENARIOS clock-timers periodic-timer timer-failures delay-leave task-records task-return
+            task-caps-mismatch static-queue queue-timeouts semaphores mutex-ownership timer-wakes-wait
+            blocking-threads endless-wait notifications logs restart-and-checks heap strict-seam
+            seam-behaviour critical-sections app-description)
+    set_tests_properties(core_fakes_test.task-return PROPERTIES
+        PASS_REGULAR_EXPRESSION "task returns returned from its function without deleting itself")
+    set_tests_properties(core_fakes_test.task-caps-mismatch PROPERTIES
+        PASS_REGULAR_EXPRESSION "task caps was created with capabilities but deleted with vTaskDelete")
+    set_tests_properties(core_fakes_test.endless-wait PROPERTIES
+        PASS_REGULAR_EXPRESSION "an endless wait on a semaphore that nothing in this thread can end")
+    set_tests_properties(core_fakes_test.strict-seam PROPERTIES
+        PASS_REGULAR_EXPRESSION "seam heap_caps_get_free_size was called without a behaviour")
+
     # Python tests that read code from several areas
     amity_python_tests(
         controller_integration_test.py

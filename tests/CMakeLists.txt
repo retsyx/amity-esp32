@@ -67,6 +67,20 @@ add_library(amity_consortium STATIC
 target_include_directories(amity_consortium PRIVATE "${C}/consortium/include" "${C}/amity_system/include")
 target_link_libraries(amity_consortium PRIVATE strict)
 
+# Fakes and seams define functions that SDK or firmware headers declare. Each
+# definition must match an earlier declaration, so a changed signature fails
+# to compile instead of adding an unused overload.
+set(amity_seam_warnings $<$<CXX_COMPILER_ID:GNU>:-Werror=missing-declarations>
+    $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Werror=missing-prototypes>)
+
+# The core SDK fakes: error codes, logs, timers, heap capabilities, image
+# descriptors and FreeRTOS on a scripted clock. A test links core_fakes and
+# lists "${T}/core_fakes" first among its INCLUDES, ahead of tests/fakes.
+add_library(core_fakes OBJECT "${T}/core_fakes/core_fakes.cpp")
+target_include_directories(core_fakes PRIVATE "${T}/core_fakes" "${T}")
+target_compile_options(core_fakes PRIVATE ${amity_seam_warnings})
+target_link_libraries(core_fakes PRIVATE strict)
+
 # AMITY_TEST_TIER is set only while the area files are read. The functions
 # below label each test with it, and fail anywhere else.
 function(amity_require_tier name)
