@@ -1,0 +1,299 @@
+{
+  "ctest": "^web_tls_identity_test\\.",
+  "targets": [
+    "web_tls_identity_test"
+  ],
+  "baseline": {
+    "ctest": "^web_tls_identity_test\\.py$",
+    "targets": []
+  },
+  "mutants": [
+    {
+      "id": "stub-valid_certificate_serial-false",
+      "check": "stub: early return from valid_certificate_serial()",
+      "file": "components/web/tls_identity.cpp",
+      "find": "bool valid_certificate_serial(const std::string &pem) {",
+      "replace": "bool valid_certificate_serial(const std::string &pem) { return false;"
+    },
+    {
+      "id": "stub-valid_certificate_serial-true",
+      "check": "stub: early return from valid_certificate_serial()",
+      "file": "components/web/tls_identity.cpp",
+      "find": "bool valid_certificate_serial(const std::string &pem) {",
+      "replace": "bool valid_certificate_serial(const std::string &pem) { return true;"
+    },
+    {
+      "id": "stub-tls_identity-fail",
+      "check": "stub: early return from tls_identity()",
+      "file": "components/web/tls_identity.cpp",
+      "find": "esp_err_t tls_identity(const std::string &hostname,std::string &certificate,std::string &private_key) {",
+      "replace": "esp_err_t tls_identity(const std::string &hostname,std::string &certificate,std::string &private_key) { return ESP_FAIL;"
+    },
+    {
+      "id": "saved-pem-unterminated",
+      "check": "a saved certificate is parsed as PEM, so a valid one is reused",
+      "file": "components/web/tls_identity.cpp",
+      "find": "pem.c_str()),pem.size()+1);",
+      "replace": "pem.c_str()),pem.size());"
+    },
+    {
+      "id": "negative-serial-accepted",
+      "check": "a saved serial with its sign bit set is replaced",
+      "file": "components/web/tls_identity.cpp",
+      "find": "!r && serial.len && !(serial.p[0]&0x80) &&",
+      "replace": "!r && serial.len &&"
+    },
+    {
+      "id": "leading-zero-accepted",
+      "check": "a saved serial with a leading zero octet is replaced unless the next octet needs it",
+      "file": "components/web/tls_identity.cpp",
+      "find": "(serial.p[0]!=0 || (serial.len>1 && (serial.p[1]&0x80)))",
+      "replace": "true"
+    },
+    {
+      "id": "redundant-zero-accepted",
+      "check": "a leading zero before an octet without its top bit set is redundant",
+      "file": "components/web/tls_identity.cpp",
+      "find": "(serial.len>1 && (serial.p[1]&0x80))",
+      "replace": "(serial.len>1)"
+    },
+    {
+      "id": "zero-serial-accepted",
+      "check": "a zero serial is replaced",
+      "file": "components/web/tls_identity.cpp",
+      "find": "(serial.p[0]!=0 ||",
+      "replace": "(serial.p[0]!=0 || serial.len==1 ||"
+    },
+    {
+      "id": "necessary-zero-rejected",
+      "check": "a leading zero before an octet with its top bit set is kept",
+      "file": "components/web/tls_identity.cpp",
+      "find": "(serial.len>1 && (serial.p[1]&0x80))",
+      "replace": "false"
+    },
+    {
+      "id": "reuse-ignored",
+      "check": "a valid saved identity is reused without a draw or a write",
+      "file": "components/web/tls_identity.cpp",
+      "find": "if(a==ESP_OK && b==ESP_OK && valid_certificate_serial(certificate)) return ESP_OK;",
+      "replace": "if(a==ESP_OK && b==ESP_OK && valid_certificate_serial(certificate) && hostname.empty()) return ESP_OK;"
+    },
+    {
+      "id": "key-optional",
+      "check": "a saved certificate without its key is replaced",
+      "file": "components/web/tls_identity.cpp",
+      "find": "if(a==ESP_OK && b==ESP_OK &&",
+      "replace": "if(a==ESP_OK &&"
+    },
+    {
+      "id": "saved-serial-unchecked",
+      "check": "a saved certificate is reused only when its serial is valid DER",
+      "file": "components/web/tls_identity.cpp",
+      "find": "&& valid_certificate_serial(certificate)) return ESP_OK;",
+      "replace": "&& (true || valid_certificate_serial(certificate))) return ESP_OK;"
+    },
+    {
+      "id": "read-error-regenerates",
+      "check": "a read that fails for any reason but a missing record fails the identity",
+      "file": "components/web/tls_identity.cpp",
+      "find": "if((a!=ESP_OK && a!=ESP_ERR_NVS_NOT_FOUND)||(b!=ESP_OK && b!=ESP_ERR_NVS_NOT_FOUND)) return ESP_FAIL;",
+      "replace": ""
+    },
+    {
+      "id": "certificate-read-error-ignored",
+      "check": "a failed certificate read fails the identity",
+      "file": "components/web/tls_identity.cpp",
+      "find": "(a!=ESP_OK && a!=ESP_ERR_NVS_NOT_FOUND)||",
+      "replace": ""
+    },
+    {
+      "id": "key-read-error-ignored",
+      "check": "a failed key read fails the identity",
+      "file": "components/web/tls_identity.cpp",
+      "find": "||(b!=ESP_OK && b!=ESP_ERR_NVS_NOT_FOUND)",
+      "replace": ""
+    },
+    {
+      "id": "missing-record-fails",
+      "check": "a missing identity is generated",
+      "file": "components/web/tls_identity.cpp",
+      "find": "a!=ESP_ERR_NVS_NOT_FOUND)||",
+      "replace": "true)||"
+    },
+    {
+      "id": "p384-key",
+      "check": "the key is P-256",
+      "file": "components/web/tls_identity.cpp",
+      "find": "psa_set_key_bits(&attributes,256);",
+      "replace": "psa_set_key_bits(&attributes,384);"
+    },
+    {
+      "id": "key-not-exportable",
+      "check": "the generated key is copied into the certificate writer",
+      "file": "components/web/tls_identity.cpp",
+      "find": "PSA_KEY_USAGE_SIGN_HASH|PSA_KEY_USAGE_EXPORT|PSA_KEY_USAGE_COPY",
+      "replace": "PSA_KEY_USAGE_SIGN_HASH|PSA_KEY_USAGE_COPY"
+    },
+    {
+      "id": "psa-key-kept",
+      "check": "the generated PSA key is destroyed once copied",
+      "file": "components/web/tls_identity.cpp",
+      "find": "psa_destroy_key(id);",
+      "replace": ""
+    },
+    {
+      "id": "serial-sign-kept",
+      "check": "the serial is 16 octets with no sign octet",
+      "file": "components/web/tls_identity.cpp",
+      "find": "serial[0]=(serial[0]&0x7f)|1;",
+      "replace": "serial[0]=serial[0]|1;"
+    },
+    {
+      "id": "serial-zero-led",
+      "check": "a draw with a zero first octet still gives a minimal positive serial",
+      "file": "components/web/tls_identity.cpp",
+      "find": "serial[0]=(serial[0]&0x7f)|1;",
+      "replace": "serial[0]=serial[0]&0x7f;"
+    },
+    {
+      "id": "serial-unmasked",
+      "check": "every draw gives a minimal positive serial",
+      "file": "components/web/tls_identity.cpp",
+      "find": "serial[0]=(serial[0]&0x7f)|1;",
+      "replace": ""
+    },
+    {
+      "id": "serial-short",
+      "check": "the whole 16-octet draw is the serial",
+      "file": "components/web/tls_identity.cpp",
+      "find": "mbedtls_x509write_crt_set_serial_raw(&cert,serial,sizeof(serial))",
+      "replace": "mbedtls_x509write_crt_set_serial_raw(&cert,serial,8)"
+    },
+    {
+      "id": "draw-short",
+      "check": "the serial is drawn whole from the random source",
+      "file": "components/web/tls_identity.cpp",
+      "find": "esp_fill_random(serial,sizeof(serial));",
+      "replace": "esp_fill_random(serial,8);"
+    },
+    {
+      "id": "version-1",
+      "check": "the certificate is version 3",
+      "file": "components/web/tls_identity.cpp",
+      "find": "MBEDTLS_X509_CRT_VERSION_3",
+      "replace": "MBEDTLS_X509_CRT_VERSION_1"
+    },
+    {
+      "id": "sha384-signature",
+      "check": "the certificate is signed with ECDSA SHA-256",
+      "file": "components/web/tls_identity.cpp",
+      "find": "MBEDTLS_MD_SHA256",
+      "replace": "MBEDTLS_MD_SHA384"
+    },
+    {
+      "id": "subject-ignores-hostname",
+      "check": "the certificate names the board's hostname",
+      "file": "components/web/tls_identity.cpp",
+      "find": "const std::string subject=\"CN=\"+hostname+\",O=Amity\";",
+      "replace": "const std::string subject=\"CN=\"+hostname.substr(0,5)+\",O=Amity\";"
+    },
+    {
+      "id": "subject-without-organization",
+      "check": "the certificate subject names Amity as its organization",
+      "file": "components/web/tls_identity.cpp",
+      "find": "const std::string subject=\"CN=\"+hostname+\",O=Amity\";",
+      "replace": "const std::string subject=\"CN=\"+hostname;"
+    },
+    {
+      "id": "issuer-differs",
+      "check": "the certificate is self-issued",
+      "file": "components/web/tls_identity.cpp",
+      "find": "mbedtls_x509write_crt_set_issuer_name(&cert,subject.c_str())",
+      "replace": "mbedtls_x509write_crt_set_issuer_name(&cert,\"CN=Amity\")"
+    },
+    {
+      "id": "validity-start",
+      "check": "the certificate is valid from 2024",
+      "file": "components/web/tls_identity.cpp",
+      "find": "\"20240101000000\",\"20500101000000\"",
+      "replace": "\"20260101000000\",\"20500101000000\""
+    },
+    {
+      "id": "validity-end",
+      "check": "the certificate is valid until 2050",
+      "file": "components/web/tls_identity.cpp",
+      "find": "\"20240101000000\",\"20500101000000\"",
+      "replace": "\"20240101000000\",\"20400101000000\""
+    },
+    {
+      "id": "ca-certificate",
+      "check": "the certificate is not a CA",
+      "file": "components/web/tls_identity.cpp",
+      "find": "mbedtls_x509write_crt_set_basic_constraints(&cert,0,-1)",
+      "replace": "mbedtls_x509write_crt_set_basic_constraints(&cert,1,-1)"
+    },
+    {
+      "id": "basic-constraints-dropped",
+      "check": "the certificate carries basic constraints",
+      "file": "components/web/tls_identity.cpp",
+      "find": "if(!r) r=mbedtls_x509write_crt_set_basic_constraints(&cert,0,-1);",
+      "replace": ""
+    },
+    {
+      "id": "certificate-signing-usage",
+      "check": "the key is for digital signatures only",
+      "file": "components/web/tls_identity.cpp",
+      "find": "MBEDTLS_X509_KU_DIGITAL_SIGNATURE",
+      "replace": "MBEDTLS_X509_KU_KEY_CERT_SIGN"
+    },
+    {
+      "id": "key-usage-dropped",
+      "check": "the certificate carries a key usage",
+      "file": "components/web/tls_identity.cpp",
+      "find": "if(!r) r=mbedtls_x509write_crt_set_key_usage(&cert,MBEDTLS_X509_KU_DIGITAL_SIGNATURE);",
+      "replace": ""
+    },
+    {
+      "id": "certificate-pem-truncated",
+      "check": "the certificate PEM is written whole",
+      "file": "components/web/tls_identity.cpp",
+      "find": "if(!r) r=mbedtls_x509write_crt_pem(&cert,pem,sizeof(pem));",
+      "replace": "if(!r) r=mbedtls_x509write_crt_pem(&cert,pem,256);"
+    },
+    {
+      "id": "private-key-not-returned",
+      "check": "the generated private key is returned and saved",
+      "file": "components/web/tls_identity.cpp",
+      "find": "if(!r) private_key=reinterpret_cast<char *>(pem);",
+      "replace": ""
+    },
+    {
+      "id": "key-not-saved",
+      "check": "the generated key is saved",
+      "file": "components/web/tls_identity.cpp",
+      "find": "auto e=config_store::write(\"tls_key\",private_key);",
+      "replace": "auto e=ESP_OK;"
+    },
+    {
+      "id": "certificate-write-error-ignored",
+      "check": "a failed certificate write is the result",
+      "file": "components/web/tls_identity.cpp",
+      "find": "return e==ESP_OK?config_store::write(\"tls_cert\",certificate):e;",
+      "replace": "if(e==ESP_OK)config_store::write(\"tls_cert\",certificate);return e;"
+    },
+    {
+      "id": "certificate-written-after-key-error",
+      "check": "a failed key write leaves the certificate unwritten",
+      "file": "components/web/tls_identity.cpp",
+      "find": "return e==ESP_OK?config_store::write(\"tls_cert\",certificate):e;",
+      "replace": "const esp_err_t c=config_store::write(\"tls_cert\",certificate);return e==ESP_OK?c:e;"
+    },
+    {
+      "id": "certificate-saved-first",
+      "check": "the key is saved before the certificate",
+      "file": "components/web/tls_identity.cpp",
+      "find": "auto e=config_store::write(\"tls_key\",private_key);\n    return e==ESP_OK?config_store::write(\"tls_cert\",certificate):e;",
+      "replace": "auto e=config_store::write(\"tls_cert\",certificate);\n    return e==ESP_OK?config_store::write(\"tls_key\",private_key):e;"
+    }
+  ]
+}

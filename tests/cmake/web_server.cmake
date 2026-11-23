@@ -91,10 +91,23 @@ elseif(AMITY_TEST_TIER STREQUAL sdk)
             bounded-write)
     unset(web_idf)
     unset(web_sdk_functions)
+    # The HTTPS identity, built whole against ESP-IDF's pinned Mbed TLS. Its
+    # certificates are also parsed by OpenSSL.
+    set(web_tls_identity_includes "${T}/core_fakes" "${C}/web" "${C}/config_store/include")
+    amity_host_compile(web_tls_identity SOURCES "${C}/web/tls_identity.cpp" INCLUDES ${web_tls_identity_includes})
+    target_link_libraries(web_tls_identity PRIVATE host_mbedtls_x509)
+    amity_test(web_tls_identity_test
+        SOURCES "${T}/web_tls_identity_test.cpp"
+        INCLUDES ${web_tls_identity_includes}
+        LIBS web_tls_identity host_mbedtls_x509 OpenSSL::Crypto
+        REGISTRY
+        SCENARIOS redundant-zero-draw masked-draw necessary-zero-draw all-ones-draw all-zero-draw
+            repair-redundant-zero repair-zero-serial repair-negative-serial repair-garbage preserve-necessary-zero
+            missing-key missing-certificate certificate-read-error key-read-error key-write-error
+            certificate-write-error hostname-subject key-released)
+    unset(web_tls_identity_includes)
     amity_python_tests(
         https_response_write_test.py
         web_stall_test.py
-        web_tls_identity_test.py
     )
-    amity_host_mbedtls_python_tests(web_tls_identity_test.py)
 endif()
