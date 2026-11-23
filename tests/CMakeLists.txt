@@ -68,11 +68,16 @@ function(amity_require_tier name)
 endfunction()
 
 # amity_test(<name> SOURCES ... [INCLUDES ...] [LIBS ...] [DEFINES ...] [PTHREAD]
-#            [ARGS ...] [SCENARIOS ...] [FIXTURES ...])
-# Each scenario becomes its own test, <name>.<scenario>.
+#            [ARGS ...] [SCENARIOS ... [REGISTRY]] [FIXTURES ...])
+# Each scenario becomes its own test, <name>.<scenario>. REGISTRY, for tests
+# built on tests/scenario_main.hpp, adds <name>.scenarios, which fails unless
+# the scenario table compiled into the test names exactly the SCENARIOS.
 function(amity_test name)
-    cmake_parse_arguments(PARSE_ARGV 1 A "PTHREAD" "" "SOURCES;INCLUDES;LIBS;DEFINES;ARGS;SCENARIOS;FIXTURES")
+    cmake_parse_arguments(PARSE_ARGV 1 A "PTHREAD;REGISTRY" "" "SOURCES;INCLUDES;LIBS;DEFINES;ARGS;SCENARIOS;FIXTURES")
     amity_require_tier(${name})
+    if(A_REGISTRY AND NOT A_SCENARIOS)
+        message(FATAL_ERROR "amity_test(${name}): REGISTRY needs SCENARIOS")
+    endif()
     add_executable(${name} ${A_SOURCES})
     # tests/fakes holds the fake headers shared by several tests; each test's
     # own fake directories come first.
@@ -89,6 +94,11 @@ function(amity_test name)
             add_test(NAME ${name}.${scenario} COMMAND ${name} ${scenario} WORKING_DIRECTORY "${ROOT}")
             list(APPEND tests ${name}.${scenario})
         endforeach()
+        if(A_REGISTRY)
+            add_test(NAME ${name}.scenarios COMMAND ${name} --verify-scenarios ${A_SCENARIOS}
+                WORKING_DIRECTORY "${ROOT}")
+            list(APPEND tests ${name}.scenarios)
+        endif()
     else()
         add_test(NAME ${name} COMMAND ${name} ${A_ARGS} WORKING_DIRECTORY "${ROOT}")
         set(tests ${name})

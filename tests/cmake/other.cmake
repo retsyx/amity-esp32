@@ -174,6 +174,20 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         wifi_signal_test.py
     )
 
+    # Scenario test support. The WILL_FAIL tests are the cases that must fail.
+    amity_test(scenario_main_test PTHREAD
+        SOURCES "${T}/scenario_main_test.cpp"
+        REGISTRY
+        SCENARIOS checks threads no-checks failed-check)
+    amity_command_test(scenario_main_test.unknown-scenario scenario_main_test unknown)
+    amity_command_test(scenario_main_test.unregistered-scenario
+        scenario_main_test --verify-scenarios checks threads no-checks)
+    amity_command_test(scenario_main_test.missing-scenario
+        scenario_main_test --verify-scenarios checks threads no-checks failed-check missing)
+    set_tests_properties(scenario_main_test.no-checks scenario_main_test.failed-check
+        scenario_main_test.unknown-scenario scenario_main_test.unregistered-scenario
+        scenario_main_test.missing-scenario PROPERTIES WILL_FAIL TRUE)
+
     # Python tests that read code from several areas
     amity_python_tests(
         controller_integration_test.py
