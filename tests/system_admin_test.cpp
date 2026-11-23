@@ -314,6 +314,201 @@ void rejection_before_body() {
     CHECK(amity_seam::count("amity::consortium::runtime_scan_admission") == 0);
 }
 
+// Configuration loading, deferred activation and reads
+
+unsigned calls(const char *seam) { return unsigned(amity_seam::count(seam)); }
+unsigned serializations() { return calls("config_store::serialize_configuration"); }
+unsigned stages() { return calls("config_store::stage_system_configuration"); }
+unsigned commits() { return calls("config_store::activate_system_configuration"); }
+
+// An unchanged saved record is published as the very snapshot storage
+// returned: nothing staged, committed or serialized, whatever the image state,
+// and nothing is left to activate.
+void retained_configuration(bool pending_image) {
+    System system;
+    system.save(direct_configuration());
+    system.pending_image = pending_image;
+    const auto current = system.saved;
+    amity_seam::clear_calls();
+    CHECK(web_admin::load_configuration(system.control) == ESP_OK);
+    CHECK(calls("config_store::load_system_configuration") == 1 && stages() == 0 && commits() == 0);
+    CHECK(system.control.configuration_snapshot() == current);
+    CHECK(system.control.active_configuration().get() == &current->configuration);
+    CHECK(!web_admin::deferred_configuration && !web_admin::configuration_passive && !web_admin::configuration_is_passive());
+    CHECK(serializations() == 0 && calls("esp_ota_get_state_partition") == 0);
+    CHECK(system.events == std::vector<std::string>({"reserve", "publish"}));
+    CHECK(web_admin::finish_configuration_activation() == ESP_OK && system.events.size() == 2 && commits() == 0);
+}
+void retained() { retained_configuration(false); }
+void retained_pending_image() { retained_configuration(true); }
+
+// More hardware capacity is staged and committed before it is published.
+void hardware_change() {
+    System system(4);
+    system.save(direct_configuration());
+    const auto old = system.saved;
+    ConfigurationSnapshot staged;
+    system.on_commit = [&] {
+        staged = system.journal->staged();
+        CHECK(staged && !system.control.configuration_snapshot());
+    };
+    amity_seam::clear_calls();
+    CHECK(web_admin::load_configuration(system.control) == ESP_OK);
+    CHECK(stages() == 1 && commits() == 1);
+    CHECK(system.events == std::vector<std::string>({"reserve", "commit", "publish"}));
+    const auto published = system.control.configuration_snapshot();
+    CHECK(published == staged && published == system.saved && published != old);
+    CHECK(old->configuration.octopuses.front().supported_tentacles == 1);
+    CHECK(published->configuration.octopuses.front().supported_tentacles == 4);
+    CHECK(!web_admin::deferred_configuration && !web_admin::configuration_passive);
+}
+
+// First boot creates the configuration for this controller and publishes the
+// committed record.
+void initial_configuration() {
+    System system;
+    ConfigurationSnapshot staged;
+    system.on_commit = [&] { staged = system.journal->staged(); };
+    CHECK(web_admin::load_configuration(system.control) == ESP_OK);
+    CHECK(stages() == 1 && commits() == 1);
+    const auto published = system.control.configuration_snapshot();
+    CHECK(published && published == system.saved && published == staged);
+    CHECK(published->configuration.controller_octopus_id == system.control.octopus_id());
+    CHECK(published->configuration.consortium_id == system.control.consortium_id());
+    CHECK(system.events == std::vector<std::string>({"reserve", "commit", "publish"}));
+}
+
+// A staged configuration waits for an updated image's health. Coordinator
+// authority is withdrawn first, the candidate is published only as passive
+// metadata and the saved record keeps its revision. Until the image is
+// healthy, activation changes nothing. Activation once healthy stays in
+// configuration_snapshot_web_test.py: the hub refuses that save, because
+// nothing has applied the passive metadata the facade compares it with.
+void pending_image() {
+    System system(4);
+    system.save(direct_configuration());
+    const auto old = system.saved;
+    system.pending_image = true;
+    system.healthy = false;
+    amity_seam::clear_calls();
+    CHECK(web_admin::load_configuration(system.control) == ESP_OK);
+    const auto candidate = system.journal->staged();
+    CHECK(candidate && stages() == 1 && commits() == 0 && calls("esp_ota_get_state_partition") == 1);
+    CHECK(system.events == std::vector<std::string>({"disable"}));
+    CHECK(web_admin::configuration_passive && web_admin::configuration_is_passive() && !system.control.accepts_local_input());
+    CHECK(web_admin::deferred_configuration == candidate && system.control.configuration_snapshot() == candidate);
+    CHECK(candidate->configuration.octopuses.front().supported_tentacles == 4);
+    CHECK(system.saved == old && old->configuration.octopuses.front().supported_tentacles == 1);
+    CHECK(web_admin::finish_configuration_activation() == ESP_ERR_INVALID_STATE);
+    CHECK(commits() == 0 && system.saved == old && system.events.size() == 1);
+    CHECK(web_admin::deferred_configuration == candidate && web_admin::configuration_passive);
+}
+
+// A failed reservation or commit keeps the snapshot already published and
+// the saved record.
+void failed_activation(bool reservation) {
+    System system(4);
+    system.save(direct_configuration());
+    const auto old = system.saved;
+    CHECK(system.control.configure(old) == ESP_OK && system.control.configuration_snapshot() == old);
+    if (reservation) system.reservation = ESP_FAIL;
+    else system.commit_error = ESP_FAIL;
+    amity_seam::clear_calls();
+    CHECK(web_admin::load_configuration(system.control) == ESP_FAIL);
+    CHECK(system.control.configuration_snapshot() == old && system.saved == old);
+    CHECK(stages() == 1 && commits() == (reservation ? 0u : 1u));
+}
+void reservation_failure() { failed_activation(true); }
+void commit_failure() { failed_activation(false); }
+
+// A record that cannot be read publishes nothing and changes nothing.
+void read_failure() {
+    System system;
+    system.save(direct_configuration());
+    system.read_error = ESP_FAIL;
+    amity_seam::clear_calls();
+    CHECK(web_admin::load_configuration(system.control) == ESP_FAIL);
+    CHECK(!system.control.configuration_snapshot() && stages() == 0 && commits() == 0 && system.events.empty());
+}
+
+// Only the original main loads the active configuration: another controller's
+// record is refused and nothing is published.
+void foreign_controller() {
+    System system;
+    system.save(direct_configuration());
+    system.control.set_identity(id<m::ConsortiumId>(1), id<m::OctopusId>(3));
+    amity_seam::clear_calls();
+    CHECK(web_admin::load_configuration(system.control) == ESP_ERR_INVALID_STATE);
+    CHECK(!system.control.configuration_snapshot() && stages() == 0 && system.events.empty());
+}
+
+// A deferred load reads nothing and leaves the API passive.
+void deferred_load() {
+    System system;
+    system.save(direct_configuration());
+    amity_seam::clear_calls();
+    CHECK(web_admin::load_configuration(system.control, true) == ESP_OK);
+    CHECK(web_admin::configuration_passive && web_admin::configuration_is_passive());
+    CHECK(calls("config_store::load_system_configuration") == 0 && !system.control.configuration_snapshot());
+    CHECK(system.events.empty());
+}
+
+// Changes are refused while startup defers the configuration, and while this
+// Amity is not the coordinator with authority.
+void passive_states() {
+    System system;
+    system.save(direct_configuration());
+    system.boot();
+    CHECK(!web_admin::configuration_is_passive());
+    system.status.authority_ready = false;
+    CHECK(web_admin::configuration_is_passive());
+    system.status.authority_ready = true;
+    system.status.coordinator = false;
+    CHECK(web_admin::configuration_is_passive());
+    system.status.coordinator = true;
+    CHECK(!web_admin::configuration_is_passive());
+    CHECK(web_admin::load_configuration(system.control, true) == ESP_OK && web_admin::configuration_is_passive());
+}
+
+// GET /api/config serves the published record's canonical bytes without
+// serializing. One read keeps its snapshot while a later save is published.
+void config_read() {
+    System system;
+    system.save(direct_configuration());
+    system.boot();
+    auto renamed = system.saved->configuration;
+    renamed.activities[0].label = "Renamed";
+    ++renamed.presentation_revision;
+    const auto next = saved_snapshot(renamed);
+    auto previous = system.control.configuration_snapshot();
+    const auto bytes = previous->canonical;
+    std::weak_ptr<const PreparedConfiguration> retained = previous;
+    amity_seam::clear_calls();
+    system.during_send = [&] {
+        CHECK(system.control.configure(next) == ESP_OK && system.control.configuration_snapshot() == next);
+        system.saved.reset();
+        system.journal.reset();
+        previous.reset();
+        CHECK(!retained.expired());
+        system.during_send = nullptr;
+    };
+    auto reply = send(HTTP_GET, "/api/config");
+    CHECK(reply.handled && reply.result == ESP_OK && reply.response.status == "200 OK");
+    CHECK(reply.response.body == bytes && retained.expired() && serializations() == 0);
+    CHECK(reply.response.type == "application/json");
+    reply = send(HTTP_GET, "/api/config");
+    CHECK(reply.handled && reply.result == ESP_OK && reply.response.body == next->canonical && serializations() == 0);
+}
+
+// Without a published configuration, GET /api/config needs recovery.
+void config_unavailable() {
+    System system;
+    system.save(direct_configuration());
+    CHECK(web_admin::load_configuration(system.control, true) == ESP_OK);
+    const auto reply = send(HTTP_GET, "/api/config");
+    CHECK(rejected(reply, "configuration_unavailable", "409 Conflict"));
+}
+
 // The harness consumes what it scripts: a request body read to its end
 // under its deadline, the saved record loaded and published, the
 // synchronization task created and one response sent.
@@ -348,6 +543,19 @@ int main(int argc, char **argv) {
                            {
                                {"error-response", error_response},
                                {"rejection-before-body", rejection_before_body},
+                               {"retained", retained},
+                               {"retained-pending-image", retained_pending_image},
+                               {"hardware-change", hardware_change},
+                               {"initial-configuration", initial_configuration},
+                               {"pending-image", pending_image},
+                               {"reservation-failure", reservation_failure},
+                               {"commit-failure", commit_failure},
+                               {"read-failure", read_failure},
+                               {"foreign-controller", foreign_controller},
+                               {"deferred-load", deferred_load},
+                               {"passive-states", passive_states},
+                               {"config-read", config_read},
+                               {"config-unavailable", config_unavailable},
                                {"sanity", sanity},
                            });
 }

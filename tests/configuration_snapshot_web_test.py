@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise web startup, OTA deferral and reads with shared real configuration snapshots."""
+"""Exercise deferred configuration activation once an updated image is healthy."""
 from pathlib import Path
 import os
 import shlex
@@ -73,23 +73,15 @@ public:
   authority=on;fixture::events.push_back(on?"enable":"disable");return ESP_OK;
  }
 };
-namespace consortium {
-struct RuntimeStatus {bool coordinator=true,authority_ready=true;};
-RuntimeStatus runtime_status(){return {};}
-}
 }
 namespace system_services {bool firmware_ready(){return fixture::healthy;}}
 enum esp_ota_img_states_t {ESP_OTA_IMG_VALID,ESP_OTA_IMG_PENDING_VERIFY};
 const int* esp_ota_get_running_partition(){static int partition=1;return &partition;}
 esp_err_t esp_ota_get_state_partition(const int*,esp_ota_img_states_t* state){*state=fixture::pending_boot?ESP_OTA_IMG_PENDING_VERIFY:ESP_OTA_IMG_VALID;return ESP_OK;}
-struct httpd_req_t {std::string response,disposition;std::function<void()> during_send;};
-esp_err_t httpd_resp_set_hdr(httpd_req_t* req,const char* name,const char* value){assert(std::string(name)=="Content-Disposition");req->disposition=value;return ESP_OK;}
-namespace web {esp_err_t json(httpd_req_t* req,const std::string& bytes){if(req->during_send)req->during_send();req->response=bytes;return ESP_OK;}}
 namespace web_admin {
 amity::SystemControl* control=nullptr;
 bool configuration_passive=false;
 config_store::ConfigurationSnapshot deferred_configuration;
-esp_err_t error(httpd_req_t* req,const char*,const std::string& message,const char*){req->response=message;return ESP_FAIL;}
 '''
 
 SUITE = r'''
@@ -103,28 +95,6 @@ void reset(bool existing=true){
  fixture::loads=fixture::stages=fixture::commits=fixture::serializations=0;
  fixture::read_error=fixture::stage_error=fixture::commit_error=ESP_OK;
  fixture::healthy=true;fixture::pending_boot=false;fixture::events.clear();
-}
-void retained_configuration_is_shared(){
- for(bool pending:{false,true}){
-  reset();fixture::pending_boot=pending;amity::SystemControl service;const auto current=fixture::saved;
-  assert(load_configuration(service,false)==ESP_OK&&fixture::loads==1&&!fixture::stages&&!fixture::commits);
-  assert(service.published==current&&fixture::loaded==current&&!deferred_configuration&&!configuration_passive);
-  assert(service.active_configuration().get()==&current->configuration&&fixture::serializations==0);
- }
-}
-void changed_hardware_commits_before_publication(){
- reset();amity::SystemControl service;service.capacity=4;const auto old=fixture::saved;
- assert(load_configuration(service,false)==ESP_OK&&fixture::stages==1&&fixture::commits==1);
- assert((fixture::events==std::vector<std::string>{"reserve","commit","publish"}));
- assert(service.published==fixture::staged&&service.published==fixture::saved&&service.published!=old);
- assert(old->configuration.octopuses.front().supported_tentacles==1&&service.published->configuration.octopuses.front().supported_tentacles==4);
- assert(!deferred_configuration);
-}
-void initial_configuration_uses_the_staged_snapshot(){
- reset(false);amity::SystemControl service;
- assert(load_configuration(service,false)==ESP_OK&&fixture::stages==1&&fixture::commits==1);
- assert(service.published&&service.published==fixture::saved&&service.published==fixture::staged);
- assert(service.published->configuration.controller_octopus_id==service.octopus_id());
 }
 void ota_health_defers_the_same_candidate(){
  reset();amity::SystemControl service;service.capacity=4;const auto old=fixture::saved;
@@ -142,43 +112,14 @@ void ota_health_defers_the_same_candidate(){
  assert(old->configuration.octopuses.front().supported_tentacles==1);
  assert(finish_configuration_activation()==ESP_OK&&fixture::commits==2);
 }
-void failures_preserve_the_previous_snapshot(){
- for(bool fail_reservation:{false,true}){
-  reset();amity::SystemControl service;const auto old=fixture::saved;service.published=old;service.capacity=4;
-  if(fail_reservation)service.configure_error=ESP_FAIL;else fixture::commit_error=ESP_FAIL;
-  assert(load_configuration(service,false)==ESP_FAIL&&service.published==old&&fixture::saved==old);
-  assert(fixture::commits==(fail_reservation?0u:1u));
- }
- reset();amity::SystemControl service;fixture::read_error=ESP_FAIL;
- assert(load_configuration(service,false)==ESP_FAIL&&!service.published&&!fixture::stages&&!fixture::commits);
- reset();assert(load_configuration(service,true)==ESP_OK&&configuration_passive&&!fixture::loads&&!service.published);
-}
-void reads_pin_one_revision_and_reuse_canonical_bytes(){
- reset();amity::SystemControl service;assert(load_configuration(service,false)==ESP_OK);
- auto replacement=fixture::saved->configuration;replacement.activities[0].label="Renamed";++replacement.presentation_revision;
- const auto next=saved_snapshot(replacement);
- auto previous=service.published;const auto bytes=previous->canonical;std::weak_ptr<const PreparedConfiguration> retained=previous;
- fixture::serializations=0;
- httpd_req_t req;esp_err_t result=ESP_FAIL;
- req.during_send=[&]{service.published=next;fixture::saved.reset();fixture::loaded.reset();fixture::journal.reset();previous.reset();assert(!retained.expired());};
- assert(read_configuration(&req,"/api/config",result)&&result==ESP_OK&&req.response==bytes&&fixture::serializations==0&&retained.expired());
- req={};assert(read_configuration(&req,"/api/config",result)&&result==ESP_OK&&req.response==next->canonical&&fixture::serializations==0);
- service.published.reset();req={};assert(read_configuration(&req,"/api/config",result)&&result==ESP_FAIL);
-}
-int main(){retained_configuration_is_shared();changed_hardware_commits_before_publication();initial_configuration_uses_the_staged_snapshot();ota_health_defers_the_same_candidate();failures_preserve_the_previous_snapshot();reads_pin_one_revision_and_reuse_canonical_bytes();std::cout<<"PASS web configuration snapshots: shared startup/staging, OTA health deferral and retry, commit-before-publication, unchanged old readers and pinned canonical API reads\n";}
+int main(){ota_health_defers_the_same_candidate();std::cout<<"PASS deferred configuration activation: refused while unhealthy, retained after a failed commit, activated once when healthy\n";}
 '''
 
 
 def main():
     source = (ROOT / 'components/web_admin/system_admin.cpp').read_text()
     actual = ''.join(function(source, signature) for signature in (
-        'bool configuration_is_passive()',
         'esp_err_t load_configuration(', 'esp_err_t finish_configuration_activation()'))
-    router = source[source.index('bool admin_request('):]
-    # Exercise the real snapshot capture and read branches without unrelated UI routes.
-    capture = router[router.index('    const auto published='):router.index('    if(req->method==HTTP_GET)')]
-    config = function(router, '        if(path=="/api/config")')
-    actual += '\nbool read_configuration(httpd_req_t* req,const std::string& path,esp_err_t& result){\n' + capture + config + '\nreturn false;\n}\n'
     cjson = ROOT / 'managed_components/espressif__cjson/cJSON'
     if not (cjson / 'cJSON.c').exists():
         cjson = cjson.parent

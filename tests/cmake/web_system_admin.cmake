@@ -34,7 +34,9 @@ if(AMITY_TEST_TIER STREQUAL sdk)
             adapter_settings_seams group_firmware_update_seams config_store_nvs_seams hub_service_seams core_fakes
             httpd_fake amity_model amity_consortium cjson OpenSSL::Crypto
         REGISTRY
-        SCENARIOS error-response rejection-before-body sanity)
+        SCENARIOS error-response rejection-before-body retained retained-pending-image hardware-change
+            initial-configuration pending-image reservation-failure commit-failure read-failure foreign-controller
+            deferred-load passive-states config-read config-unavailable sanity)
     amity_python_tests(
         configuration_snapshot_web_test.py
         membership_admission_api_test.py

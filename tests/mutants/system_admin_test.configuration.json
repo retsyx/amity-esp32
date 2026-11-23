@@ -1,0 +1,264 @@
+{
+  "ctest": "^(system_admin_test\\.|configuration_snapshot_web_test\\.py$)",
+  "targets": [
+    "system_admin_test"
+  ],
+  "baseline": {
+    "ctest": "^configuration_snapshot_web_test\\.py$",
+    "targets": []
+  },
+  "mutants": [
+    {
+      "id": "stub-configuration_is_passive-false",
+      "check": "stub: early return from configuration_is_passive()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "bool configuration_is_passive(){",
+      "replace": "bool configuration_is_passive(){ return false;"
+    },
+    {
+      "id": "stub-configuration_is_passive-true",
+      "check": "stub: early return from configuration_is_passive()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "bool configuration_is_passive(){",
+      "replace": "bool configuration_is_passive(){ return true;"
+    },
+    {
+      "id": "stub-load_configuration-fail",
+      "check": "stub: early return from load_configuration()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "esp_err_t load_configuration(amity::SystemControl& service,bool defer_configuration){",
+      "replace": "esp_err_t load_configuration(amity::SystemControl& service,bool defer_configuration){ return ESP_FAIL;"
+    },
+    {
+      "id": "stub-finish_configuration_activation-fail",
+      "check": "stub: early return from finish_configuration_activation()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "esp_err_t finish_configuration_activation(){",
+      "replace": "esp_err_t finish_configuration_activation(){ return ESP_FAIL;"
+    },
+    {
+      "id": "stub-admin_request-false",
+      "check": "stub: early return from admin_request()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){",
+      "replace": "bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){ return false;"
+    },
+    {
+      "id": "stub-admin_request-true",
+      "check": "stub: early return from admin_request()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){",
+      "replace": "bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){ return true;"
+    },
+    {
+      "id": "passive-ignores-coordinator",
+      "check": "changes are refused unless this Amity is the coordinator",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "return configuration_passive||!membership.coordinator||!membership.authority_ready;",
+      "replace": "return configuration_passive||!membership.authority_ready;"
+    },
+    {
+      "id": "passive-ignores-authority",
+      "check": "changes are refused until coordinator authority is ready",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "return configuration_passive||!membership.coordinator||!membership.authority_ready;",
+      "replace": "return configuration_passive||!membership.coordinator;"
+    },
+    {
+      "id": "defer-flag-ignored",
+      "check": "a deferred load leaves the API passive",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "configuration_passive=defer_configuration;",
+      "replace": "configuration_passive=((void)defer_configuration,false);"
+    },
+    {
+      "id": "deferred-load-reads",
+      "check": "a deferred load reads nothing",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "configuration_passive=defer_configuration;\n    if(configuration_passive)return ESP_OK;",
+      "replace": "configuration_passive=defer_configuration;"
+    },
+    {
+      "id": "read-error-ignored",
+      "check": "a record that cannot be read is not used",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "}else if(result!=ESP_OK)return result;",
+      "replace": "}else if(false)return result;"
+    },
+    {
+      "id": "foreign-controller-accepted",
+      "check": "only this controller's configuration is loaded",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(candidate.controller_octopus_id!=controller)return ESP_ERR_INVALID_STATE;",
+      "replace": "if(false)return ESP_ERR_INVALID_STATE;"
+    },
+    {
+      "id": "initial-expects-revisions",
+      "check": "a first configuration is staged as the first record",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "const auto expected=initialize?config_store::RevisionPair{}:candidate.revisions();",
+      "replace": "const auto expected=candidate.revisions();"
+    },
+    {
+      "id": "always-staged",
+      "check": "an unchanged record is published without staging",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "const bool staged_configuration=initialize||hardware_changed;",
+      "replace": "const bool staged_configuration=true;"
+    },
+    {
+      "id": "hardware-change-not-staged",
+      "check": "more hardware capacity is staged",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "const bool staged_configuration=initialize||hardware_changed;",
+      "replace": "const bool staged_configuration=initialize;"
+    },
+    {
+      "id": "staged-snapshot-not-read",
+      "check": "the staged snapshot is the one published",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "result=config_store::staged_system_configuration(configuration);if(result!=ESP_OK)return result;",
+      "replace": ""
+    },
+    {
+      "id": "load-serializes",
+      "check": "loading does not serialize the configuration",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "const auto controller=service.octopus_id();",
+      "replace": "const auto controller=service.octopus_id();(void)config_store::serialize_configuration(config_store::Configuration{});"
+    },
+    {
+      "id": "pending-state-ignored",
+      "check": "an image pending verification defers activation",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "boot_state==ESP_OTA_IMG_PENDING_VERIFY",
+      "replace": "boot_state==ESP_OTA_IMG_VALID"
+    },
+    {
+      "id": "unchanged-record-deferred",
+      "check": "an unchanged record is never deferred",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(staged_configuration&&running&&esp_ota_get_state_partition(",
+      "replace": "if(running&&esp_ota_get_state_partition("
+    },
+    {
+      "id": "deferral-keeps-authority",
+      "check": "deferral withdraws coordinator authority first",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "result=service.transition_coordinator_authority(false);if(result!=ESP_OK)return result;",
+      "replace": ""
+    },
+    {
+      "id": "deferral-not-published",
+      "check": "the deferred candidate is published as passive metadata",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "result=service.configure_passive_metadata(configuration);if(result!=ESP_OK)return result;",
+      "replace": ""
+    },
+    {
+      "id": "deferral-not-passive",
+      "check": "a deferred configuration leaves the API passive",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "deferred_configuration=configuration;configuration_passive=true;return ESP_OK;",
+      "replace": "deferred_configuration=configuration;return ESP_OK;"
+    },
+    {
+      "id": "deferral-forgotten",
+      "check": "a deferred configuration is kept for activation",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "deferred_configuration=configuration;configuration_passive=true;return ESP_OK;",
+      "replace": "configuration_passive=true;return ESP_OK;"
+    },
+    {
+      "id": "staged-commit-dropped",
+      "check": "a staged configuration is committed",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "staged_configuration?std::function<esp_err_t()>([&]{return config_store::activate_system_configuration(configuration,message);}):std::function<esp_err_t()>{}",
+      "replace": "std::function<esp_err_t()>{}"
+    },
+    {
+      "id": "configure-result-ignored",
+      "check": "a failed activation fails the load",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "result=service.configure(configuration,staged_configuration?",
+      "replace": "(void)service.configure(configuration,staged_configuration?"
+    },
+    {
+      "id": "activation-without-deferral",
+      "check": "activation with nothing deferred does nothing",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(!deferred_configuration)return ESP_OK;",
+      "replace": ""
+    },
+    {
+      "id": "activation-ignores-health",
+      "check": "activation waits for this image's health",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(!system_services::firmware_ready())return ESP_ERR_INVALID_STATE;",
+      "replace": "if(false)return ESP_ERR_INVALID_STATE;"
+    },
+    {
+      "id": "activation-keeps-authority-off",
+      "check": "activation enables coordinator authority",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "const auto enabled=control->transition_coordinator_authority(true);if(enabled!=ESP_OK)return enabled;",
+      "replace": ""
+    },
+    {
+      "id": "failed-activation-keeps-authority",
+      "check": "a failed activation withdraws authority again",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(activated!=ESP_OK){control->transition_coordinator_authority(false);return activated;}",
+      "replace": "if(activated!=ESP_OK){return activated;}"
+    },
+    {
+      "id": "activation-commit-skipped",
+      "check": "activation commits the deferred configuration",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "std::string message;return config_store::activate_system_configuration(candidate,message);",
+      "replace": "return ESP_OK;"
+    },
+    {
+      "id": "activation-stays-passive",
+      "check": "activation leaves passive mode",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "deferred_configuration.reset();configuration_passive=false;return ESP_OK;",
+      "replace": "deferred_configuration.reset();return ESP_OK;"
+    },
+    {
+      "id": "activation-repeats",
+      "check": "activation happens once",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "deferred_configuration.reset();configuration_passive=false;return ESP_OK;",
+      "replace": "configuration_passive=false;return ESP_OK;"
+    },
+    {
+      "id": "config-read-serializes",
+      "check": "GET /api/config serves the stored canonical bytes",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "result=active?web::json(req,published->canonical):",
+      "replace": "result=active?web::json(req,config_store::serialize_configuration(published->configuration)):"
+    },
+    {
+      "id": "config-read-unpinned",
+      "check": "a read keeps its snapshot while a later save is published",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "const auto published=control->configuration_snapshot();\n    const auto* active=published?&published->configuration:nullptr;",
+      "replace": "const auto* published=control->configuration_snapshot().get();\n    const auto* active=published?&published->configuration:nullptr;"
+    },
+    {
+      "id": "config-read-unpublished",
+      "check": "GET /api/config serves the published configuration",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "const auto* active=published?&published->configuration:nullptr;",
+      "replace": "const auto* active=published?nullptr:&published->configuration;"
+    },
+    {
+      "id": "config-unavailable-status",
+      "check": "a missing configuration is reported as a conflict",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "\"Equipment configuration needs recovery.\",\"409 Conflict\"",
+      "replace": "\"Equipment configuration needs recovery.\",\"404 Not Found\""
+    }
+  ]
+}
