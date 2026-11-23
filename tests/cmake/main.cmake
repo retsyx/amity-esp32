@@ -41,7 +41,13 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         retire-headless retire-published retire-fence-fails retire-web-fails retire-matter-fails retire-homekit-fails
         retire-errors-ranked retire-later-errors-ranked retire-mdns-removal-fails retire-unregistered retire-in-flight
         setup-button-matter setup-button-add
-        await-claim await-member await-claim-lost await-prepared await-recovery)
+        await-claim await-member await-claim-lost await-prepared await-recovery
+        matter-boot-unclaimed matter-boot-configured matter-boot-original matter-boot-fabric matter-boot-original-fabrics
+        matter-boot-member matter-boot-prepared matter-boot-retired matter-boot-recovery matter-boot-uninitialized
+        matter-boot-without-authority matter-boot-enrollment-open matter-boot-firmware-not-ready
+        matter-boot-without-consortium matter-boot-without-activation matter-boot-status-invalid matter-boot-open-retry
+        matter-boot-status-retry matter-boot-open-exhausted matter-boot-status-exhausted matter-boot-open-invalid
+        matter-boot-fabric-appears matter-boot-role-changes matter-boot-authority-lost matter-button-reopens)
     # app_main has two #if blocks. main_test builds with both settings off and
     # main_production_test with both on, so a step inside an #if block fails
     # one of them.
@@ -60,9 +66,12 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         PTHREAD
         REGISTRY
         SCENARIOS ${main_scenarios})
+    # As in the firmware build, an unused function is only a warning, so a
+    # step that one build compiles out fails that build's scenarios.
+    target_compile_options(main_test PRIVATE -Wno-error=unused-function)
+    target_compile_options(main_production_test PRIVATE -Wno-error=unused-function)
     amity_python_tests(
         key_release_timing_test.py
-        matter_auto_commissioning_test.py
         wifi_latency_policy_test.py
     )
 endif()

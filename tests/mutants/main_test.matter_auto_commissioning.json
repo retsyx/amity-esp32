@@ -1,0 +1,232 @@
+{
+  "ctest": "^main_(production_)?test\\.matter-",
+  "baseline": {
+    "ctest": "^matter_auto_commissioning_test\\.py$"
+  },
+  "mutants": [
+    {
+      "id": "stub-open_boot_matter_setup-fail",
+      "check": "stub: early return from open_boot_matter_setup()",
+      "file": "main/main.cpp",
+      "find": "esp_err_t open_boot_matter_setup() {",
+      "replace": "esp_err_t open_boot_matter_setup() { return ESP_FAIL;"
+    },
+    {
+      "id": "stub-start_boot_matter_setup-return",
+      "check": "stub: early return from start_boot_matter_setup()",
+      "file": "main/main.cpp",
+      "find": "void start_boot_matter_setup() {",
+      "replace": "void start_boot_matter_setup() { return;"
+    },
+    {
+      "id": "stub-setup_matter-return",
+      "check": "stub: early return from setup_matter()",
+      "file": "main/main.cpp",
+      "find": "[[gnu::noinline]] void setup_matter(const amity::consortium::RuntimeStatus &group) {",
+      "replace": "[[gnu::noinline]] void setup_matter(const amity::consortium::RuntimeStatus &group) { return;"
+    },
+    {
+      "id": "stub-setup_button-return",
+      "check": "stub: early return from setup_button()",
+      "file": "main/main.cpp",
+      "find": "void setup_button(bool consortium_setup,void*) {",
+      "replace": "void setup_button(bool consortium_setup,void*) { return;"
+    },
+    {
+      "id": "stub-app_main-return",
+      "check": "stub: early return from app_main()",
+      "file": "main/main.cpp",
+      "find": "extern \"C\" void app_main() {",
+      "replace": "extern \"C\" void app_main() { return;"
+    },
+    {
+      "id": "boot-setup-without-healthy-firmware",
+      "check": "boot setup waits for healthy firmware",
+      "file": "main/main.cpp",
+      "find": "esp_err_t open_boot_matter_setup() {\n    if(!system_services::firmware_ready())return ESP_ERR_INVALID_STATE;",
+      "replace": "esp_err_t open_boot_matter_setup() {"
+    },
+    {
+      "id": "boot-setup-uninitialized",
+      "check": "an uninitialized runtime opens no window",
+      "file": "main/main.cpp",
+      "find": "if(!group.initialized||group.member||\n",
+      "replace": "if(group.member||"
+    },
+    {
+      "id": "boot-setup-member",
+      "check": "a member opens no window",
+      "file": "main/main.cpp",
+      "find": "if(!group.initialized||group.member||\n",
+      "replace": "if(!group.initialized||"
+    },
+    {
+      "id": "boot-setup-without-authority",
+      "check": "a coordinator opens a window only with its authority",
+      "file": "main/main.cpp",
+      "find": "!((group.coordinator&&group.authority_ready)||amity::consortium::runtime_original_setup_eligible())",
+      "replace": "!(group.coordinator||amity::consortium::runtime_original_setup_eligible())"
+    },
+    {
+      "id": "boot-setup-original-only",
+      "check": "an eligible unclaimed board opens a window",
+      "file": "main/main.cpp",
+      "find": "!((group.coordinator&&group.authority_ready)||amity::consortium::runtime_original_setup_eligible())",
+      "replace": "!(group.coordinator&&group.authority_ready)"
+    },
+    {
+      "id": "boot-setup-ignores-eligibility",
+      "check": "only an eligible board or a proven original opens a window",
+      "file": "main/main.cpp",
+      "find": "!((group.coordinator&&group.authority_ready)||amity::consortium::runtime_original_setup_eligible())",
+      "replace": "!((group.coordinator&&group.authority_ready)||true)"
+    },
+    {
+      "id": "boot-setup-ignores-status-error",
+      "check": "an unreadable Matter status opens no window",
+      "file": "main/main.cpp",
+      "find": "const auto read=amity_matter_get_status(&matter);\n    if(read!=ESP_OK)return read;",
+      "replace": "const auto read=amity_matter_get_status(&matter);(void)read;"
+    },
+    {
+      "id": "boot-setup-ignores-fabrics",
+      "check": "a board with fabrics opens no window",
+      "file": "main/main.cpp",
+      "find": "    if(matter.fabric_count)return ESP_ERR_INVALID_STATE;\n    return amity_matter_open_commissioning(300);",
+      "replace": "return amity_matter_open_commissioning(300);"
+    },
+    {
+      "id": "boot-setup-two-fabrics",
+      "check": "one fabric is enough to open no window",
+      "file": "main/main.cpp",
+      "find": "    if(matter.fabric_count)return ESP_ERR_INVALID_STATE;",
+      "replace": "if(matter.fabric_count>1)return ESP_ERR_INVALID_STATE;"
+    },
+    {
+      "id": "boot-setup-window-length",
+      "check": "boot setup opens a 300 s window",
+      "file": "main/main.cpp",
+      "find": "return amity_matter_open_commissioning(300);",
+      "replace": "return amity_matter_open_commissioning(301);"
+    },
+    {
+      "id": "boot-retry-attempts",
+      "check": "boot setup tries 50 times",
+      "file": "main/main.cpp",
+      "find": "for(unsigned attempt=0;attempt<50;++attempt){",
+      "replace": "for(unsigned attempt=0;attempt<51;++attempt){"
+    },
+    {
+      "id": "boot-retry-final-delay",
+      "check": "no delay follows the last attempt",
+      "file": "main/main.cpp",
+      "find": "if(attempt+1<50)vTaskDelay(pdMS_TO_TICKS(100));",
+      "replace": "vTaskDelay(pdMS_TO_TICKS(100));"
+    },
+    {
+      "id": "boot-retry-interval",
+      "check": "retries wait 100 ms",
+      "file": "main/main.cpp",
+      "find": "if(attempt+1<50)vTaskDelay(pdMS_TO_TICKS(100));",
+      "replace": "if(attempt+1<50)vTaskDelay(pdMS_TO_TICKS(200));"
+    },
+    {
+      "id": "boot-retry-after-invalid-state",
+      "check": "an ineligible board stops at once",
+      "file": "main/main.cpp",
+      "find": "        if(result==ESP_ERR_INVALID_STATE)return;\n",
+      "replace": ""
+    },
+    {
+      "id": "boot-retry-after-success",
+      "check": "an open window ends the retries",
+      "file": "main/main.cpp",
+      "find": "ESP_LOGI(\"amity\",\"Matter setup opened automatically; no Matter pairing is saved\");return;}",
+      "replace": "ESP_LOGI(\"amity\",\"Matter setup opened automatically; no Matter pairing is saved\");}"
+    },
+    {
+      "id": "boot-retry-latches-role",
+      "check": "each retry reads the live role again",
+      "file": "main/main.cpp",
+      "find": "if(!system_services::firmware_ready())return ESP_ERR_INVALID_STATE;\n    const auto group=amity::consortium::runtime_status();\n    // Current Matter fabrics",
+      "replace": "if(!system_services::firmware_ready())return ESP_ERR_INVALID_STATE;\n    static const auto group=amity::consortium::runtime_status();\n    // Current Matter fabrics"
+    },
+    {
+      "id": "boot-retry-latches-fabrics",
+      "check": "each retry reads the live fabrics again",
+      "file": "main/main.cpp",
+      "find": "amity_matter_status_t matter{};\n    const auto read=amity_matter_get_status(&matter);",
+      "replace": "amity_matter_status_t matter{};\n    static amity_matter_status_t latched{};static const auto read=amity_matter_get_status(&latched);matter=latched;"
+    },
+    {
+      "id": "boot-setup-unguarded",
+      "check": "boot setup needs a running consortium and an activated configuration",
+      "file": "main/main.cpp",
+      "find": "    if(group_start==ESP_OK&&activated==ESP_OK){\n        start_boot_matter_setup();\n    }",
+      "replace": "start_boot_matter_setup();"
+    },
+    {
+      "id": "boot-setup-without-consortium",
+      "check": "boot setup needs a running consortium",
+      "file": "main/main.cpp",
+      "find": "    if(group_start==ESP_OK&&activated==ESP_OK){\n        start_boot_matter_setup();",
+      "replace": "if((group_start==ESP_OK||true)&&activated==ESP_OK){\n        start_boot_matter_setup();"
+    },
+    {
+      "id": "boot-setup-without-activation",
+      "check": "boot setup needs an activated configuration",
+      "file": "main/main.cpp",
+      "find": "    if(group_start==ESP_OK&&activated==ESP_OK){\n        start_boot_matter_setup();",
+      "replace": "if(group_start==ESP_OK&&(activated==ESP_OK||true)){\n        start_boot_matter_setup();"
+    },
+    {
+      "id": "boot-setup-twice",
+      "check": "boot setup runs once",
+      "file": "main/main.cpp",
+      "find": "    if(group_start==ESP_OK&&activated==ESP_OK){\n        start_boot_matter_setup();\n    }",
+      "replace": "if(group_start==ESP_OK&&activated==ESP_OK){\n        start_boot_matter_setup();\n    }\n    start_boot_matter_setup();"
+    },
+    {
+      "id": "boot-setup-before-confirmation",
+      "check": "boot setup follows the confirmed local boot",
+      "file": "main/main.cpp",
+      "find": "    ESP_ERROR_CHECK(system_services::confirm_firmware());\n    const auto activated=web_admin::finish_configuration_activation();\n    if(activated!=ESP_OK)ESP_LOGE(\"amity\",\"Configuration activation needs recovery; active records retained\");\n    if(group_start==ESP_OK&&activated==ESP_OK){\n        const auto synchronization=amity::start_configuration_synchronization(hub);\n        if(synchronization!=ESP_OK)ESP_LOGE(\"amity\",\"Consortium synchronization could not start; peers remain fenced\");\n    }\n    if(group_start==ESP_OK&&activated==ESP_OK){\n        start_boot_matter_setup();\n    }\n    if(awaiting_first_setup)ESP_ERROR_CHECK(xTaskCreate(await_original_task,\"await_setup\",12288,nullptr,2,nullptr)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);",
+      "replace": "const auto activated=web_admin::finish_configuration_activation();\n    if(group_start==ESP_OK&&activated==ESP_OK){\n        start_boot_matter_setup();\n    }\n    ESP_ERROR_CHECK(system_services::confirm_firmware());\n    if(activated!=ESP_OK)ESP_LOGE(\"amity\",\"Configuration activation needs recovery; active records retained\");\n    if(group_start==ESP_OK&&activated==ESP_OK){\n        const auto synchronization=amity::start_configuration_synchronization(hub);\n        if(synchronization!=ESP_OK)ESP_LOGE(\"amity\",\"Consortium synchronization could not start; peers remain fenced\");\n    }\n    if(awaiting_first_setup)ESP_ERROR_CHECK(xTaskCreate(await_original_task,\"await_setup\",12288,nullptr,2,nullptr)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);"
+    },
+    {
+      "id": "boot-setup-after-setup-task",
+      "check": "boot setup comes before the setup task",
+      "file": "main/main.cpp",
+      "find": "    ESP_ERROR_CHECK(system_services::confirm_firmware());\n    const auto activated=web_admin::finish_configuration_activation();\n    if(activated!=ESP_OK)ESP_LOGE(\"amity\",\"Configuration activation needs recovery; active records retained\");\n    if(group_start==ESP_OK&&activated==ESP_OK){\n        const auto synchronization=amity::start_configuration_synchronization(hub);\n        if(synchronization!=ESP_OK)ESP_LOGE(\"amity\",\"Consortium synchronization could not start; peers remain fenced\");\n    }\n    if(group_start==ESP_OK&&activated==ESP_OK){\n        start_boot_matter_setup();\n    }\n    if(awaiting_first_setup)ESP_ERROR_CHECK(xTaskCreate(await_original_task,\"await_setup\",12288,nullptr,2,nullptr)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);",
+      "replace": "ESP_ERROR_CHECK(system_services::confirm_firmware());\n    const auto activated=web_admin::finish_configuration_activation();\n    if(activated!=ESP_OK)ESP_LOGE(\"amity\",\"Configuration activation needs recovery; active records retained\");\n    if(group_start==ESP_OK&&activated==ESP_OK){\n        const auto synchronization=amity::start_configuration_synchronization(hub);\n        if(synchronization!=ESP_OK)ESP_LOGE(\"amity\",\"Consortium synchronization could not start; peers remain fenced\");\n    }\n    if(awaiting_first_setup)ESP_ERROR_CHECK(xTaskCreate(await_original_task,\"await_setup\",12288,nullptr,2,nullptr)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);\n    if(group_start==ESP_OK&&activated==ESP_OK){\n        start_boot_matter_setup();\n    }"
+    },
+    {
+      "id": "boot-setup-external-memory-only",
+      "check": "boot setup is not compiled out without external RAM",
+      "file": "main/main.cpp",
+      "find": "    if(group_start==ESP_OK&&activated==ESP_OK){\n        start_boot_matter_setup();\n    }",
+      "replace": "#if CONFIG_SPIRAM_USE_MALLOC\n    if(group_start==ESP_OK&&activated==ESP_OK){\n        start_boot_matter_setup();\n    }\n#endif"
+    },
+    {
+      "id": "boot-setup-development-updates-only",
+      "check": "boot setup is not compiled out of production builds",
+      "file": "main/main.cpp",
+      "find": "    if(group_start==ESP_OK&&activated==ESP_OK){\n        start_boot_matter_setup();\n    }",
+      "replace": "#if !CONFIG_AMITY_PRODUCTION_UPDATES\n    if(group_start==ESP_OK&&activated==ESP_OK){\n        start_boot_matter_setup();\n    }\n#endif"
+    },
+    {
+      "id": "boot-setup-development-board-only",
+      "check": "boot setup is not compiled out for the default board",
+      "file": "main/main.cpp",
+      "find": "    if(group_start==ESP_OK&&activated==ESP_OK){\n        start_boot_matter_setup();\n    }",
+      "replace": "#ifdef CONFIG_AMITY_BOARD_DEVELOPMENT_4T\n    if(group_start==ESP_OK&&activated==ESP_OK){\n        start_boot_matter_setup();\n    }\n#endif"
+    },
+    {
+      "id": "button-no-matter-setup",
+      "check": "a short setup press offers Matter setup again",
+      "file": "main/main.cpp",
+      "find": "    }else setup_matter(group);",
+      "replace": "}"
+    }
+  ]
+}

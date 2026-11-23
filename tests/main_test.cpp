@@ -339,6 +339,21 @@ void install_hub() {
         });
 }
 
+// Matter's commissioning window: 300 s, counted each time it opens.
+esp_err_t open_window(uint16_t seconds) {
+    CHECK(seconds == 300);
+    if (board.open_failures) {
+        --board.open_failures;
+        return ESP_FAIL;
+    }
+    if (board.open_result != ESP_OK) return board.open_result;
+    if (!board.window_open) {
+        board.window_open = true;
+        ++board.windows;
+    }
+    return ESP_OK;
+}
+
 // Everything app_main calls to boot a board that waits for its first setup.
 void install_boot() {
     install_hub();
@@ -484,19 +499,7 @@ void install_boot() {
     });
     install<&system_services::firmware_ready>([] { return board.firmware_ready; });
     install<&amity::consortium::runtime_original_setup_eligible>([] { return board.setup_eligible; });
-    install<&amity_matter_open_commissioning>([](uint16_t seconds) {
-        CHECK(seconds == 300);
-        if (board.open_failures) {
-            --board.open_failures;
-            return ESP_FAIL;
-        }
-        if (board.open_result != ESP_OK) return board.open_result;
-        if (!board.window_open) {
-            board.window_open = true;
-            ++board.windows;
-        }
-        return ESP_OK;
-    });
+    install<&amity_matter_open_commissioning>(open_window);
     install<&device_settings::hostname>([] { return board.hostname.c_str(); });
 }
 
@@ -1216,6 +1219,238 @@ void await_recovery() {
     CHECK(!original_interfaces_enabled.load());
 }
 
+// The automatic Matter setup at boot. A board's boot opens one 300 s window
+// when its firmware is healthy, its runtime is initialized, it is not a member,
+// it is eligible for original setup or a proven original with authority, and
+// Matter has no fabric. It needs no station address, button or radio.
+
+// The seam calls named after the first call of marker.
+std::size_t calls_after(const char *marker, const char *name) {
+    const auto all = amity_seam::calls();
+    auto at = std::find(all.begin(), all.end(), marker);
+    return at == all.end() ? 0 : std::size_t(std::count(at, all.end(), name));
+}
+
+// Boots and expects one window, opened after the local boot is confirmed and
+// the configuration activated, before the setup task, without waiting.
+void expect_boot_window() {
+    install<&amity_matter_open_commissioning>([](uint16_t seconds) {
+        CHECK(count("system_services::confirm_firmware") == 1 && count("web_admin::finish_configuration_activation") == 1);
+        CHECK(tasks_named("await_setup").empty());
+        return open_window(seconds);
+    });
+    app_main();
+    CHECK(board.windows == 1 && board.window_open && count("amity_matter_open_commissioning") == 1);
+    CHECK(amity_fake::delays() == 0);
+    CHECK(amity_fake::logged("Matter setup opened automatically; no Matter pairing is saved"));
+}
+void matter_boot_unclaimed() {
+    install_boot();
+    expect_boot_window();
+    CHECK(tasks_named("await_setup").size() == 1);
+}
+// Saved activities and running activities do not matter at boot.
+void matter_boot_configured() {
+    install_boot();
+    board.configuration = saved(configuration({"Watch", "Listen"}));
+    board.snapshot.activities.push_back({});
+    expect_boot_window();
+    CHECK(hub.active_configuration() && hub.active_configuration()->activities.size() == 2);
+}
+void matter_boot_original() {
+    install_boot();
+    install_interfaces();
+    original();
+    board.configuration = saved(configuration({"Watch"}));
+    expect_boot_window();
+    CHECK(original_interfaces_enabled.load());
+}
+
+// Boots and expects no window, and no Matter status read for it.
+void expect_no_boot_window() {
+    app_main();
+    CHECK(count("amity_matter_open_commissioning") == 0 && board.windows == 0);
+    CHECK(calls_after("web_admin::finish_configuration_activation", "amity_matter_get_status") == 0);
+    CHECK(amity_fake::delays() == 0);
+}
+void matter_boot_fabric() {
+    install_boot();
+    board.fabrics = 1;
+    app_main();
+    CHECK(count("amity_matter_open_commissioning") == 0 && amity_fake::delays() == 0);
+}
+void matter_boot_original_fabrics() {
+    install_boot();
+    install_interfaces();
+    original();
+    board.fabrics = 5;
+    app_main();
+    CHECK(count("amity_matter_open_commissioning") == 0 && amity_fake::delays() == 0);
+}
+// The status read for the boot decides, even when the runtime's separate
+// eligibility answer disagrees: a member opens no window.
+void matter_boot_member() {
+    install_boot();
+    member();
+    board.setup_eligible = true;
+    expect_no_boot_window();
+}
+void matter_boot_prepared() {
+    install_boot();
+    member();
+    board.startup.role = RuntimeStartup::prepared;
+    board.status.phase = "prepared";
+    expect_no_boot_window();
+}
+void matter_boot_retired() {
+    install_boot();
+    board.status.phase = "retired";
+    board.setup_eligible = false;
+    expect_no_boot_window();
+}
+void matter_boot_recovery() {
+    install_boot();
+    board.startup.role = RuntimeStartup::recovery_required;
+    board.status.phase = "recovery_required";
+    board.setup_eligible = false;
+    expect_no_boot_window();
+}
+// Nor does a runtime that is not initialized.
+void matter_boot_uninitialized() {
+    install_boot();
+    board.status.initialized = false;
+    expect_no_boot_window();
+}
+void matter_boot_without_authority() {
+    install_boot();
+    original();
+    board.status.authority_ready = false;
+    expect_no_boot_window();
+}
+void matter_boot_enrollment_open() {
+    install_boot();
+    board.status.phase = "enrollment_open";
+    board.setup_eligible = false;
+    expect_no_boot_window();
+}
+void matter_boot_firmware_not_ready() {
+    install_boot();
+    board.firmware_ready = false;
+    expect_no_boot_window();
+}
+void matter_boot_without_consortium() {
+    install_boot();
+    board.group_start = ESP_FAIL;
+    expect_no_boot_window();
+}
+void matter_boot_without_activation() {
+    install_boot();
+    board.activation = ESP_FAIL;
+    expect_no_boot_window();
+}
+
+// Failures that start after the configuration is activated, so they reach only
+// the boot setup, not the setup code app_main prints before.
+void after_activation(std::function<void()> failures) {
+    install<&web_admin::finish_configuration_activation>([failures = std::move(failures)] {
+        failures();
+        return board.activation;
+    });
+}
+// Each retry waits 100 ms.
+void retries_every_100_ms(std::function<void()> then = {}) {
+    amity_fake::on_delay([then = std::move(then)](TickType_t ticks) {
+        CHECK(ticks == pdMS_TO_TICKS(100));
+        if (then) then();
+    });
+}
+void matter_boot_status_invalid() {
+    install_boot();
+    after_activation([] { board.status_result = ESP_ERR_INVALID_STATE; });
+    app_main();
+    CHECK(calls_after("web_admin::finish_configuration_activation", "amity_matter_get_status") == 1);
+    CHECK(count("amity_matter_open_commissioning") == 0 && amity_fake::delays() == 0);
+}
+void matter_boot_open_retry() {
+    install_boot();
+    board.open_failures = 2;
+    retries_every_100_ms();
+    app_main();
+    CHECK(count("amity_matter_open_commissioning") == 3 && board.windows == 1 && amity_fake::delays() == 2);
+}
+void matter_boot_status_retry() {
+    install_boot();
+    after_activation([] { board.status_failures = 2; });
+    retries_every_100_ms();
+    app_main();
+    CHECK(calls_after("web_admin::finish_configuration_activation", "amity_matter_get_status") == 3);
+    CHECK(count("amity_matter_open_commissioning") == 1 && board.windows == 1 && amity_fake::delays() == 2);
+}
+void matter_boot_open_exhausted() {
+    install_boot();
+    board.open_result = ESP_FAIL;
+    retries_every_100_ms();
+    app_main();
+    CHECK(count("amity_matter_open_commissioning") == 50 && board.windows == 0 && amity_fake::delays() == 49);
+    CHECK(amity_fake::logged("Could not open Matter setup automatically: ESP_FAIL"));
+}
+void matter_boot_status_exhausted() {
+    install_boot();
+    after_activation([] { board.status_result = ESP_FAIL; });
+    retries_every_100_ms();
+    app_main();
+    CHECK(calls_after("web_admin::finish_configuration_activation", "amity_matter_get_status") == 50);
+    CHECK(count("amity_matter_open_commissioning") == 0 && amity_fake::delays() == 49);
+}
+void matter_boot_open_invalid() {
+    install_boot();
+    board.open_result = ESP_ERR_INVALID_STATE;
+    app_main();
+    CHECK(count("amity_matter_open_commissioning") == 1 && board.windows == 0 && amity_fake::delays() == 0);
+}
+// Each retry reads the live fabrics and role again.
+void matter_boot_fabric_appears() {
+    install_boot();
+    board.open_result = ESP_FAIL;
+    retries_every_100_ms([] { board.fabrics = 1; });
+    app_main();
+    CHECK(count("amity_matter_open_commissioning") == 1 && board.windows == 0 && amity_fake::delays() == 1);
+}
+void matter_boot_role_changes() {
+    install_boot();
+    board.open_result = ESP_FAIL;
+    retries_every_100_ms([] {
+        member();
+        board.status.phase = "prepared";
+    });
+    app_main();
+    CHECK(count("amity_matter_open_commissioning") == 1 && board.windows == 0 && amity_fake::delays() == 1);
+}
+void matter_boot_authority_lost() {
+    install_boot();
+    install_interfaces();
+    original();
+    board.open_result = ESP_FAIL;
+    retries_every_100_ms([] { board.status.authority_ready = false; });
+    app_main();
+    CHECK(count("amity_matter_open_commissioning") == 1 && board.windows == 0 && amity_fake::delays() == 1);
+}
+
+// After the boot window closes, a short setup press offers it again; not once
+// a fabric exists. Neither opens the Add Amity window.
+void matter_button_reopens() {
+    install_boot();
+    app_main();
+    CHECK(board.windows == 1);
+    board.window_open = false;
+    registered.setup(false, registered.setup_context);
+    CHECK(board.windows == 2);
+    board.fabrics = 1;
+    board.window_open = false;
+    registered.setup(false, registered.setup_context);
+    CHECK(board.windows == 2 && !board.window_open);
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -1245,5 +1480,30 @@ int main(int argc, char **argv) {
         {"await-claim-lost", await_claim_lost},
         {"await-prepared", await_prepared},
         {"await-recovery", await_recovery},
+        {"matter-boot-unclaimed", matter_boot_unclaimed},
+        {"matter-boot-configured", matter_boot_configured},
+        {"matter-boot-original", matter_boot_original},
+        {"matter-boot-fabric", matter_boot_fabric},
+        {"matter-boot-original-fabrics", matter_boot_original_fabrics},
+        {"matter-boot-member", matter_boot_member},
+        {"matter-boot-prepared", matter_boot_prepared},
+        {"matter-boot-retired", matter_boot_retired},
+        {"matter-boot-recovery", matter_boot_recovery},
+        {"matter-boot-uninitialized", matter_boot_uninitialized},
+        {"matter-boot-without-authority", matter_boot_without_authority},
+        {"matter-boot-enrollment-open", matter_boot_enrollment_open},
+        {"matter-boot-firmware-not-ready", matter_boot_firmware_not_ready},
+        {"matter-boot-without-consortium", matter_boot_without_consortium},
+        {"matter-boot-without-activation", matter_boot_without_activation},
+        {"matter-boot-status-invalid", matter_boot_status_invalid},
+        {"matter-boot-open-retry", matter_boot_open_retry},
+        {"matter-boot-status-retry", matter_boot_status_retry},
+        {"matter-boot-open-exhausted", matter_boot_open_exhausted},
+        {"matter-boot-status-exhausted", matter_boot_status_exhausted},
+        {"matter-boot-open-invalid", matter_boot_open_invalid},
+        {"matter-boot-fabric-appears", matter_boot_fabric_appears},
+        {"matter-boot-role-changes", matter_boot_role_changes},
+        {"matter-boot-authority-lost", matter_boot_authority_lost},
+        {"matter-button-reopens", matter_button_reopens},
     });
 }
