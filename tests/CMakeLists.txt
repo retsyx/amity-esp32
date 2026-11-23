@@ -96,6 +96,8 @@ target_include_directories(httpd_fake PRIVATE "${T}/core_fakes" "${T}/web_reques
 target_compile_options(httpd_fake PRIVATE ${amity_seam_warnings})
 target_link_libraries(httpd_fake PRIVATE strict)
 
+include("${T}/component_seams/seams.cmake")
+
 # AMITY_TEST_TIER is set only while the area files are read. The functions
 # below label each test with it, and fail anywhere else.
 function(amity_require_tier name)

@@ -218,6 +218,20 @@ if(AMITY_TEST_TIER STREQUAL standalone)
     set_tests_properties(httpd_fake_test.complete-original PROPERTIES
         PASS_REGULAR_EXPRESSION "httpd_req_async_handler_complete of a request that is not an asynchronous copy")
 
+    # Strict seams for firmware files a harness does not build
+    amity_test(component_seams_test
+        SOURCES "${T}/component_seams_test.cpp"
+        INCLUDES "${T}/core_fakes" "${T}/crypto_fakes" "${T}/web_request_fakes" "${C}/consortium"
+            "${C}/consortium/include" "${C}/amity_system/include" "${C}/device_settings/include"
+            "${C}/system_services/include" "${C}/network_diagnostics/include" "${C}/web/include"
+            "${C}/config_store/include" "${C}/amity_hub/include" "${C}/cec/include" "${C}/amity_matter/include"
+            "${C}/amity_homekit/include" "${C}/ble_remote/include" "${C}/radio_control/include"
+        LIBS ${amity_component_seams} core_fakes crypto_fakes httpd_fake amity_model amity_consortium
+        REGISTRY
+        SCENARIOS complete strict runtime credentials services settings web system-control radios)
+    set_tests_properties(component_seams_test.strict PROPERTIES
+        PASS_REGULAR_EXPRESSION "seam amity::consortium::runtime_status was called without a behaviour")
+
     # Python tests that read code from several areas
     amity_python_tests(
         controller_integration_test.py

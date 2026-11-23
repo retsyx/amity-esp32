@@ -19,10 +19,12 @@
 //
 // A member function's behaviour takes the object first:
 // install<&C::f>([](C &self, ...) {...}). An overloaded function names its
-// type: AMITY_SEAM_AS(void (*)(uint32_t), reboot_later, delay). Constructors
-// and destructors have no address, so their keys are constructor<C, Args...>
-// and destructor<C>. Install behaviours before starting threads that call the
-// seams; the call log may be read from any thread.
+// type: AMITY_SEAM_AS(void (*)(uint32_t), reboot_later, delay). A constructor
+// that decides part of the object's state calls the key constructor<R, C,
+// Args...>, whose behaviour takes the new object first and returns that state;
+// other constructors and destructors only record their call. Install
+// behaviours before starting threads that call the seams; the call log may be
+// read from any thread.
 #include "scenario_main.hpp"
 #include <cstddef>
 #include <functional>
@@ -64,9 +66,8 @@ template <auto F> Behaviour<F> &behaviour() {
 template <auto F, typename B> void install(B &&value) { behaviour<F>() = std::forward<B>(value); }
 template <auto F> void uninstall() { behaviour<F>() = nullptr; }
 
-// Keys for constructors and destructors.
-template <typename C, typename... A> void constructor(C &, A...) {}
-template <typename C> void destructor(C &) {}
+// The key for a constructor seam, which has no address of its own.
+template <typename R, typename C, typename... A> R constructor(C &, A...) { return R(); }
 
 struct Journal {
     std::mutex mutex;
