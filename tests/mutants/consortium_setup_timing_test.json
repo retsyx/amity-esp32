@@ -1,0 +1,278 @@
+{
+  "ctest": "^consortium_setup_timing_test\\.",
+  "targets": [
+    "consortium_setup_timing_test"
+  ],
+  "baseline": {
+    "ctest": "^consortium_setup_timing_test\\.py$",
+    "targets": []
+  },
+  "mutants": [
+    {
+      "id": "stub-emit_setup_timing-return",
+      "check": "stub: early return from emit_setup_timing()",
+      "file": "components/consortium/setup_timing.cpp",
+      "find": "void emit_setup_timing(const char *area,const SetupTimingEntry& entry,model::OctopusId peer,model::LinkId link,model::MessageId scan){",
+      "replace": "void emit_setup_timing(const char *area,const SetupTimingEntry& entry,model::OctopusId peer,model::LinkId link,model::MessageId scan){return;"
+    },
+    {
+      "id": "scan-branch-inverted",
+      "check": "a scan-anchored timing uses the scan format",
+      "file": "components/consortium/setup_timing.cpp",
+      "find": "if(scan){",
+      "replace": "if(!scan){"
+    },
+    {
+      "id": "scan-line-without-scan",
+      "check": "the scan format names the scan",
+      "file": "components/consortium/setup_timing.cpp",
+      "find": "entry.result,scan.str().c_str(),peer.str().c_str(),entry.code",
+      "replace": "entry.result,peer.str().c_str(),peer.str().c_str(),entry.code"
+    },
+    {
+      "id": "scan-line-code-zero",
+      "check": "the scan format reports the code",
+      "file": "components/consortium/setup_timing.cpp",
+      "find": "scan.str().c_str(),peer.str().c_str(),entry.code);",
+      "replace": "scan.str().c_str(),peer.str().c_str(),0);"
+    },
+    {
+      "id": "scan-line-elapsed-plus-one",
+      "check": "the scan format reports the elapsed time",
+      "file": "components/consortium/setup_timing.cpp",
+      "find": "static_cast<unsigned long long>(entry.elapsed_ms),entry.result,scan.str()",
+      "replace": "static_cast<unsigned long long>(entry.elapsed_ms+1),entry.result,scan.str()"
+    },
+    {
+      "id": "scan-line-area-dropped",
+      "check": "the scan format names the area",
+      "file": "components/consortium/setup_timing.cpp",
+      "find": "code=%d\",area,entry.stage,",
+      "replace": "code=%d\",\"\",entry.stage,"
+    },
+    {
+      "id": "span-line-area-dropped",
+      "check": "the span format names the area",
+      "file": "components/consortium/setup_timing.cpp",
+      "find": "metric=%s\",area,entry.stage,",
+      "replace": "metric=%s\",\"\",entry.stage,"
+    },
+    {
+      "id": "span-tag-changed",
+      "check": "timings log under the setup_timing tag",
+      "file": "components/consortium/setup_timing.cpp",
+      "find": "ESP_LOGI(\"setup_timing\",\"area=%s stage=%s at_ms=%llu elapsed_ms=%llu result=%s peer=%s",
+      "replace": "ESP_LOGI(\"timing\",\"area=%s stage=%s at_ms=%llu elapsed_ms=%llu result=%s peer=%s"
+    },
+    {
+      "id": "span-at-elapsed-swapped",
+      "check": "the completion time and the elapsed time are distinct fields",
+      "file": "components/consortium/setup_timing.cpp",
+      "find": "static_cast<unsigned long long>(entry.at_ms),static_cast<unsigned long long>(entry.elapsed_ms),entry.result,peer.str()",
+      "replace": "static_cast<unsigned long long>(entry.elapsed_ms),static_cast<unsigned long long>(entry.at_ms),entry.result,peer.str()"
+    },
+    {
+      "id": "span-peer-link-swapped",
+      "check": "the span format names the peer and the link in order",
+      "file": "components/consortium/setup_timing.cpp",
+      "find": "entry.result,peer.str().c_str(),link.str().c_str()",
+      "replace": "entry.result,link.str().c_str(),peer.str().c_str()"
+    },
+    {
+      "id": "span-count-plus-one",
+      "check": "the span format reports the count",
+      "file": "components/consortium/setup_timing.cpp",
+      "find": "unsigned(entry.count)",
+      "replace": "unsigned(entry.count+1)"
+    },
+    {
+      "id": "span-call-wait-swapped",
+      "check": "call and wait times are distinct fields",
+      "file": "components/consortium/setup_timing.cpp",
+      "find": "static_cast<unsigned long long>(entry.call_ms),static_cast<unsigned long long>(entry.wait_ms)",
+      "replace": "static_cast<unsigned long long>(entry.wait_ms),static_cast<unsigned long long>(entry.call_ms)"
+    },
+    {
+      "id": "span-code-zero",
+      "check": "the span format reports the code",
+      "file": "components/consortium/setup_timing.cpp",
+      "find": "entry.code,entry.summed",
+      "replace": "0,entry.summed"
+    },
+    {
+      "id": "metric-always-span",
+      "check": "a summed timing reports metric=sum",
+      "file": "components/consortium/setup_timing.cpp",
+      "find": "entry.summed?\"sum\":\"span\"",
+      "replace": "\"span\""
+    },
+    {
+      "id": "metric-always-sum",
+      "check": "a timed span reports metric=span",
+      "file": "components/consortium/setup_timing.cpp",
+      "find": "entry.summed?\"sum\":\"span\"",
+      "replace": "\"sum\""
+    },
+    {
+      "id": "span-line-over-384",
+      "check": "the longest timing line stays under 384 bytes",
+      "file": "components/consortium/setup_timing.cpp",
+      "find": "ESP_LOGI(\"setup_timing\",\"area=%s stage=%s at_ms=%llu elapsed_ms=%llu result=%s peer=%s link=%s count=%u call_ms=%llu wait_ms=%llu code=%d metric=%s\",area,entry.stage,",
+      "replace": "ESP_LOGI(\"setup_timing\",\"%sarea=%s stage=%s at_ms=%llu elapsed_ms=%llu result=%s peer=%s link=%s count=%u call_ms=%llu wait_ms=%llu code=%d metric=%s\",\"note=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \",area,entry.stage,"
+    },
+    {
+      "id": "span-line-with-token",
+      "check": "timing lines carry no secrets",
+      "file": "components/consortium/setup_timing.cpp",
+      "find": "ESP_LOGI(\"setup_timing\",\"area=%s stage=%s at_ms=%llu elapsed_ms=%llu result=%s peer=%s link=%s count=%u call_ms=%llu wait_ms=%llu code=%d metric=%s\",area,entry.stage,",
+      "replace": "ESP_LOGI(\"setup_timing\",\"%sarea=%s stage=%s at_ms=%llu elapsed_ms=%llu result=%s peer=%s link=%s count=%u call_ms=%llu wait_ms=%llu code=%d metric=%s\",\"token=none \",area,entry.stage,"
+    },
+    {
+      "id": "emit-in-finish",
+      "check": "lines are logged when the timings end, after the guards",
+      "file": "components/consortium/setup_timing.hpp",
+      "find": "entry.code=code;entry.finished=true;",
+      "replace": "entry.code=code;entry.finished=true;emit_setup_timing(area_,entry,peer,link,scan);"
+    },
+    {
+      "id": "emit-before-closing",
+      "check": "a stage still open when the timings end is closed before it is logged",
+      "file": "components/consortium/setup_timing.hpp",
+      "find": "{if(!entries_[i].finished)finish(i,false);emit_setup_timing(area_,entries_[i],peer,link,scan);}",
+      "replace": "{emit_setup_timing(area_,entries_[i],peer,link,scan);if(!entries_[i].finished)finish(i,false);}"
+    },
+    {
+      "id": "open-stage-ok",
+      "check": "a stage still open when the timings end failed",
+      "file": "components/consortium/setup_timing.hpp",
+      "find": "if(!entries_[i].finished)finish(i,false);emit_setup_timing",
+      "replace": "if(!entries_[i].finished)finish(i,true);emit_setup_timing"
+    },
+    {
+      "id": "end-emits-nothing",
+      "check": "every stage is logged when the timings end",
+      "file": "components/consortium/setup_timing.hpp",
+      "find": "~BoundedSetupTimings(){for(size_t i=0;i<size_;++i)",
+      "replace": "~BoundedSetupTimings(){for(size_t i=0;i<0;++i)"
+    },
+    {
+      "id": "begin-without-start",
+      "check": "a stage starts when it begins",
+      "file": "components/consortium/setup_timing.hpp",
+      "find": "entry.stage=stage;entry.at_ms=clock_();",
+      "replace": "entry.stage=stage;"
+    },
+    {
+      "id": "begin-past-capacity",
+      "check": "full timings ignore further stages",
+      "file": "components/consortium/setup_timing.hpp",
+      "find": "if(size_==entries_.size())return size_;",
+      "replace": "if(size_>entries_.size())return size_;"
+    },
+    {
+      "id": "finish-keeps-start",
+      "check": "a stage records when it completed",
+      "file": "components/consortium/setup_timing.hpp",
+      "find": "entry.elapsed_ms=now>=entry.at_ms?now-entry.at_ms:0;entry.at_ms=now;",
+      "replace": "entry.elapsed_ms=now>=entry.at_ms?now-entry.at_ms:0;"
+    },
+    {
+      "id": "finish-zero-elapsed",
+      "check": "a stage records how long it took",
+      "file": "components/consortium/setup_timing.hpp",
+      "find": "entry.elapsed_ms=now>=entry.at_ms?now-entry.at_ms:0;",
+      "replace": "entry.elapsed_ms=0;"
+    },
+    {
+      "id": "finish-result-inverted",
+      "check": "a stage records its result",
+      "file": "components/consortium/setup_timing.hpp",
+      "find": "entry.result=good?\"ok\":\"failed\";",
+      "replace": "entry.result=good?\"failed\":\"ok\";"
+    },
+    {
+      "id": "finish-drops-count",
+      "check": "a stage records its count",
+      "file": "components/consortium/setup_timing.hpp",
+      "find": "entry.count=count;",
+      "replace": "entry.count=count*0;"
+    },
+    {
+      "id": "finish-drops-code",
+      "check": "a stage records its code",
+      "file": "components/consortium/setup_timing.hpp",
+      "find": "entry.code=code;",
+      "replace": "entry.code=code*0;"
+    },
+    {
+      "id": "finish-repeats",
+      "check": "a stage finishes once",
+      "file": "components/consortium/setup_timing.hpp",
+      "find": "auto& entry=entries_[index];if(entry.finished)return;",
+      "replace": "auto& entry=entries_[index];"
+    },
+    {
+      "id": "finish-unstarted",
+      "check": "only a stage that began can finish",
+      "file": "components/consortium/setup_timing.hpp",
+      "find": "if(index>=size_)return;",
+      "replace": "if(index>size_)return;"
+    },
+    {
+      "id": "sum-drops-elapsed",
+      "check": "a summed stage reports its sum",
+      "file": "components/consortium/setup_timing.hpp",
+      "find": "entries_[index].elapsed_ms=elapsed;entries_[index].summed=true;",
+      "replace": "entries_[index].summed=true;"
+    },
+    {
+      "id": "sum-not-summed",
+      "check": "a summed stage reports metric=sum",
+      "file": "components/consortium/setup_timing.hpp",
+      "find": "entries_[index].elapsed_ms=elapsed;entries_[index].summed=true;",
+      "replace": "entries_[index].elapsed_ms=elapsed;"
+    },
+    {
+      "id": "sum-result-inverted",
+      "check": "a summed stage records its result",
+      "file": "components/consortium/setup_timing.hpp",
+      "find": "finish(index,good,count,elapsed);",
+      "replace": "finish(index,!good,count,elapsed);"
+    },
+    {
+      "id": "stub-done-false",
+      "check": "stub: early return from done()",
+      "file": "components/consortium/setup_timing.hpp",
+      "find": "bool done(bool good){",
+      "replace": "bool done(bool good){return false;"
+    },
+    {
+      "id": "stub-done-true",
+      "check": "stub: early return from done()",
+      "file": "components/consortium/setup_timing.hpp",
+      "find": "bool done(bool good){",
+      "replace": "bool done(bool good){return true;"
+    },
+    {
+      "id": "done-result-inverted",
+      "check": "done() closes the open stages with its result",
+      "file": "components/consortium/setup_timing.hpp",
+      "find": "if(!entries_[i].finished)finish(i,good);return good;",
+      "replace": "if(!entries_[i].finished)finish(i,!good);return good;"
+    },
+    {
+      "id": "step-ignores-result",
+      "check": "step() records its action's result",
+      "file": "components/consortium/setup_timing.hpp",
+      "find": "const bool good=action();finish(index,good);",
+      "replace": "const bool good=action();finish(index,true);"
+    },
+    {
+      "id": "step-returns-true",
+      "check": "step() returns its action's result",
+      "file": "components/consortium/setup_timing.hpp",
+      "find": "finish(index,good);return good;}",
+      "replace": "finish(index,good);return true;}"
+    }
+  ]
+}

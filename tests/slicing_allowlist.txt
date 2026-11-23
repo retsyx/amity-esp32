@@ -29,7 +29,6 @@ consortium_removal_test.py pending:A2
 consortium_runtime_admission_test.py pending:A2
 consortium_runtime_status_test.py pending:A1
 consortium_settings_test.py pending:A2
-consortium_setup_timing_test.py pending:P0f
 consortium_synchronization_recovery_test.py pending:A4
 consortium_task_lifetime_test.py pending:A2
 consortium_tcp_ack_trace_test.py pending:A4
