@@ -71,6 +71,14 @@ add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/firmware-layouts.json
     DEPENDS ${CMAKE_BINARY_DIR}/${PROJECT_NAME}.elf ${CMAKE_SOURCE_DIR}/tools/check_firmware_layouts.py VERBATIM)
 add_custom_target(check-firmware-layouts ALL DEPENDS ${CMAKE_BINARY_DIR}/firmware-layouts.json)
 
+# Check that objects which must live in internal RAM or in PSRAM landed there.
+add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/firmware-placement.txt
+    COMMAND ${PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_firmware_placement.py
+        --elf ${CMAKE_BINARY_DIR}/${PROJECT_NAME}.elf
+        --output ${CMAKE_BINARY_DIR}/firmware-placement.txt
+    DEPENDS ${CMAKE_BINARY_DIR}/${PROJECT_NAME}.elf ${CMAKE_SOURCE_DIR}/tools/check_firmware_placement.py VERBATIM)
+add_custom_target(check-firmware-placement ALL DEPENDS ${CMAKE_BINARY_DIR}/firmware-placement.txt)
+
 set(AMITY_RELEASE_SIGNING_KEY "" CACHE FILEPATH "Separate P-256 release-manifest signing key")
 set(AMITY_RELEASE_ARGUMENTS)
 set(AMITY_BUNDLE_ARGUMENTS)
@@ -93,7 +101,7 @@ add_custom_target(ota-release-manifest ALL
         --manifest ${CMAKE_BINARY_DIR}/${PROJECT_NAME}.release.json
         --output ${CMAKE_BINARY_DIR}/${PROJECT_NAME}-partition.bin ${AMITY_BUNDLE_ARGUMENTS}
     BYPRODUCTS ${CMAKE_BINARY_DIR}/${PROJECT_NAME}-partition.bin
-    DEPENDS gen_project_binary check-firmware-layouts VERBATIM)
+    DEPENDS gen_project_binary check-firmware-layouts check-firmware-placement VERBATIM)
 
 # Direct USB flashing and provisioning must install the same self-contained OTA
 # partition as remote staging, so a first-boot primary can update its members.
