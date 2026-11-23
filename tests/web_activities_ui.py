@@ -710,10 +710,11 @@ def main():
                 assert 'Upload an Amity firmware binary' not in page.locator('#advanced').text_content()
                 for bonded in (False, True):
                     for extra, status in [({}, 'Disconnected'), ({'scanning': True}, 'Scanning'),
-                                          ({'connecting': True}, 'Connecting'), ({'last_error': 8}, 'Connection failed')]:
+                                          ({'connecting': True}, 'Connecting'), ({'last_error': 8}, 'Connection failed'),
+                                          ({'last_error': 574, 'link_failed': True}, 'Connection failed')]:
                         fixture['remotes'] = {'bonded': bonded, **extra}
                         page.evaluate('() => refresh()')
-                        expected_remote_status = 'Paired' if bonded else 'Pairing with remote…' if extra.get('connecting') else 'Looking for a nearby remote… Bring it close and put it in pairing mode.' if extra.get('scanning') else 'Pairing failed. Reset the remote’s pairing and try again.' if extra.get('last_error') else 'Not paired'
+                        expected_remote_status = 'Paired' if bonded else 'Pairing with remote…' if extra.get('connecting') else 'Looking for a nearby remote… Bring it close and put it in pairing mode.' if extra.get('scanning') else 'Couldn’t connect to the remote. Try again.' if extra.get('link_failed') else 'Pairing failed. Reset the remote’s pairing and try again.' if extra.get('last_error') else 'Not paired'
                         expect(page.locator('#remoteStatus')).to_have_text(expected_remote_status)
                         expect(page.locator('#remotes progress, #remoteProgress')).to_have_count(0)
                         if bonded:
@@ -793,6 +794,20 @@ def main():
                 expect(page.locator('#remotes progress, #remoteProgress')).to_have_count(0)
                 expect(page.locator('#toggleRemote')).to_be_enabled()
                 passed('search timeout provides a retry instruction without progress')
+                fixture['remotes'].update(last_error=574, link_failed=True)
+                page.evaluate('() => refresh()')
+                expect(page.locator('#remoteStatus')).to_have_text('Couldn’t connect to the remote. Try again.')
+                fixture['remotes'].update(last_error=1285, link_failed=False)
+                page.evaluate('() => refresh()')
+                expect(page.locator('#remoteStatus')).to_have_text('Pairing failed. Reset the remote’s pairing and try again.')
+                expect(page.locator('#toggleRemote')).to_be_enabled()
+                passed('a search ended by a failed link asks to try again, and a refusal to reset the remote')
+                fixture['remotes'] = {'bonded': False, 'pairing': True, 'last_error': 574, 'link_failed': True}
+                page.evaluate('() => refresh()')
+                expect(page.locator('#remoteStatus')).to_have_text('Looking for a nearby remote… Bring it close and put it in pairing mode.')
+                expect(page.locator('#toggleRemote')).to_have_text('Stop pairing')
+                expect(page.locator('#toggleRemote')).to_be_enabled()
+                passed('a search still retrying a failed link keeps looking and offers Stop pairing')
                 for searching in ({'scanning': True}, {'connecting': True}):
                     fixture['remotes'] = {'bonded': False, 'pairing': True, **searching}
                     page.evaluate('() => refresh()')

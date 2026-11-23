@@ -47,6 +47,7 @@ typedef struct {
     int battery_percent; // -1 means unknown.
     int rssi;            // Connected link RSSI in dBm; 127 means unknown.
     int last_error;      // ESP-IDF or NimBLE error, zero after a successful connection.
+    bool link_failed;    // last_error is a link lost before security, not a remote's refusal.
     ble_remote_peer_t peer;
 } ble_remote_status_t;
 

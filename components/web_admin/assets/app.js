@@ -420,7 +420,7 @@ function renderRemotes(r){
  remoteState=r;const paired=!!r.bonded,unpairing=remotePending==='unpair'||!!r.unpairing,searching=!paired&&(!!r.pairing||!!r.connecting||!!r.scanning),busy=!!remotePending||unpairing||searching;
  // A saved bond displays Paired outside unpairing; live connection state belongs in Diagnostics.
  // Keep this tab text-only: do not add a connection or pairing progress indicator.
- setText($('remoteStatus'),unpairing?'Unpairing...':paired?'Paired':r.connecting?'Pairing with remote…':r.pairing&&r.too_far?'Remote detected. Bring it closer to Amity.':r.pairing||r.scanning||remotePending===true?'Looking for a nearby remote… Bring it close and put it in pairing mode.':r.last_error===13?'No nearby remote found. Bring it closer and try again.':r.last_error?'Pairing failed. Reset the remote’s pairing and try again.':'Not paired');renderDiagnostics();
+ setText($('remoteStatus'),unpairing?'Unpairing...':paired?'Paired':r.connecting?'Pairing with remote…':r.pairing&&r.too_far?'Remote detected. Bring it closer to Amity.':r.pairing||r.scanning||remotePending===true?'Looking for a nearby remote… Bring it close and put it in pairing mode.':r.last_error===13?'No nearby remote found. Bring it closer and try again.':r.link_failed?'Couldn’t connect to the remote. Try again.':r.last_error?'Pairing failed. Reset the remote’s pairing and try again.':'Not paired');renderDiagnostics();
  $('toggleRemote').setAttribute('aria-busy',String(busy));
  // Like Matter and HomeKit: the label follows the remote's state, and a pending request only disables it.
  setText($('toggleRemote'),unpairing?'Unpairing...':paired?'Unpair remote':searching?'Stop pairing':'Pair remote');$('toggleRemote').disabled=!!remotePending||unpairing;

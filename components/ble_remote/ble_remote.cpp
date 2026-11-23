@@ -1442,6 +1442,8 @@ extern "C" void ble_remote_get_status(ble_remote_status_t *out) {
             return ble::pairing_candidate(c.supported(), c.connectable, c.attempted,
                 c.rssi, CONFIG_AMITY_REMOTE_PAIRING_MIN_RSSI);
         });
+    // Any later error, or none, replaces the link failure.
+    out->link_failed = state.last_error && state.last_error == link_failure;
     const auto battery = ble::reported_battery(out->bonded, out->connected, {out->battery_percent, out->charging});
     out->battery_percent = battery.percent;
     out->charging = battery.charging;

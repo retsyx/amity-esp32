@@ -921,12 +921,14 @@ int main(int argc, char **argv) {
         auto status = fake::status();
         assert(fake::connects.size() == 1 && !fake::security_calls && status.last_error == reason);
         assert(status.pairing && !status.connecting && fake::warnings[0].find("never reported up") != std::string::npos);
+        assert(status.link_failed);
         // The search tries the remote again on its next turn, without a scan.
         fake::run_steps(1);
         status = fake::status();
         assert(fake::connects.size() == 2 && fake::connects[1].at - fake::connects[0].at == 500000);
         assert(status.connected && status.bonded && !status.pairing && !status.last_error && fake::storage_peer);
         assert(fake::scans == 1);
+        assert(!status.link_failed);
     } else if (scenario == "pairing-retry-unencrypted") {
         // Links lost before encryption: one just after NimBLE reports it, one
         // while pairing. Neither leaves a bond.
@@ -938,13 +940,16 @@ int main(int argc, char **argv) {
         fake::run_steps(1);
         assert(fake::connects.size() == 1 && !fake::security_calls);
         assert(fake::status().last_error == BLE_HS_ENOTCONN && fake::status().pairing);
+        assert(fake::status().link_failed);
         fake::run_steps(1);
         assert(fake::connects.size() == 2 && fake::security_calls == 1 && !fake::host_bond);
         assert(fake::status().last_error == BLE_HS_ENOTCONN && fake::status().pairing);
+        assert(fake::status().link_failed);
         fake::run_steps(1);
         const auto status = fake::status();
         assert(fake::connects.size() == 3 && fake::security_calls == 2);
         assert(status.connected && status.bonded && !status.pairing && !status.last_error && fake::storage_peer);
+        assert(!status.link_failed);
     } else if (scenario == "pairing-retry-exhausted") {
         // Three attempts in all. The last link error stands, and the remote is
         // not tried again while it keeps advertising.
@@ -965,6 +970,10 @@ int main(int argc, char **argv) {
         const auto status = fake::status();
         assert(fake::connects.size() == 3 && fake::now > deadline);
         assert(!status.pairing && !status.scanning && !status.bonded && status.last_error == last);
+        assert(status.link_failed);
+        // The next Pair starts without the old failure.
+        assert(ble_remote_start_pairing(20) == ESP_OK);
+        assert(!fake::status().last_error && !fake::status().link_failed);
     } else if (scenario == "pairing-retry-refusal") {
         // A remote that answers and refuses the bond is not tried again.
         const int refused = BLE_HS_SM_PEER_ERR(BLE_SM_ERR_PAIR_NOT_SUPP);
@@ -975,6 +984,7 @@ int main(int argc, char **argv) {
         fake::run_steps(1);
         assert(fake::connects.size() == 1 && fake::security_calls == 1 && fake::terminations.size() == 1);
         assert(fake::status().last_error == refused && !fake::host_bond);
+        assert(!fake::status().link_failed);
         fake::disconnect(BLE_HS_HCI_ERR(BLE_ERR_CONN_TERM_LOCAL));
         fake::run_steps(1);
         assert(fake::scanning && fake::status().pairing);
@@ -983,6 +993,7 @@ int main(int argc, char **argv) {
         const auto status = fake::status();
         assert(fake::connects.size() == 1 && fake::now > deadline);
         assert(!status.pairing && !status.bonded && status.last_error == refused);
+        assert(!status.link_failed);
     } else if (scenario == "pairing-retry-deadline") {
         // A remote first seen 3 s before the search ends. Its first attempt
         // takes the full connection time; a retry ends by the deadline, and
@@ -1002,6 +1013,7 @@ int main(int argc, char **argv) {
         assert(deadline - fake::connects[0].at == 2500000 && fake::connects[0].duration == 10000);
         assert(deadline - fake::connects[1].at == 2000000 && fake::connects[1].duration == 2000);
         assert(fake::now > deadline && !status.pairing && !status.bonded && status.last_error == last);
+        assert(status.link_failed);
     } else if (scenario == "pairing-retry-search-end") {
         // A link that fails 0.6 s before the search ends is not retried: the
         // remote needs 0.2 s to connect, so a retry in the 0.1 s left would
@@ -1016,11 +1028,11 @@ int main(int argc, char **argv) {
         fake::advertise();
         fake::run_steps(1);
         assert(fake::connects.size() == 1 && deadline - fake::connects[0].at == 600000);
-        assert(fake::status().pairing && fake::status().last_error == failed);
+        assert(fake::status().pairing && fake::status().last_error == failed && fake::status().link_failed);
         fake::run_steps(4);
         const auto status = fake::status();
         assert(fake::connects.size() == 1 && !fake::retries_logged() && fake::now > deadline);
-        assert(!status.pairing && !status.bonded && status.last_error == failed);
+        assert(!status.pairing && !status.bonded && status.last_error == failed && status.link_failed);
     } else if (scenario == "pairing-retry-late-remote") {
         // A remote first seen 0.3 s before the search ends, which needs 0.4 s
         // to connect: its first attempt takes the full connection time.
@@ -1051,7 +1063,7 @@ int main(int argc, char **argv) {
         fake::run_steps(40);
         const auto status = fake::status();
         assert(fake::connects.size() == 1 && !fake::retries_logged() && fake::now > deadline);
-        assert(!status.pairing && !status.bonded && status.last_error == BLE_HS_ETIMEOUT);
+        assert(!status.pairing && !status.bonded && status.last_error == BLE_HS_ETIMEOUT && !status.link_failed);
     } else if (scenario == "pairing-retry-setup-failure") {
         // A link lost after encryption, during discovery, is a failed setup:
         // the remote is not tried again.
@@ -1061,7 +1073,7 @@ int main(int argc, char **argv) {
         fake::advertise();
         fake::run_steps(1);
         assert(fake::connects.size() == 1 && fake::security_calls == 1 && fake::discovery_calls == 1);
-        assert(fake::status().last_error == BLE_HS_ENOTCONN && !fake::host_bond);
+        assert(fake::status().last_error == BLE_HS_ENOTCONN && !fake::status().link_failed && !fake::host_bond);
         fake::disconnect_during_discovery = false;
         fake::run_steps(1);
         assert(fake::scanning && fake::status().pairing);
@@ -1069,7 +1081,7 @@ int main(int argc, char **argv) {
         fake::run_steps(40);
         const auto status = fake::status();
         assert(fake::connects.size() == 1 && !fake::retries_logged() && fake::now > deadline);
-        assert(!status.pairing && !status.bonded && status.last_error == BLE_HS_ENOTCONN);
+        assert(!status.pairing && !status.bonded && status.last_error == BLE_HS_ENOTCONN && !status.link_failed);
     } else if (scenario == "pairing-retry-cleanup-failure") {
         // The link fails before security and removing the remote's bond fails
         // too: the search ends without a retry, and the next Pair removes the
@@ -1085,7 +1097,7 @@ int main(int argc, char **argv) {
         fake::run_steps(1);
         auto status = fake::status();
         assert(!status.pairing && !status.scanning && !status.bonded && status.last_error == failed);
-        assert(fake::connects.size() == 1 && !fake::retries_logged() && fake::scans == 1);
+        assert(status.link_failed && fake::connects.size() == 1 && !fake::retries_logged() && fake::scans == 1);
         fake::bond_delete_error = 0;
         assert(ble_remote_start_pairing(20) == ESP_OK);
         fake::run_steps(1);
