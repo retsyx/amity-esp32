@@ -28,7 +28,6 @@ PREFIX = r'''
 using CHIP_ERROR=int;
 constexpr CHIP_ERROR CHIP_NO_ERROR=0,CHIP_ERROR_BUSY=19;
 [[maybe_unused]] constexpr unsigned portMAX_DELAY=UINT32_MAX;
-constexpr uint16_t player_endpoint=1,speaker_endpoint=2;
 std::atomic<bool> started{false},controller_enabled{true};
 amity_matter_state_t state{};
 std::recursive_mutex chip_mutex;
@@ -41,14 +40,12 @@ public:
     explicit ScopedChipStackLock(unsigned):guard(chip_mutex){++chip_lock_entries;}
 };
 }
-namespace OnOff {constexpr uint32_t Id=6;namespace Attributes {namespace OnOff {constexpr uint32_t Id=0;}}}
-namespace MediaInput {constexpr uint32_t Id=0x506;namespace Attributes {namespace InputList {constexpr uint32_t Id=0;}namespace CurrentInput {constexpr uint32_t Id=1;}}}
-namespace LevelControl {constexpr uint32_t Id=8;namespace Attributes {namespace CurrentLevel {constexpr uint32_t Id=0;}}}
-std::vector<std::tuple<uint16_t,uint32_t,uint32_t>> reports;
+enum class Attribute {power,current_input,input_list,mute,volume,playback_state};
+std::vector<Attribute> reports;
 std::function<void()> during_report;
-void report(uint16_t endpoint,uint32_t cluster,uint32_t attribute){
+void report(Attribute attribute){
     assert((on_chip_task||chip_lock_entries.load())&&started.load()&&controller_enabled.load());
-    reports.emplace_back(endpoint,cluster,attribute);
+    reports.push_back(attribute);
     if(during_report){auto callback=std::move(during_report);during_report={};callback();}
 }
 using Work=std::pair<void(*)(intptr_t),intptr_t>;
@@ -148,8 +145,10 @@ int main(){
 
 
 def main():
-    source = (ROOT / 'components/amity_matter/amity_matter.cpp').read_text()
-    actual = source[source.index('std::mutex state_publication_mutex;'):source.index('std::atomic<bool> started')]
+    source = (ROOT / 'components/amity_matter/controller.cpp').read_text()
+    glue = (ROOT / 'components/amity_matter/amity_matter.cpp').read_text()
+    actual = 'namespace chip_port {\n' + function(glue, 'bool schedule(') + '}\n'
+    actual += source[source.index('std::mutex state_publication_mutex;'):source.index('std::atomic<bool> controller_revoked')]
     actual += function(source, 'void publish_state(intptr_t)')
     actual += function(source, 'extern "C" esp_err_t amity_matter_flush_state(')
     actual += function(source, 'extern "C" esp_err_t amity_matter_update_state(')

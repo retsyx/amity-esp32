@@ -7,6 +7,7 @@
  */
 
 #include "amity_matter.h"
+#include "controller.hpp"
 #include "commissioning_credentials.h"
 #include "diagnostics.h"
 #include "apple_fabrics.h"
@@ -41,6 +42,7 @@ esp_err_t install_consortium_network_hooks();
 
 namespace {
 using namespace chip::app::Clusters;
+using namespace amity_matter;
 using chip::app::CommandResponseHelper;
 using chip::Protocols::InteractionModel::Status;
 constexpr uint16_t player_endpoint = 1;
@@ -48,17 +50,6 @@ constexpr uint16_t speaker_endpoint = 2;
 constexpr uint16_t remote_battery_endpoint = 3;
 constexpr const char *tag = "amity_matter";
 
-amity_matter_callbacks_t callbacks{};
-amity_matter_state_t state{};
-std::mutex state_publication_mutex;
-amity_matter_state_t latest_state{};
-bool state_dirty=false,state_publication_pending=false;
-// Filled from the saved configuration for each use on the CHIP task.
-amity_matter_input_t listed_inputs[AMITY_MATTER_MAX_INPUTS]{};
-std::atomic<bool> started{false}, stack_started{false}, controller_enabled{true};
-std::atomic<bool> controller_revoked{false};
-std::atomic<bool> controller_enrollment_complete{false}, enrollment_check_pending{false};
-std::mutex lifecycle_mutex;
 // CEC does not expose reliable transport feedback. This is the last accepted
 // playback command, never a claim that a source acknowledged a playback state.
 MediaPlayback::PlaybackStateEnum requested_playback = MediaPlayback::PlaybackStateEnum::kNotPlaying;
@@ -68,49 +59,6 @@ esp_err_t result(CHIP_ERROR error)
     if (error == CHIP_NO_ERROR) return ESP_OK;
     ESP_LOGW(tag, "Matter operation failed: %" CHIP_ERROR_FORMAT, error.Format());
     return ESP_FAIL;
-}
-
-void report(uint16_t endpoint, uint32_t cluster, uint32_t attribute)
-{
-    if (controller_enabled.load() && started.load()) MatterReportingAttributeChangeCallback(endpoint, cluster, attribute);
-}
-
-void publish_state(intptr_t)
-{
-    // ScheduleWork runs on the CHIP task with its stack lock already held.
-    // Copy the latest observation only now, after any unrelated CHIP work.
-    amity_matter_state_t next;
-    {
-        std::lock_guard<std::mutex> guard(state_publication_mutex);
-        state_publication_pending=false;
-        if (!controller_enabled.load() || !started.load()) { state_dirty=false;return; }
-        if (!state_dirty) return;
-        next=latest_state;state_dirty=false;
-    }
-    const auto old=state;
-    state=next;
-    if (old.power != state.power)
-        report(player_endpoint, OnOff::Id, OnOff::Attributes::OnOff::Id);
-    if (old.current_input != state.current_input)
-        report(player_endpoint, MediaInput::Id, MediaInput::Attributes::CurrentInput::Id);
-    if (old.config_revision != state.config_revision || old.presentation_revision != state.presentation_revision)
-        report(player_endpoint, MediaInput::Id, MediaInput::Attributes::InputList::Id);
-    if (old.mute_known != state.mute_known || old.muted != state.muted)
-        report(speaker_endpoint, OnOff::Id, OnOff::Attributes::OnOff::Id);
-    if (old.volume_known != state.volume_known || old.volume != state.volume)
-        report(speaker_endpoint, LevelControl::Id, LevelControl::Attributes::CurrentLevel::Id);
-}
-
-esp_err_t dispatch_key(uint8_t key)
-{
-    return controller_enabled.load() && callbacks.key ? callbacks.key(key, callbacks.context) : ESP_ERR_INVALID_STATE;
-}
-
-// Inputs are read from the saved configuration when used, never retained.
-size_t current_inputs()
-{
-    const size_t count = callbacks.inputs ? callbacks.inputs(listed_inputs, AMITY_MATTER_MAX_INPUTS, callbacks.context) : 0;
-    return count <= AMITY_MATTER_MAX_INPUTS ? count : 0;
 }
 
 class Inputs final : public MediaInput::Delegate {
@@ -157,7 +105,7 @@ class Playback final : public MediaPlayback::Delegate {
                                        : MediaPlayback::StatusEnum::kInvalidStateForCommand;
         if (err == ESP_OK) {
             requested_playback = next;
-            report(player_endpoint, MediaPlayback::Id, MediaPlayback::Attributes::CurrentState::Id);
+            report(Attribute::playback_state);
         }
         (void)result(helper.Success(response));
     }
@@ -315,24 +263,6 @@ esp_err_t attribute_changed(esp_matter::attribute::callback_type_t, uint16_t, ui
                             uint32_t, esp_matter_attr_val_t *, void *)
 {
     return ESP_OK;
-}
-
-void finish_controller_enrollment(intptr_t)
-{
-    enrollment_check_pending.store(false);
-    if (!controller_enabled.load() || !started.load()) return;
-    auto &server = chip::Server::GetInstance();
-    if (!server.GetFailSafeContext().IsFailSafeFullyDisarmed() ||
-        server.GetFabricTable().begin() == server.GetFabricTable().end() ||
-        !chip::DeviceLayer::ConnectivityMgr().IsWiFiStationProvisioned() ||
-        !chip::DeviceLayer::ConnectivityMgr().IsWiFiStationConnected()) return;
-    // NetworkCommissioningCluster handles the same completion event, but its
-    // commit error is ignored by the SDK. Check it explicitly before role CAS.
-    if (chip::DeviceLayer::NetworkCommissioning::ESPWiFiDriver::GetInstance().CommitConfiguration() != CHIP_NO_ERROR) {
-        ESP_LOGE(tag, "Controller enrollment Wi-Fi commit failed; user interfaces remain closed");
-        return;
-    }
-    controller_enrollment_complete.store(true);
 }
 
 void event_callback(const chip::DeviceLayer::ChipDeviceEvent *event, intptr_t)
@@ -498,49 +428,6 @@ extern "C" esp_err_t amity_matter_start(const amity_matter_callbacks_t *app_call
     return ESP_OK;
 }
 
-extern "C" bool amity_matter_controller_enrollment_complete(void)
-{
-    if (!controller_enabled.load() || !started.load()) return false;
-    if (controller_enrollment_complete.load()) return true;
-    // Polling also recovers a retained legacy fabric after Wi-Fi reconnects.
-    // Keep at most one verification callback queued on the CHIP task.
-    bool expected = false;
-    if (enrollment_check_pending.compare_exchange_strong(expected, true) &&
-        chip::DeviceLayer::PlatformMgr().ScheduleWork(finish_controller_enrollment, 0) != CHIP_NO_ERROR)
-        enrollment_check_pending.store(false);
-    return false;
-}
-
-extern "C" esp_err_t amity_matter_update_state(const amity_matter_state_t *next)
-{
-    if (!next || (next->volume_known && next->volume > 254)) return ESP_ERR_INVALID_ARG;
-    {
-        std::lock_guard<std::mutex> guard(state_publication_mutex);
-        if (!controller_enabled.load()) return ESP_OK;
-        latest_state=*next;
-        if (!started.load()) { state=*next;return ESP_OK; }
-        state_dirty=true;
-    }
-    return amity_matter_flush_state();
-}
-
-extern "C" esp_err_t amity_matter_flush_state(void)
-{
-    {
-        std::lock_guard<std::mutex> guard(state_publication_mutex);
-        if (!started.load() || !controller_enabled.load() || !state_dirty || state_publication_pending)
-            return ESP_OK;
-        state_publication_pending=true;
-    }
-    // The pinned platform implementation waits at most one RTOS tick for
-    // queue admission; it never acquires the CHIP stack lock here.
-    const auto error=chip::DeviceLayer::PlatformMgr().ScheduleWork(publish_state,0);
-    if (error==CHIP_NO_ERROR) return ESP_OK;
-    std::lock_guard<std::mutex> guard(state_publication_mutex);
-    state_publication_pending=false; // Keep the dirty final observation for the background retry.
-    return ESP_FAIL;
-}
-
 extern "C" esp_err_t amity_matter_update_remote(bool paired, bool connected, int percent, int charging)
 {
     if (percent < -1 || percent > 100 || charging < -1 || charging > 1) return ESP_ERR_INVALID_ARG;
@@ -641,28 +528,68 @@ extern "C" esp_err_t amity_matter_remove_fabric(uint8_t index)
     return result(table.Delete(index));
 }
 
-extern "C" esp_err_t amity_matter_set_controller_enabled(bool enabled) {
-    if (!enabled) { controller_revoked.store(true); controller_enabled.store(false); } // revoke before waiting
-    std::lock_guard<std::mutex> lifecycle(lifecycle_mutex);
-    if (enabled) {
-        if (controller_revoked.load()) return ESP_ERR_INVALID_STATE;
-        controller_enabled.store(true); return ESP_OK;
-    }
-    if (!stack_started.load() || !started.load()) return ESP_OK;
-    esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
-    chip::app::DnssdServer::Instance().StopServer();
-    auto& registry = chip::app::AttributeAccessInterfaceRegistry::Instance();
-    registry.Unregister(&observed_onoff); registry.Unregister(&observed_volume);
-    amity_matter::stop_apple_fabric_cleanup();
-    chip::Server::GetInstance().Shutdown();
-    started.store(false);
-    ESP_LOGI(tag, "Matter user services stopped; fabrics and shared network/BLE host retained");
-    return ESP_OK;
+namespace amity_matter::chip_port {
+
+bool schedule(void (*work)(intptr_t))
+{
+    return chip::DeviceLayer::PlatformMgr().ScheduleWork(work, 0) == CHIP_NO_ERROR;
 }
 
-// The checked-in link wrapper also fences ESP-Matter's private IP-event callback.
-// The pinned SDK would otherwise restart home discovery after Server shutdown.
-extern "C" void __real__ZN4chip3app11DnssdServer11StartServerEv(void*);
-extern "C" void __wrap__ZN4chip3app11DnssdServer11StartServerEv(void* self) {
-    if (controller_enabled.load()) __real__ZN4chip3app11DnssdServer11StartServerEv(self);
+void report(Attribute attribute)
+{
+    switch (attribute) {
+    case Attribute::power:
+        MatterReportingAttributeChangeCallback(player_endpoint, OnOff::Id, OnOff::Attributes::OnOff::Id);
+        break;
+    case Attribute::current_input:
+        MatterReportingAttributeChangeCallback(player_endpoint, MediaInput::Id, MediaInput::Attributes::CurrentInput::Id);
+        break;
+    case Attribute::input_list:
+        MatterReportingAttributeChangeCallback(player_endpoint, MediaInput::Id, MediaInput::Attributes::InputList::Id);
+        break;
+    case Attribute::mute:
+        MatterReportingAttributeChangeCallback(speaker_endpoint, OnOff::Id, OnOff::Attributes::OnOff::Id);
+        break;
+    case Attribute::volume:
+        MatterReportingAttributeChangeCallback(speaker_endpoint, LevelControl::Id, LevelControl::Attributes::CurrentLevel::Id);
+        break;
+    case Attribute::playback_state:
+        MatterReportingAttributeChangeCallback(player_endpoint, MediaPlayback::Id, MediaPlayback::Attributes::CurrentState::Id);
+        break;
+    }
+}
+
+void with_stack_lock(void (*fn)())
+{
+    esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
+    fn();
+}
+
+bool fail_safe_disarmed() { return chip::Server::GetInstance().GetFailSafeContext().IsFailSafeFullyDisarmed(); }
+
+bool has_fabric()
+{
+    auto &server = chip::Server::GetInstance();
+    return server.GetFabricTable().begin() != server.GetFabricTable().end();
+}
+
+bool station_provisioned() { return chip::DeviceLayer::ConnectivityMgr().IsWiFiStationProvisioned(); }
+
+bool station_connected() { return chip::DeviceLayer::ConnectivityMgr().IsWiFiStationConnected(); }
+
+bool commit_wifi()
+{
+    return chip::DeviceLayer::NetworkCommissioning::ESPWiFiDriver::GetInstance().CommitConfiguration() == CHIP_NO_ERROR;
+}
+
+void stop_dns_sd() { chip::app::DnssdServer::Instance().StopServer(); }
+
+void unregister_attribute_access()
+{
+    auto& registry = chip::app::AttributeAccessInterfaceRegistry::Instance();
+    registry.Unregister(&observed_onoff); registry.Unregister(&observed_volume);
+}
+
+void shutdown_server() { chip::Server::GetInstance().Shutdown(); }
+
 }

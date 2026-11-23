@@ -32,14 +32,11 @@ namespace config_store {
 '''
 MATTER = r'''
 }
-constexpr uint16_t player_endpoint=1,speaker_endpoint=2;
 std::atomic<bool> started{true},controller_enabled{true};
-namespace OnOff {constexpr uint32_t Id=6;namespace Attributes {namespace OnOff {constexpr uint32_t Id=0;}}}
-namespace MediaInput {constexpr uint32_t Id=0x507;namespace Attributes {namespace InputList {constexpr uint32_t Id=0;}namespace CurrentInput {constexpr uint32_t Id=1;}}}
-namespace LevelControl {constexpr uint32_t Id=8;namespace Attributes {namespace CurrentLevel {constexpr uint32_t Id=0;}}}
-std::vector<std::tuple<uint16_t,uint32_t,uint32_t>> reports;
-void report(uint16_t endpoint,uint32_t cluster,uint32_t attribute){reports.emplace_back(endpoint,cluster,attribute);}
-bool input_list_reported(){return std::count(reports.begin(),reports.end(),std::make_tuple(player_endpoint,MediaInput::Id,MediaInput::Attributes::InputList::Id))==1;}
+enum class Attribute {power,current_input,input_list,mute,volume,playback_state};
+std::vector<Attribute> reports;
+void report(Attribute attribute){reports.push_back(attribute);}
+bool input_list_reported(){return std::count(reports.begin(),reports.end(),Attribute::input_list)==1;}
 std::deque<void(*)(intptr_t)> work;
 namespace chip::DeviceLayer {
 struct Platform {CHIP_ERROR ScheduleWork(void(*callback)(intptr_t),intptr_t){work.push_back(callback);return CHIP_NO_ERROR;}};
@@ -48,6 +45,7 @@ Platform& PlatformMgr(){static Platform value;return value;}
 void run_chip_work(){while(!work.empty()){auto callback=work.front();work.pop_front();callback(0);}}
 amity_matter_callbacks_t callbacks{};
 amity_matter_state_t state{};
+amity_matter_input_t listed_inputs[AMITY_MATTER_MAX_INPUTS]{};
 '''
 MAIN = r'''
 struct Hub {
@@ -101,10 +99,12 @@ int main(){
 
 def main():
     configuration = (ROOT / 'components/config_store/system_configuration.cpp').read_text()
-    matter = (ROOT / 'components/amity_matter/amity_matter.cpp').read_text()
+    matter = (ROOT / 'components/amity_matter/controller.cpp').read_text()
+    glue = (ROOT / 'components/amity_matter/amity_matter.cpp').read_text()
     firmware = (ROOT / 'main/main.cpp').read_text()
     code = PREFIX + function(configuration, 'std::vector<ExternalInput> external_inputs(')
-    code += MATTER + matter[matter.index('std::mutex state_publication_mutex;'):matter.index('std::atomic<bool> started')]
+    code += MATTER + 'namespace chip_port {\n' + function(glue, 'bool schedule(') + '}\n'
+    code += matter[matter.index('std::mutex state_publication_mutex;'):matter.index('std::atomic<bool> controller_revoked')]
     code += ''.join(function(matter, declaration) for declaration in (
         'size_t current_inputs()', 'void publish_state(intptr_t)',
         'extern "C" esp_err_t amity_matter_flush_state(', 'extern "C" esp_err_t amity_matter_update_state('))

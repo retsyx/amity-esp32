@@ -21,17 +21,24 @@ def body(path, signature):
     return source[start:end]
 
 matter='components/amity_matter/amity_matter.cpp'
-functions='\n'.join(body(matter,s) for s in [
-    'esp_err_t dispatch_key(', 'esp_err_t start_actuator_substrate(',
+controller='components/amity_matter/controller.cpp'
+functions='\n'.join([body(controller,'esp_err_t dispatch_key('), body(matter,'esp_err_t start_actuator_substrate(')]+[body(controller,s) for s in [
     'void finish_controller_enrollment(',
     'extern "C" bool amity_matter_controller_enrollment_complete(',
     'extern "C" esp_err_t amity_matter_set_controller_enabled(',
-    'extern "C" void __wrap__ZN4chip3app11DnssdServer11StartServerEv('])
+    'extern "C" void __wrap__ZN4chip3app11DnssdServer11StartServerEv(']])
+# The SDK calls the controller logic makes, compiled against the fakes below.
+port='\n'.join(body(matter,s) for s in [
+    'bool schedule(', 'void with_stack_lock(', 'bool fail_safe_disarmed(', 'bool has_fabric(', 'bool station_provisioned(',
+    'bool station_connected(', 'bool commit_wifi(', 'void stop_dns_sd(', 'void unregister_attribute_access(',
+    'void shutdown_server('])
 # The member branch must occur before credentials, node and endpoint creation.
 s=(ROOT/matter).read_text();start=s[s.index('extern "C" esp_err_t amity_matter_start('):]
 assert start.index('if (!controller_enabled.load()) return start_actuator_substrate();')<start.index('amity_matter_prepare_credentials()')<start.index('node::create(')
 assert 'Server::GetInstance().Init' not in body(matter,'esp_err_t start_actuator_substrate(')
-assert 'PlatformMgr().StopEventLoopTask' not in body(matter,'extern "C" esp_err_t amity_matter_set_controller_enabled(')
+disable=body(controller,'extern "C" esp_err_t amity_matter_set_controller_enabled(')+''.join(body(matter,s) for s in [
+    'void stop_dns_sd(', 'void unregister_attribute_access(', 'void shutdown_server('])
+assert 'PlatformMgr().StopEventLoopTask' not in disable
 
 homekit='components/amity_homekit/homekit.cpp'
 hap='third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c'
@@ -93,6 +100,9 @@ void Shutdown(){++shutdowns;udp=sessions=false;--memrefs;}};
 }
 namespace esp_matter::lock {struct ScopedChipStackLock{explicit ScopedChipStackLock(unsigned){} };}
 namespace amity_matter {int stops=0;void stop_apple_fabric_cleanup(){assert(stops==shutdowns);++stops;}}
+namespace chip_port {
+''' + port + r'''
+}
 void event_callback(const void*,long){}int initialize_station_interface(){return ESP_OK;}int install_consortium_network_hooks(){++hooks;return 0;}
 extern "C" void __real__ZN4chip3app11DnssdServer11StartServerEv(void*){++dns;}
 ''' + functions + r'''

@@ -4,7 +4,7 @@
 # GNU General Public License as published by the Free Software Foundation, either version 3 of the
 # License, or (at your option) any later version.
 
-idf_component_register(SRCS "amity_matter.cpp" "commissioning_credentials.cpp" "diagnostics.cpp" "apple_fabrics.cpp" "consortium_network.cpp"
+idf_component_register(SRCS "amity_matter.cpp" "controller.cpp" "commissioning_credentials.cpp" "diagnostics.cpp" "apple_fabrics.cpp" "consortium_network.cpp"
                        INCLUDE_DIRS "include"
                        PRIV_INCLUDE_DIRS "."
                        REQUIRES esp_matter

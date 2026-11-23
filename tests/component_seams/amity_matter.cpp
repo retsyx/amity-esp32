@@ -6,7 +6,8 @@
  * License, or (at your option) any later version.
  */
 
-// Seams for the amity_matter_* functions of components/amity_matter/amity_matter.cpp.
+// Seams for the amity_matter_* functions of components/amity_matter/amity_matter.cpp
+// and controller.cpp.
 #include "amity_matter.h"
 #include "seams.hpp"
 
