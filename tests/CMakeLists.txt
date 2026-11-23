@@ -17,6 +17,14 @@ if(NOT AMITY_HOST_TESTS MATCHES "^(all|standalone|sdk)$")
     message(FATAL_ERROR "AMITY_HOST_TESTS must be all, standalone or sdk")
 endif()
 
+# address,undefined: the normal build. thread: a separate build for the tests
+# labelled race, which run there with ctest -L race.
+set(AMITY_HOST_SANITIZER address,undefined CACHE STRING "Host test sanitizers: address,undefined or thread")
+set_property(CACHE AMITY_HOST_SANITIZER PROPERTY STRINGS address,undefined thread)
+if(NOT AMITY_HOST_SANITIZER MATCHES "^(address,undefined|thread)$")
+    message(FATAL_ERROR "AMITY_HOST_SANITIZER must be address,undefined or thread")
+endif()
+
 get_filename_component(ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 set(T "${ROOT}/tests")
 set(C "${ROOT}/components")
@@ -39,8 +47,8 @@ find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 enable_testing()
 
 add_library(sanitized INTERFACE)
-target_compile_options(sanitized INTERFACE -g -fsanitize=address,undefined)
-target_link_options(sanitized INTERFACE -fsanitize=address,undefined)
+target_compile_options(sanitized INTERFACE -g -fsanitize=${AMITY_HOST_SANITIZER})
+target_link_options(sanitized INTERFACE -fsanitize=${AMITY_HOST_SANITIZER})
 add_library(strict INTERFACE)
 target_compile_options(strict INTERFACE -Wall -Wextra -Werror)
 target_link_libraries(strict INTERFACE sanitized)
@@ -67,13 +75,14 @@ function(amity_require_tier name)
     endif()
 endfunction()
 
-# amity_test(<name> SOURCES ... [INCLUDES ...] [LIBS ...] [DEFINES ...] [PTHREAD]
+# amity_test(<name> SOURCES ... [INCLUDES ...] [LIBS ...] [DEFINES ...] [PTHREAD] [RACE]
 #            [ARGS ...] [SCENARIOS ... [REGISTRY]] [FIXTURES ...])
 # Each scenario becomes its own test, <name>.<scenario>. REGISTRY, for tests
 # built on tests/scenario_main.hpp, adds <name>.scenarios, which fails unless
-# the scenario table compiled into the test names exactly the SCENARIOS.
+# the scenario table compiled into the test names exactly the SCENARIOS. RACE
+# labels the tests race, so the thread build runs them too.
 function(amity_test name)
-    cmake_parse_arguments(PARSE_ARGV 1 A "PTHREAD;REGISTRY" "" "SOURCES;INCLUDES;LIBS;DEFINES;ARGS;SCENARIOS;FIXTURES")
+    cmake_parse_arguments(PARSE_ARGV 1 A "PTHREAD;REGISTRY;RACE" "" "SOURCES;INCLUDES;LIBS;DEFINES;ARGS;SCENARIOS;FIXTURES")
     amity_require_tier(${name})
     if(A_REGISTRY AND NOT A_SCENARIOS)
         message(FATAL_ERROR "amity_test(${name}): REGISTRY needs SCENARIOS")
@@ -103,7 +112,11 @@ function(amity_test name)
         add_test(NAME ${name} COMMAND ${name} ${A_ARGS} WORKING_DIRECTORY "${ROOT}")
         set(tests ${name})
     endif()
-    set_tests_properties(${tests} PROPERTIES LABELS ${AMITY_TEST_TIER} TIMEOUT 600)
+    set(labels ${AMITY_TEST_TIER})
+    if(A_RACE)
+        list(APPEND labels race)
+    endif()
+    set_tests_properties(${tests} PROPERTIES LABELS "${labels}" TIMEOUT 600)
     if(A_FIXTURES)
         set_tests_properties(${tests} PROPERTIES FIXTURES_REQUIRED "${A_FIXTURES}")
     endif()

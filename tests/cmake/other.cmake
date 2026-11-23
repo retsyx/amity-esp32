@@ -175,7 +175,7 @@ if(AMITY_TEST_TIER STREQUAL standalone)
     )
 
     # Scenario test support. The WILL_FAIL tests are the cases that must fail.
-    amity_test(scenario_main_test PTHREAD
+    amity_test(scenario_main_test PTHREAD RACE
         SOURCES "${T}/scenario_main_test.cpp"
         REGISTRY
         SCENARIOS checks threads no-checks failed-check)

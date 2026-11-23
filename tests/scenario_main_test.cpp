@@ -21,7 +21,8 @@ void checks() {
     CHECK(value + value == 4);
 }
 
-// Fakes may CHECK on their own threads, so the count must not lose any.
+// Fakes may CHECK on their own threads, so the count must not lose any; the
+// thread build also checks that counting does not race.
 void threads() {
     std::vector<std::thread> workers;
     for (unsigned i = 0; i < threads_used; ++i) {

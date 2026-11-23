@@ -138,6 +138,8 @@ sh tests/run_host_tests.sh
 
 It builds and runs every host test in parallel with CTest and reports each failure. `sh tests/run_host_tests.sh standalone` runs only the tests that need no ESP-IDF checkout, managed components or firmware build output.
 
+Tests labelled `race` also run under ThreadSanitizer in a separate build: `cmake -S tests -B test-results/race -G Ninja -DAMITY_HOST_SANITIZER=thread`, then `cmake --build test-results/race` and `ctest --test-dir test-results/race -L race`.
+
 A C++ test that replaces a Python test compiling slices of firmware code must catch everything the old test caught. `python3 tools/check_test_mutants.py tests/mutants/<test>.json` applies each mutant in the manifest, a small deliberate break in a firmware source, to a copy of the tree under `test-results/` and expects the tests to fail. `--baseline --ref <commit> --json old.json` runs the same mutants against the replaced test, and `--require-kills old.json` then fails unless the new test catches at least those. The **Mutation tests** workflow runs every manifest when started by hand, and weekly when the repository variable `AMITY_WEEKLY_MUTANTS` is `true`.
 
 `python3 tools/compare_test_coverage.py --old <CTest regex> --new <CTest regex>` runs the old test from `HEAD` and the new one from the work tree with clang source-based coverage, and fails unless the new test executes every firmware line the old one did.
