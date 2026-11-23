@@ -1,0 +1,127 @@
+{
+  "ctest": "^(main_(production_)?test\\.release-|key_release_timing_test\\.)",
+  "baseline": {
+    "ctest": "^key_release_timing_test\\.py$"
+  },
+  "mutants": [
+    {
+      "id": "stub-submit_remote_release-false",
+      "check": "stub: early return from submit_remote_release()",
+      "file": "main/main.cpp",
+      "find": "bool submit_remote_release(uint8_t key,uint32_t generation) {",
+      "replace": "bool submit_remote_release(uint8_t key,uint32_t generation) { return false;"
+    },
+    {
+      "id": "stub-submit_remote_release-true",
+      "check": "stub: early return from submit_remote_release()",
+      "file": "main/main.cpp",
+      "find": "bool submit_remote_release(uint8_t key,uint32_t generation) {",
+      "replace": "bool submit_remote_release(uint8_t key,uint32_t generation) { return true;"
+    },
+    {
+      "id": "submit-threshold-inclusive",
+      "check": "a release that took exactly 100 ms is not a warning",
+      "file": "main/main.cpp",
+      "find": "    if(elapsed>100000)\n        ESP_LOGW(\"remote_input\",\"Key release stage=submit",
+      "replace": "if(elapsed>=100000)\n        ESP_LOGW(\"remote_input\",\"Key release stage=submit"
+    },
+    {
+      "id": "submit-threshold-late",
+      "check": "a release that took more than 100 ms is a warning",
+      "file": "main/main.cpp",
+      "find": "    if(elapsed>100000)\n        ESP_LOGW(\"remote_input\",\"Key release stage=submit",
+      "replace": "if(elapsed>100001)\n        ESP_LOGW(\"remote_input\",\"Key release stage=submit"
+    },
+    {
+      "id": "submit-levels-swapped",
+      "check": "slow releases warn and others inform",
+      "file": "main/main.cpp",
+      "find": "ESP_LOGW(\"remote_input\",\"Key release stage=submit key=%u generation=%u elapsed_us=%lld accepted=%d\",static_cast<unsigned>(key),static_cast<unsigned>(generation),elapsed,accepted);\n    else\n        ESP_LOGI(\"remote_input\",\"Key release stage=submit key=%u generation=%u elapsed_us=%lld accepted=%d\",static_cast<unsigned>(key),static_cast<unsigned>(generation),elapsed,accepted);",
+      "replace": "ESP_LOGI(\"remote_input\",\"Key release stage=submit key=%u generation=%u elapsed_us=%lld accepted=%d\",static_cast<unsigned>(key),static_cast<unsigned>(generation),elapsed,accepted);\n    else\n        ESP_LOGW(\"remote_input\",\"Key release stage=submit key=%u generation=%u elapsed_us=%lld accepted=%d\",static_cast<unsigned>(key),static_cast<unsigned>(generation),elapsed,accepted);"
+    },
+    {
+      "id": "submit-timed-after-call",
+      "check": "the log reports the time the call took",
+      "file": "main/main.cpp",
+      "find": "    const auto started=esp_timer_get_time();\n    const bool accepted=hub.release_remote_key(key);",
+      "replace": "const bool accepted=hub.release_remote_key(key);\n    const auto started=esp_timer_get_time();"
+    },
+    {
+      "id": "submit-always-accepted",
+      "check": "the hub decides whether a release is accepted",
+      "file": "main/main.cpp",
+      "find": "        ESP_LOGI(\"remote_input\",\"Key release stage=submit key=%u generation=%u elapsed_us=%lld accepted=%d\",static_cast<unsigned>(key),static_cast<unsigned>(generation),elapsed,accepted);\n    return accepted;",
+      "replace": "ESP_LOGI(\"remote_input\",\"Key release stage=submit key=%u generation=%u elapsed_us=%lld accepted=%d\",static_cast<unsigned>(key),static_cast<unsigned>(generation),elapsed,accepted);\n    return true;"
+    },
+    {
+      "id": "submit-key-generation-swapped",
+      "check": "the log names the key, then the activity generation",
+      "file": "main/main.cpp",
+      "find": "ESP_LOGI(\"remote_input\",\"Key release stage=submit key=%u generation=%u elapsed_us=%lld accepted=%d\",static_cast<unsigned>(key),static_cast<unsigned>(generation),elapsed,accepted);",
+      "replace": "ESP_LOGI(\"remote_input\",\"Key release stage=submit key=%u generation=%u elapsed_us=%lld accepted=%d\",static_cast<unsigned>(generation),static_cast<unsigned>(key),elapsed,accepted);"
+    },
+    {
+      "id": "owner-release-threshold",
+      "check": "an owner send of exactly 100 ms is not a warning",
+      "file": "components/amity_hub/hub_service.cpp",
+      "find": "if(elapsed>100000)\n                    ESP_LOGW(TAG,\"Key release stage=owner_send",
+      "replace": "if(elapsed>=100000)\n                    ESP_LOGW(TAG,\"Key release stage=owner_send"
+    },
+    {
+      "id": "owner-transfer-threshold",
+      "check": "an owner transfer of exactly 100 ms is not a warning",
+      "file": "components/amity_hub/hub_service.cpp",
+      "find": "if(elapsed>100000)\n                    ESP_LOGW(TAG,\"Key transfer stage=owner_send",
+      "replace": "if(elapsed>=100000)\n                    ESP_LOGW(TAG,\"Key transfer stage=owner_send"
+    },
+    {
+      "id": "owner-send-timed-after-send",
+      "check": "owner sends report the time the send took",
+      "file": "components/amity_hub/hub_service.cpp",
+      "find": "const auto started=esp_timer_get_time();\n            admitted=owned_sender&&owned_sender(intent);",
+      "replace": "admitted=owned_sender&&owned_sender(intent);\n            const auto started=esp_timer_get_time();"
+    },
+    {
+      "id": "owner-send-always-admitted",
+      "check": "owner sends report whether the owner admitted them",
+      "file": "components/amity_hub/hub_service.cpp",
+      "find": "const auto started=esp_timer_get_time();\n            admitted=owned_sender&&owned_sender(intent);",
+      "replace": "const auto started=esp_timer_get_time();\n            admitted=owned_sender&&(owned_sender(intent)||true);"
+    },
+    {
+      "id": "dequeue-release-threshold",
+      "check": "a release dequeued after exactly 100 ms is not a warning",
+      "file": "components/amity_hub/hub_service.cpp",
+      "find": "if(elapsed>100000)\n                            ESP_LOGW(TAG,\"Key release stage=dequeue",
+      "replace": "if(elapsed>=100000)\n                            ESP_LOGW(TAG,\"Key release stage=dequeue"
+    },
+    {
+      "id": "dequeue-transfer-threshold",
+      "check": "a transfer dequeued after exactly 100 ms is not a warning",
+      "file": "components/amity_hub/hub_service.cpp",
+      "find": "if(elapsed>100000)\n                            ESP_LOGW(TAG,\"Key transfer stage=dequeue",
+      "replace": "if(elapsed>=100000)\n                            ESP_LOGW(TAG,\"Key transfer stage=dequeue"
+    },
+    {
+      "id": "dequeue-untimed",
+      "check": "dequeues report the time the command waited",
+      "file": "components/amity_hub/hub_service.cpp",
+      "find": "const auto elapsed=static_cast<long long>(esp_timer_get_time()-command->input_admitted_us);",
+      "replace": "const auto elapsed=static_cast<long long>(command->input_admitted_us-command->input_admitted_us);"
+    },
+    {
+      "id": "dequeue-transfer-phase-swapped",
+      "check": "a dequeued tap is logged as a tap",
+      "file": "components/amity_hub/hub_service.cpp",
+      "find": "ESP_LOGI(TAG,\"Key transfer stage=dequeue key=%u generation=%u phase=%s edge_count=%u elapsed_us=%lld\",static_cast<unsigned>(command->value),static_cast<unsigned>(p.activity_hub.activity_generation()),command->repeat?\"down\":\"tap\"",
+      "replace": "ESP_LOGI(TAG,\"Key transfer stage=dequeue key=%u generation=%u phase=%s edge_count=%u elapsed_us=%lld\",static_cast<unsigned>(command->value),static_cast<unsigned>(p.activity_hub.activity_generation()),command->repeat?\"tap\":\"down\""
+    },
+    {
+      "id": "fallback-unmarked",
+      "check": "a release that falls back without a queued command is marked",
+      "file": "components/amity_hub/hub_service.cpp",
+      "find": "    ESP_LOGI(TAG,\"Key release stage=fallback key=%u\",static_cast<unsigned>(key));\n",
+      "replace": ""
+    }
+  ]
+}

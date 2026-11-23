@@ -49,7 +49,8 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         matter-boot-status-retry matter-boot-open-exhausted matter-boot-status-exhausted matter-boot-open-invalid
         matter-boot-fabric-appears matter-boot-role-changes matter-boot-authority-lost matter-button-reopens
         wifi-policy-unclaimed wifi-policy-member wifi-policy-already-off wifi-policy-max-modem wifi-policy-matter-fails
-        wifi-policy-read-fails wifi-policy-set-fails wifi-policy-verify-fails wifi-policy-stays-on)
+        wifi-policy-read-fails wifi-policy-set-fails wifi-policy-verify-fails wifi-policy-stays-on
+        release-timing)
     # app_main has two #if blocks. main_test builds with both settings off and
     # main_production_test with both on, so a step inside an #if block fails
     # one of them.
@@ -72,7 +73,13 @@ if(AMITY_TEST_TIER STREQUAL standalone)
     # step that one build compiles out fails that build's scenarios.
     target_compile_options(main_test PRIVATE -Wno-error=unused-function)
     target_compile_options(main_production_test PRIVATE -Wno-error=unused-function)
-    amity_python_tests(
-        key_release_timing_test.py
-    )
+    # The hub's side of a remote key release: its dequeue, owner-send and
+    # fallback timing logs, captured by including hub_service.cpp.
+    amity_test(key_release_timing_test
+        SOURCES "${C}/amity_hub/hub.cpp" "${T}/key_release_timing_test.cpp"
+        INCLUDES "${T}" "${T}/cec_hub_fakes" "${C}/amity_system/include" "${C}/config_store/include"
+            "${C}/cec/include" "${C}/amity_hub/include" "${C}/amity_hub"
+        LIBS amity_model
+        REGISTRY
+        SCENARIOS queue-owner-handoff owner-repeats-unlogged)
 endif()

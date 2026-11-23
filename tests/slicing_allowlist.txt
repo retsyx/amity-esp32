@@ -35,7 +35,6 @@ homekit_worker_test.py lint
 hostname_services_test.py pending:Z
 https_response_write_test.py lint
 json_memory_test.py whole-file
-key_release_timing_test.py pending:I
 matter_input_names_test.py pending:Z
 matter_state_publication_test.py pending:Z
 mdns_delegate_remove_test.py sdk-slice

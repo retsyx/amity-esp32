@@ -1573,6 +1573,38 @@ void wifi_policy_stays_on() {
     CHECK(wifi_policy_lines() == std::vector<std::string>{"Wi-Fi power save: previous=1 current=1"});
 }
 
+// A remote key release goes to the hub at once and is logged once the call
+// has returned: a warning when the call took more than 100 ms, otherwise an
+// info line, with the key, the activity generation, the time the call took
+// and whether the hub accepted it.
+void release_timing() {
+    bool inside = false, admitted = true;
+    int64_t delay = 0;
+    std::vector<uint8_t> released;
+    install<&amity::HubService::release_key>([&](amity::HubService &, uint8_t key) {
+        inside = true;
+        released.push_back(key);
+        amity_fake::advance_us(delay);
+        inside = false;
+        return admitted;
+    });
+    amity_fake::on_log([&](const amity_fake::LogLine &line) {
+        if (line.tag == "remote_input") CHECK(!inside);
+    });
+    for (const auto &[elapsed, accepted] : {std::pair<int64_t, bool>{5000, true}, {100000, true}, {100001, false}}) {
+        delay = elapsed;
+        admitted = accepted;
+        const auto before = amity_fake::log_lines().size();
+        CHECK(submit_remote_release(4, 7) == accepted);
+        const auto lines = amity_fake::log_lines();
+        CHECK(lines.size() == before + 1);
+        CHECK(lines.back().tag == "remote_input" && lines.back().level == (elapsed > 100000 ? ESP_LOG_WARN : ESP_LOG_INFO));
+        CHECK(lines.back().message == "Key release stage=submit key=4 generation=7 elapsed_us=" + std::to_string(elapsed) +
+                                          " accepted=" + (accepted ? "1" : "0"));
+    }
+    CHECK((released == std::vector<uint8_t>{4, 4, 4}));
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -1636,5 +1668,6 @@ int main(int argc, char **argv) {
         {"wifi-policy-set-fails", wifi_policy_set_fails},
         {"wifi-policy-verify-fails", wifi_policy_verify_fails},
         {"wifi-policy-stays-on", wifi_policy_stays_on},
+        {"release-timing", release_timing},
     });
 }
