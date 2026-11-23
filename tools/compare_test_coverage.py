@@ -11,8 +11,11 @@ credited to the firmware line that its slice_support #line directive names.
 
 For each firmware file under components/, main/ or third_party/ that the old
 tests executed, or each --file, the report lists the executed lines the new
-tests miss. Exit status: 0 when nothing is missed, 1 when a line is, and 2 when
-the tests or tools fail or a compared file differs between the two copies.
+tests miss. An old test whose generated source runs code copied from a
+firmware file without #line directives is an error: those lines could not be
+credited, so nothing would be compared for them. Exit status: 0 when nothing is
+missed, 1 when a line is, and 2 when the tests or tools fail, an old test runs
+such copied code, or a compared file differs between the two copies.
 """
 import argparse
 import json
@@ -28,6 +31,8 @@ import host_test_tree as tree_support  # noqa: E402
 from host_test_tree import Failure, ROOT, tail  # noqa: E402
 
 FIRMWARE = ('components/', 'main/', 'third_party/')
+# A copied line this long is distinctive enough to name the firmware file it came from.
+COPIED_LINE = 40
 DIRECTIVE = re.compile(r'\s*#\s*(?:line\s+)?(\d+)(?:\s+"((?:\\.|[^"\\])*)")?')
 
 
@@ -83,6 +88,18 @@ def lcov_lines(text):
             source = None
 
 
+def firmware_lines(tree):
+    """Map each distinctive line of the copy's firmware sources, stripped, to its file."""
+    lines = {}
+    for root in FIRMWARE:
+        for path in sorted((tree / root).rglob('*')):
+            if path.suffix in tree_support.CODE_SUFFIXES and path.is_file():
+                for line in path.read_text(errors='replace').splitlines():
+                    if len(line.strip()) >= COPIED_LINE:
+                        lines.setdefault(line.strip(), path.relative_to(tree).as_posix())
+    return lines
+
+
 def binary_sources(records):
     """Return (kept binary, {generated source: kept copy}) for each binary the wrapper linked."""
     outputs = {}
@@ -99,8 +116,11 @@ def binary_sources(records):
     return linked
 
 
-def collect(label, ref, regex, tier, tools, warnings):
-    """Run the matching tests with coverage; return (copy root, {firmware file: executed lines})."""
+def collect(label, ref, regex, tier, tools, warnings, require_lines=False):
+    """Run the matching tests with coverage; return (copy root, {firmware file: executed lines}).
+
+    With require_lines, a generated source that ran firmware code without #line directives is a Failure.
+    """
     base = ROOT / 'test-results/coverage' / label
     print(f'{label}: copying {ref or "the work tree"} to {base.relative_to(ROOT)}', flush=True)
     tree = tree_support.materialize(base / 'tree', ref)
@@ -138,7 +158,7 @@ def collect(label, ref, regex, tier, tools, warnings):
     binaries = sorted({(build / 'bin' / target).as_posix() for target in targets})
     linked = [(binary, {}) for binary in binaries]
     linked += binary_sources(tree_support.compile_records(keep))
-    executed = {}
+    executed, firmware = {}, None
     for binary, snapshot in linked:
         exported = subprocess.run([tools['llvm-cov'], 'export', '-format=lcov', '-instr-profile', str(profile), binary],
                                   capture_output=True, text=True)
@@ -150,8 +170,19 @@ def collect(label, ref, regex, tier, tools, warnings):
                 text = Path(snapshot[str(path)]).read_text(errors='replace')
                 mapping = presumed_lines(text)
                 if lines and not any(file for file, _ in mapping.values()):
-                    warnings.append(f'{label}: {path.name}, generated for {Path(binary).name.split("-", 2)[-1]}, has no '
-                                    '#line directives; any slices in it are not credited to firmware lines')
+                    generated = f'{label}: {path.name}, generated for {Path(binary).name.split("-", 2)[-1]},'
+                    if require_lines:
+                        if firmware is None:
+                            firmware = firmware_lines(tree)
+                        source = text.splitlines()
+                        copied = sorted({firmware[source[line - 1].strip()] for line in lines
+                                         if 0 < line <= len(source) and source[line - 1].strip() in firmware})
+                        if copied:
+                            raise Failure(f'{generated} runs code copied from {", ".join(copied)} without #line '
+                                          'directives, so those lines cannot be credited; cut its slices with '
+                                          'slice_support, which adds them')
+                    warnings.append(f'{generated} has no #line directives; any slices in it are not credited to '
+                                    'firmware lines')
                 mapped = set()
                 for line in lines:
                     file, presumed = mapping.get(line, (None, 0))
@@ -197,7 +228,7 @@ def main(argv=None):
     try:
         tools = llvm_tools(args.llvm_bin)
         tier = args.tier or tree_support.default_tier()
-        old_tree, old = collect('old', args.old_ref, args.old, tier, tools, warnings)
+        old_tree, old = collect('old', args.old_ref, args.old, tier, tools, warnings, require_lines=True)
         new_tree, new = collect('new', args.new_ref, args.new, tier, tools, warnings)
     except Failure as error:
         print(f'error: {error}', file=sys.stderr)
