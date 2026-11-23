@@ -1,0 +1,306 @@
+{
+  "ctest": "^consortium_gatt_admission_test\\.",
+  "targets": [
+    "consortium_gatt_admission_test"
+  ],
+  "baseline": {
+    "ctest": "^consortium_gatt_admission_test\\.py$",
+    "targets": []
+  },
+  "mutants": [
+    {
+      "id": "stub-access-empty",
+      "check": "stub: early return from access()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "int access(uint16_t connection,uint16_t,ble_gatt_access_ctxt *context,void*){",
+      "replace": "int access(uint16_t connection,uint16_t,ble_gatt_access_ctxt *context,void*){ return {};"
+    },
+    {
+      "id": "stub-create_work_queue-empty",
+      "check": "stub: early return from create_work_queue()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "QueueHandle_t create_work_queue(){",
+      "replace": "QueueHandle_t create_work_queue(){return {};"
+    },
+    {
+      "id": "stub-post_work-false",
+      "check": "stub: early return from post_work()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "bool post_work(const Work &work){",
+      "replace": "bool post_work(const Work &work){return false;"
+    },
+    {
+      "id": "stub-post_work-true",
+      "check": "stub: early return from post_work()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "bool post_work(const Work &work){",
+      "replace": "bool post_work(const Work &work){return true;"
+    },
+    {
+      "id": "stub-close_channel-return",
+      "check": "stub: early return from close_channel()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "void close_channel(){",
+      "replace": "void close_channel(){return;"
+    },
+    {
+      "id": "stub-worker_work-return",
+      "check": "stub: early return from worker_work()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "void worker_work(){",
+      "replace": "void worker_work(){return;"
+    },
+    {
+      "id": "stub-worker-return",
+      "check": "stub: early return from worker()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "void worker(void*){",
+      "replace": "void worker(void*){return;"
+    },
+    {
+      "id": "queue-capacity-15",
+      "check": "the queue holds 16 records",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "constexpr size_t work_queue_capacity=16;",
+      "replace": "constexpr size_t work_queue_capacity=15;"
+    },
+    {
+      "id": "queue-dynamic",
+      "check": "the queue is created statically",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "return xQueueCreateStatic(work_queue_capacity,sizeof(Work),work_queue_storage,&work_queue_control);",
+      "replace": "return xQueueCreate(16,sizeof(Work));"
+    },
+    {
+      "id": "queue-item-short",
+      "check": "queued records are copied whole",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "return xQueueCreateStatic(work_queue_capacity,sizeof(Work),",
+      "replace": "return xQueueCreateStatic(work_queue_capacity,sizeof(Work)-8,"
+    },
+    {
+      "id": "queue-not-created",
+      "check": "registration keeps the queue it creates",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "work_queue=create_work_queue();client_done=",
+      "replace": "work_queue=(create_work_queue(),nullptr);client_done="
+    },
+    {
+      "id": "queue-failure-hidden",
+      "check": "a queue that cannot be created fails registration",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(!work_queue||!client_done)return ESP_ERR_NO_MEM;",
+      "replace": "if(!client_done)return ESP_ERR_NO_MEM;"
+    },
+    {
+      "id": "post-count-kept",
+      "check": "a refused record rolls its count back",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(work_queue&&xQueueSend(work_queue,&work,0)==pdTRUE)return true;--outstanding_work;return false;}",
+      "replace": "if(work_queue&&xQueueSend(work_queue,&work,0)==pdTRUE)return true;return false;}"
+    },
+    {
+      "id": "post-waits",
+      "check": "a callback never waits for queue space",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "xQueueSend(work_queue,&work,0)==pdTRUE",
+      "replace": "xQueueSend(work_queue,&work,10)==pdTRUE"
+    },
+    {
+      "id": "no-worker-refuses-close",
+      "check": "without a worker a close is accepted",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(!worker_running)return work.close;",
+      "replace": "if(!worker_running)return false;"
+    },
+    {
+      "id": "no-worker-accepts-data",
+      "check": "without a worker data is refused",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(!worker_running)return work.close;",
+      "replace": "if(!worker_running)return true;"
+    },
+    {
+      "id": "work-count-kept",
+      "check": "processed work leaves the count",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "struct WorkFinished {~WorkFinished(){processing_record=false;--outstanding_work;}};",
+      "replace": "struct WorkFinished {~WorkFinished(){processing_record=false;}};"
+    },
+    {
+      "id": "eager-channel",
+      "check": "an idle worker runs no admission crypto",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "void worker_work(){\n    Work work;",
+      "replace": "void worker_work(){\n    Work work;if(!server_channel)server_channel=std::make_unique<AdmissionServer>(std::string(32,'1'));"
+    },
+    {
+      "id": "incomplete-processed",
+      "check": "only a complete record is processed",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(result==BootstrapRecords::Result::incomplete)continue;",
+      "replace": ""
+    },
+    {
+      "id": "channel-per-record",
+      "check": "one channel per connection",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(!server_channel)server_channel=std::make_unique<AdmissionServer>(own_id);",
+      "replace": "server_channel=std::make_unique<AdmissionServer>(own_id);"
+    },
+    {
+      "id": "session-change-kept",
+      "check": "a new session gets a new channel",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(channel_live&&(channel_generation!=work.generation||channel_session!=work.session))close_channel();",
+      "replace": "if(channel_live&&channel_generation!=work.generation)close_channel();"
+    },
+    {
+      "id": "encrypted-first-handshake",
+      "check": "an encrypted first record never reaches the handshake",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(!work.endpoint){\n                if(!server_channel)",
+      "replace": "if(work.endpoint<2){\n                if(!server_channel)"
+    },
+    {
+      "id": "failure-uncounted",
+      "check": "a failed record counts as a failed proof",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(!good){++failed_proofs;close_channel();}",
+      "replace": "if(!good){close_channel();}"
+    },
+    {
+      "id": "failure-keeps-channel",
+      "check": "a failed record closes the channel",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(!good){++failed_proofs;close_channel();}",
+      "replace": "if(!good){++failed_proofs;}"
+    },
+    {
+      "id": "handler-reply-unencrypted",
+      "check": "the handler reply is encrypted",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "&&!reply.empty()&&server_channel->encrypt(reply,response);",
+      "replace": "&&!reply.empty()&&(response=reply,true);"
+    },
+    {
+      "id": "worker-exit-flag-kept",
+      "check": "an exiting worker clears its flag",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(!server_open&&!channel_live&&!uxQueueMessagesWaiting(work_queue)){worker_running=false;return;}",
+      "replace": "if(!server_open&&!channel_live&&!uxQueueMessagesWaiting(work_queue)){return;}"
+    },
+    {
+      "id": "worker-never-exits",
+      "check": "the worker exits once the window closed",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(!server_open&&!channel_live&&!uxQueueMessagesWaiting(work_queue)){worker_running=false;return;}",
+      "replace": "if(false){worker_running=false;return;}"
+    },
+    {
+      "id": "task-stack",
+      "check": "the worker task has a 16 KiB stack",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "xTaskCreateWithCaps(worker,\"group_admission\",16384,",
+      "replace": "xTaskCreateWithCaps(worker,\"group_admission\",8192,"
+    },
+    {
+      "id": "task-internal-memory",
+      "check": "the worker task lives in PSRAM",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "nullptr,2,nullptr,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)",
+      "replace": "nullptr,2,nullptr,MALLOC_CAP_8BIT)"
+    },
+    {
+      "id": "task-per-window",
+      "check": "a running worker serves the next window",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(!worker_running){\n        if(xTaskCreateWithCaps",
+      "replace": "if(true){\n        if(xTaskCreateWithCaps"
+    },
+    {
+      "id": "stale-closed",
+      "check": "a record after the window closed is dropped",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(!server_open||generation!=work.generation||server_session!=work.session",
+      "replace": "if(generation!=work.generation||server_session!=work.session"
+    },
+    {
+      "id": "stale-generation",
+      "check": "a record from an old generation is dropped",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "||generation!=work.generation||server_session!=work.session||",
+      "replace": "||server_session!=work.session||"
+    },
+    {
+      "id": "stale-session",
+      "check": "a record from an old session is dropped",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "||server_session!=work.session||server_connection!=work.connection||",
+      "replace": "||server_connection!=work.connection||"
+    },
+    {
+      "id": "stale-link",
+      "check": "a record from another link is dropped",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "||server_connection!=work.connection||now_ms()>=deadline||failed_proofs>=5)continue;",
+      "replace": "||now_ms()>=deadline||failed_proofs>=5)continue;"
+    },
+    {
+      "id": "stale-deadline",
+      "check": "a record after the deadline is dropped",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "||server_connection!=work.connection||now_ms()>=deadline||failed_proofs>=5)continue;",
+      "replace": "||server_connection!=work.connection||failed_proofs>=5)continue;"
+    },
+    {
+      "id": "stale-deadline-boundary",
+      "check": "a record at the deadline is dropped",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "||server_connection!=work.connection||now_ms()>=deadline||failed_proofs>=5)continue;",
+      "replace": "||server_connection!=work.connection||now_ms()>deadline||failed_proofs>=5)continue;"
+    },
+    {
+      "id": "assembly-expiry-unchecked",
+      "check": "an expired assembly ends the connection",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(((!server_channel||!server_channel->authenticated())&&now_ms()-channel_started>=30000)||(record_started&&now_ms()-record_started>=30000)){\n            close_channel();++failed_proofs;ble_gap_terminate(work.connection",
+      "replace": "if(false){\n            close_channel();++failed_proofs;ble_gap_terminate(work.connection"
+    },
+    {
+      "id": "assembly-expiry-30001",
+      "check": "an assembly expires at 30 s",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(((!server_channel||!server_channel->authenticated())&&now_ms()-channel_started>=30000)||(record_started&&now_ms()-record_started>=30000)){\n            close_channel();++failed_proofs;ble_gap_terminate(work.connection",
+      "replace": "if(((!server_channel||!server_channel->authenticated())&&now_ms()-channel_started>=30001)||(record_started&&now_ms()-record_started>=30001)){\n            close_channel();++failed_proofs;ble_gap_terminate(work.connection"
+    },
+    {
+      "id": "assembly-expiry-keeps-link",
+      "check": "an expired assembly terminates its link",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "close_channel();++failed_proofs;ble_gap_terminate(work.connection,BLE_ERR_REM_USER_CONN_TERM);continue;\n        }\n        if(record_started&&",
+      "replace": "close_channel();++failed_proofs;continue;\n        }\n        if(record_started&&"
+    },
+    {
+      "id": "idle-expiry-unchecked",
+      "check": "an idle worker ends an expired assembly",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(channel_live&&(((!server_channel||!server_channel->authenticated())&&now_ms()-channel_started>=30000)||(record_started&&now_ms()-record_started>=30000))){",
+      "replace": "if(false){"
+    },
+    {
+      "id": "interleaved-record-accepted",
+      "check": "a fragment of another record ends the connection",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(record_started&&(pending_record!=work.record||pending_endpoint!=work.endpoint)){",
+      "replace": "if(false){"
+    },
+    {
+      "id": "five-failures-keep-window",
+      "check": "five failed proofs close the window",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(failed_proofs>=5){std::lock_guard<std::mutex> guard(state_mutex);const bool was_open=server_open;server_open=false;",
+      "replace": "if(failed_proofs>=6){std::lock_guard<std::mutex> guard(state_mutex);const bool was_open=server_open;server_open=false;"
+    }
+  ]
+}

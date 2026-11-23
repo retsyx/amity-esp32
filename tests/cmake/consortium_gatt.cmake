@@ -54,8 +54,15 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         REGISTRY
         SCENARIOS mtu-framing exchange-timing published-before-cursor request-write-failure request-wait-failure
             att-wait-bounds reply-rejected reply-malformed reply-deadline empty-request)
+    amity_test(consortium_gatt_admission_test
+        SOURCES "${T}/consortium_gatt_admission_test.cpp"
+        INCLUDES ${gatt_includes} "${T}"
+        LIBS consortium_gatt_fakes consortium_admission_crypto crypto_fakes consortium_credentials_seams core_fakes
+            amity_consortium amity_model
+        PTHREAD
+        REGISTRY
+        SCENARIOS static-queue queue-fifo queue-creation-failure idle-worker fragmented-handshake
+            new-session-new-channel worker-exits stale-generation stale-session stale-link closed-window
+            passed-deadline encrypted-first assembly-expiry interleaved-record five-failures)
     unset(gatt_includes)
-    amity_python_tests(
-        consortium_gatt_admission_test.py
-    )
 endif()
