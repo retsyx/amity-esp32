@@ -9,16 +9,12 @@ from pathlib import Path
 import os
 import subprocess
 import tempfile
+from slice_support import function
 
 ROOT=Path(__file__).resolve().parents[1]
 
 def body(path, signature):
-    source=(ROOT/path).read_text();start=source.index(signature);opening=source.index('{',start);depth=1;end=opening+1
-    while depth:
-        if source[end]=='{':depth+=1
-        elif source[end]=='}':depth-=1
-        end+=1
-    return source[start:end]
+    return function((ROOT/path).read_text(), signature)
 
 matter='components/amity_matter/amity_matter.cpp'
 controller='components/amity_matter/controller.cpp'
