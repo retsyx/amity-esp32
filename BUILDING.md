@@ -138,6 +138,8 @@ sh tests/run_host_tests.sh
 
 It builds and runs every host test in parallel with CTest and reports each failure. `sh tests/run_host_tests.sh standalone` runs only the tests that need no ESP-IDF checkout, managed components or firmware build output.
 
+A C++ test that replaces a Python test compiling slices of firmware code must catch everything the old test caught. `python3 tools/check_test_mutants.py tests/mutants/<test>.json` applies each mutant in the manifest, a small deliberate break in a firmware source, to a copy of the tree under `test-results/` and expects the tests to fail. `--baseline --ref <commit> --json old.json` runs the same mutants against the replaced test, and `--require-kills old.json` then fails unless the new test catches at least those.
+
 `python3 amity-provision/build_release.py` builds setup-tool archives for macOS, Windows, and Linux, in both Intel/AMD and ARM64 versions. The GitHub **Build firmware** workflow uses the same SDK pins. A newly pushed `v*` tag triggers **Release firmware**, which verifies that the tag’s version matches `PROJECT_VER` and publishes the firmware, setup-tool archives, installation README, and checksums as GitHub Release assets.
 
 Technical reference: [hardware pins](main/board_pins.h).
