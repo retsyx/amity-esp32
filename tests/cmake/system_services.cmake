@@ -6,6 +6,39 @@
 
 # System services: diagnostics, logs and firmware updates.
 if(AMITY_TEST_TIER STREQUAL standalone)
+    # The SDK calls of system_services.cpp and log_download.cpp beyond the core
+    # fakes, as strict seams.
+    add_library(system_services_fakes OBJECT "${T}/system_services_fakes/system_services_fakes.cpp")
+    target_include_directories(system_services_fakes PRIVATE "${T}/system_services_fakes" "${T}/core_fakes" "${T}")
+    target_compile_options(system_services_fakes PRIVATE ${amity_seam_warnings})
+    target_link_libraries(system_services_fakes PRIVATE strict)
+    set(system_services_includes "${T}/core_fakes" "${T}/system_services_fakes" "${T}/web_request_fakes"
+        "${T}/crypto_fakes" "${C}/system_services/include" "${C}/consortium/include" "${C}/amity_system/include"
+        "${C}/device_settings/include" "${C}/network_diagnostics/include" "${C}/web/include")
+    amity_host_compile(system_services_cpp
+        SOURCES "${C}/system_services/system_services.cpp"
+        INCLUDES ${system_services_includes})
+    amity_host_compile(log_download_cpp
+        SOURCES "${C}/system_services/log_download.cpp"
+        INCLUDES ${system_services_includes})
+    # Writes a bundle made by the release tool, which python-bundle uploads.
+    amity_command_test(update_bundle_fixture "${PYTHON3}" -S "${T}/update_bundle_fixture.py"
+        "${CMAKE_BINARY_DIR}/python-update-bundle.bin")
+    set_tests_properties(update_bundle_fixture PROPERTIES FIXTURES_SETUP python_update_bundle)
+    amity_test(system_services_test
+        SOURCES "${T}/system_services_test.cpp"
+        INCLUDES ${system_services_includes}
+        LIBS system_services_fakes core_fakes httpd_fake web_request_seams network_diagnostics_seams
+            firmware_update_seams peer_firmware_update_seams group_firmware_update_seams amity_model
+        DEFINES "AMITY_PYTHON_UPDATE_BUNDLE=\"${CMAKE_BINARY_DIR}/python-update-bundle.bin\""
+        REGISTRY
+        SCENARIOS log-capture-start log-capture-without-lock allocation-hook allocation-capacity allocation-names
+            allocation-in-interrupt memory-totals console-forwarding console-long-line console-error
+            console-without-sink console-clock-wrap console-clock-anomaly bundle-upload raw-image bundle-corruptions
+            bundle-length receive-failures signed-bundle image-digest header-bounds metadata-trickle image-stall
+            reader-unavailable downgrade upload-rejections python-bundle confirm-pending-image
+            confirm-confirmed-image reboot-later log-ring)
+    set_tests_properties(system_services_test.python-bundle PROPERTIES FIXTURES_REQUIRED python_update_bundle)
     amity_test(firmware_version_test
         SOURCES "${T}/firmware_version_test.cpp"
         INCLUDES "${C}/system_services/include"
@@ -33,8 +66,6 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         INCLUDES "${T}/firmware_maintenance_fakes" "${C}/system_services/include" "${C}/config_store/include"
             "${C}/amity_system/include")
     amity_python_tests(
-        allocation_failure_diagnostics_test.py
-        console_latency_observer_test.py
         log_download_test.py
         partition_staging_test.py
         update_bundle_test.py

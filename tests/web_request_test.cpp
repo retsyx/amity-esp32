@@ -137,5 +137,5 @@ static void slow_body_test() {
 int main() {
     signal(SIGPIPE,SIG_IGN);
     rejection_tests();regular_body_tests();slow_record_test();slow_body_test();
-    puts("HTTPS body deadlines, TLS-fragment interruption, close-on-rejection passed (signed OTA covered by update_bundle_test)");
+    puts("HTTPS body deadlines, TLS-fragment interruption, close-on-rejection passed (signed OTA covered by system_services_test)");
 }

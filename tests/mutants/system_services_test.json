@@ -1,0 +1,726 @@
+{
+  "ctest": "^system_services_test\\.",
+  "targets": [
+    "system_services_test"
+  ],
+  "baseline": {
+    "ctest": "^(allocation_failure_diagnostics_test|console_latency_observer_test|update_bundle_test)\\.py$",
+    "targets": []
+  },
+  "mutants": [
+    {
+      "id": "stub-capture_allocation_failure-return",
+      "check": "stub: early return from capture_allocation_failure()",
+      "file": "components/system_services/system_services.cpp",
+      "find": "void capture_allocation_failure(size_t bytes,uint32_t caps,const char* function){",
+      "replace": "void capture_allocation_failure(size_t bytes,uint32_t caps,const char* function){return;"
+    },
+    {
+      "id": "stub-log_allocation_failures-return",
+      "check": "stub: early return from log_allocation_failures()",
+      "file": "components/system_services/system_services.cpp",
+      "find": "void log_allocation_failures(){",
+      "replace": "void log_allocation_failures(){return;"
+    },
+    {
+      "id": "stub-capture-empty",
+      "check": "stub: early return from capture()",
+      "file": "components/system_services/system_services.cpp",
+      "find": "int capture(const char *fmt, va_list args) {",
+      "replace": "int capture(const char *fmt, va_list args) { return {};"
+    },
+    {
+      "id": "stub-start_log_capture-return",
+      "check": "stub: early return from start_log_capture()",
+      "file": "components/system_services/system_services.cpp",
+      "find": "void start_log_capture() {",
+      "replace": "void start_log_capture() { return;"
+    },
+    {
+      "id": "stub-log_memory_if_due-return",
+      "check": "stub: early return from log_memory_if_due()",
+      "file": "components/system_services/system_services.cpp",
+      "find": "void log_memory_if_due() {",
+      "replace": "void log_memory_if_due() { return;"
+    },
+    {
+      "id": "stub-upload_firmware-fail",
+      "check": "stub: early return from upload_firmware()",
+      "file": "components/system_services/system_services.cpp",
+      "find": "esp_err_t upload_firmware(httpd_req_t *req) {",
+      "replace": "esp_err_t upload_firmware(httpd_req_t *req) { return ESP_FAIL;"
+    },
+    {
+      "id": "stub-logs-empty",
+      "check": "stub: early return from logs()",
+      "file": "components/system_services/system_services.cpp",
+      "find": "std::string logs() {",
+      "replace": "std::string logs() { return {};"
+    },
+    {
+      "id": "stub-log_size-empty",
+      "check": "stub: early return from log_size()",
+      "file": "components/system_services/system_services.cpp",
+      "find": "size_t log_size() {",
+      "replace": "size_t log_size() { return {};"
+    },
+    {
+      "id": "stub-confirm_firmware-fail",
+      "check": "stub: early return from confirm_firmware()",
+      "file": "components/system_services/system_services.cpp",
+      "find": "esp_err_t confirm_firmware() {",
+      "replace": "esp_err_t confirm_firmware() { return ESP_FAIL;"
+    },
+    {
+      "id": "stub-reboot_later-return",
+      "check": "stub: early return from reboot_later(uint32_t)",
+      "file": "components/system_services/system_services.cpp",
+      "find": "void reboot_later(uint32_t delay_ms) {",
+      "replace": "void reboot_later(uint32_t delay_ms) { return;"
+    },
+    {
+      "id": "capture-sink-not-installed",
+      "check": "log capture routes console output through the ring",
+      "file": "components/system_services/system_services.cpp",
+      "find": "lock=xSemaphoreCreateMutex();if(lock)original = esp_log_set_vprintf(capture);",
+      "replace": "lock=xSemaphoreCreateMutex();if(lock)original = nullptr;"
+    },
+    {
+      "id": "failure-hook-not-registered",
+      "check": "log capture registers the allocation-failure hook",
+      "file": "components/system_services/system_services.cpp",
+      "find": "if(heap_caps_register_failed_alloc_callback(capture_allocation_failure)!=ESP_OK)",
+      "replace": "if(false&&heap_caps_register_failed_alloc_callback(capture_allocation_failure)!=ESP_OK)"
+    },
+    {
+      "id": "boot-id-words-swapped",
+      "check": "the boot id is the four entropy words in order",
+      "file": "components/system_services/system_services.cpp",
+      "find": "static_cast<unsigned long>(entropy[2]),static_cast<unsigned long>(entropy[3]));",
+      "replace": "static_cast<unsigned long>(entropy[3]),static_cast<unsigned long>(entropy[2]));"
+    },
+    {
+      "id": "boot-id-short-entropy",
+      "check": "the boot id draws 16 bytes of entropy",
+      "file": "components/system_services/system_services.cpp",
+      "find": "esp_fill_random(entropy,sizeof(entropy));",
+      "replace": "esp_fill_random(entropy,sizeof(entropy[0]));"
+    },
+    {
+      "id": "entropy-source-disabled-early",
+      "check": "the bootloader entropy source is enabled while the boot id is drawn",
+      "file": "components/system_services/system_services.cpp",
+      "find": "bootloader_random_enable();\n    esp_fill_random(entropy,sizeof(entropy));\n    bootloader_random_disable();",
+      "replace": "bootloader_random_enable();\n    bootloader_random_disable();\n    esp_fill_random(entropy,sizeof(entropy));"
+    },
+    {
+      "id": "hook-logs",
+      "check": "the hook never logs",
+      "file": "components/system_services/system_services.cpp",
+      "find": "++allocation_failure_count;\n    allocation_failure_guard.clear(std::memory_order_release);\n}",
+      "replace": "++allocation_failure_count;\n    allocation_failure_guard.clear(std::memory_order_release);\n    ESP_LOGE(\"memory\",\"allocation failed\");\n}"
+    },
+    {
+      "id": "hook-allocates",
+      "check": "the hook never allocates",
+      "file": "components/system_services/system_services.cpp",
+      "find": "failure={};",
+      "replace": "failure={};delete new char(0);"
+    },
+    {
+      "id": "hook-walks-heap",
+      "check": "the hook reads maintained counters, never a heap walk",
+      "file": "components/system_services/system_services.cpp",
+      "find": "failure.matched_free=heap_caps_get_free_size(caps);",
+      "replace": "multi_heap_info_t info{};heap_caps_get_info(&info,caps);failure.matched_free=info.total_free_bytes;"
+    },
+    {
+      "id": "hook-time-seconds",
+      "check": "the record keeps the failure time in milliseconds",
+      "file": "components/system_services/system_services.cpp",
+      "find": "failure.at_ms=static_cast<uint64_t>(esp_timer_get_time()/1000);",
+      "replace": "failure.at_ms=static_cast<uint64_t>(esp_timer_get_time()/1000000);"
+    },
+    {
+      "id": "hook-size-plus-one",
+      "check": "the record keeps the failed size",
+      "file": "components/system_services/system_services.cpp",
+      "find": "failure.bytes=bytes;",
+      "replace": "failure.bytes=bytes+1;"
+    },
+    {
+      "id": "hook-caps-changed",
+      "check": "the record keeps the failed capabilities",
+      "file": "components/system_services/system_services.cpp",
+      "find": "failure.caps=caps;",
+      "replace": "failure.caps=caps|1;"
+    },
+    {
+      "id": "hook-function-dropped",
+      "check": "the record keeps the function name",
+      "file": "components/system_services/system_services.cpp",
+      "find": "copy(failure.function,sizeof(failure.function),function);",
+      "replace": "(void)function;copy(failure.function,sizeof(failure.function),\"\");"
+    },
+    {
+      "id": "hook-matched-is-dma",
+      "check": "the record keeps the free size matching the failed capabilities",
+      "file": "components/system_services/system_services.cpp",
+      "find": "failure.matched_free=heap_caps_get_free_size(caps);",
+      "replace": "failure.matched_free=heap_caps_get_free_size(MALLOC_CAP_DMA);"
+    },
+    {
+      "id": "hook-dma-is-internal",
+      "check": "the record keeps the DMA free size",
+      "file": "components/system_services/system_services.cpp",
+      "find": "failure.dma_free=heap_caps_get_free_size(MALLOC_CAP_DMA);",
+      "replace": "failure.dma_free=heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);"
+    },
+    {
+      "id": "hook-internal-without-8bit",
+      "check": "the record keeps the internal byte-addressable free size",
+      "file": "components/system_services/system_services.cpp",
+      "find": "failure.internal_free=heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);",
+      "replace": "failure.internal_free=heap_caps_get_free_size(MALLOC_CAP_INTERNAL);"
+    },
+    {
+      "id": "nested-not-counted",
+      "check": "a failure inside the hook is counted",
+      "file": "components/system_services/system_services.cpp",
+      "find": "if(allocation_failure_guard.test_and_set(std::memory_order_acquire)){\n        allocation_failure_suppressed.fetch_add(1,std::memory_order_relaxed);return;",
+      "replace": "if(allocation_failure_guard.test_and_set(std::memory_order_acquire)){\n        return;"
+    },
+    {
+      "id": "nested-recorded",
+      "check": "a failure inside the hook is not recorded",
+      "file": "components/system_services/system_services.cpp",
+      "find": "if(allocation_failure_guard.test_and_set(std::memory_order_acquire)){\n        allocation_failure_suppressed.fetch_add(1,std::memory_order_relaxed);return;\n    }",
+      "replace": "if(false){\n        allocation_failure_suppressed.fetch_add(1,std::memory_order_relaxed);return;\n    }"
+    },
+    {
+      "id": "capacity-seven",
+      "check": "eight failures are recorded",
+      "file": "components/system_services/system_services.cpp",
+      "find": "std::array<AllocationFailure,8> allocation_failures{};",
+      "replace": "std::array<AllocationFailure,7> allocation_failures{};"
+    },
+    {
+      "id": "full-not-counted",
+      "check": "a failure past capacity is counted",
+      "file": "components/system_services/system_services.cpp",
+      "find": "if(allocation_failure_count==allocation_failures.size()){\n        allocation_failure_suppressed.fetch_add(1,std::memory_order_relaxed);",
+      "replace": "if(allocation_failure_count==allocation_failures.size()){\n"
+    },
+    {
+      "id": "task-name-sixteen",
+      "check": "task names keep 15 characters",
+      "file": "components/system_services/system_services.cpp",
+      "find": "char function[32]{},task[16]{};",
+      "replace": "char function[32]{},task[17]{};"
+    },
+    {
+      "id": "function-name-thirty-two",
+      "check": "function names keep 31 characters",
+      "file": "components/system_services/system_services.cpp",
+      "find": "char function[32]{},task[16]{};",
+      "replace": "char function[33]{},task[16]{};"
+    },
+    {
+      "id": "isr-not-named",
+      "check": "a failure in an interrupt is recorded as the ISR's",
+      "file": "components/system_services/system_services.cpp",
+      "find": "xPortInIsrContext()?\"ISR\":pcTaskGetName(nullptr)",
+      "replace": "pcTaskGetName(nullptr)"
+    },
+    {
+      "id": "isr-task-queried",
+      "check": "an interrupt never asks for a task name",
+      "file": "components/system_services/system_services.cpp",
+      "find": "copy(failure.task,sizeof(failure.task),xPortInIsrContext()?\"ISR\":pcTaskGetName(nullptr));",
+      "replace": "{const char* task=pcTaskGetName(nullptr);copy(failure.task,sizeof(failure.task),xPortInIsrContext()?\"ISR\":task);}"
+    },
+    {
+      "id": "records-logged-in-reverse",
+      "check": "records are logged oldest first",
+      "file": "components/system_services/system_services.cpp",
+      "find": "const auto failure=allocation_failures[allocation_failure_read];",
+      "replace": "const auto failure=allocation_failures[(allocation_failure_read+allocation_failure_count-1)%allocation_failures.size()];"
+    },
+    {
+      "id": "record-fields-swapped",
+      "check": "the record line names the function, then the task",
+      "file": "components/system_services/system_services.cpp",
+      "find": "failure.caps,failure.function,failure.task,",
+      "replace": "failure.caps,failure.task,failure.function,"
+    },
+    {
+      "id": "suppressed-not-reset",
+      "check": "the suppressed count is logged once",
+      "file": "components/system_services/system_services.cpp",
+      "find": "const auto suppressed=allocation_failure_suppressed.exchange(0,std::memory_order_relaxed);",
+      "replace": "const auto suppressed=allocation_failure_suppressed.load(std::memory_order_relaxed);"
+    },
+    {
+      "id": "records-wait-for-ready",
+      "check": "records are logged before the firmware is ready",
+      "file": "components/system_services/system_services.cpp",
+      "find": "log_allocation_failures();\n    // Called by one background task. Wait for all services before the baseline.\n    static int64_t next_log_us = 0;\n    if (!firmware_ready()) return;",
+      "replace": "// Called by one background task. Wait for all services before the baseline.\n    static int64_t next_log_us = 0;\n    if (!firmware_ready()) return;\n    log_allocation_failures();"
+    },
+    {
+      "id": "totals-before-ready",
+      "check": "memory totals wait for the firmware to be ready",
+      "file": "components/system_services/system_services.cpp",
+      "find": "if (!firmware_ready()) return;\n    const int64_t now = esp_timer_get_time();",
+      "replace": "const int64_t now = esp_timer_get_time();"
+    },
+    {
+      "id": "interval-short",
+      "check": "memory totals come every ten minutes, not sooner",
+      "file": "components/system_services/system_services.cpp",
+      "find": "constexpr int64_t interval_us = 10LL * 60 * 1000000;",
+      "replace": "constexpr int64_t interval_us = 10LL * 60 * 1000000 - 1000;"
+    },
+    {
+      "id": "interval-long",
+      "check": "memory totals come every ten minutes, not later",
+      "file": "components/system_services/system_services.cpp",
+      "find": "constexpr int64_t interval_us = 10LL * 60 * 1000000;",
+      "replace": "constexpr int64_t interval_us = 10LL * 60 * 1000000 + 1000;"
+    },
+    {
+      "id": "totals-extra-query",
+      "check": "memory totals take two free-size queries",
+      "file": "components/system_services/system_services.cpp",
+      "find": "heap_caps_get_free_size(psram),heap_caps_get_minimum_free_size(psram));",
+      "replace": "heap_caps_get_free_size(psram)+0*heap_caps_get_free_size(internal),heap_caps_get_minimum_free_size(psram));"
+    },
+    {
+      "id": "totals-free-min-swapped",
+      "check": "memory totals give free, then minimum",
+      "file": "components/system_services/system_services.cpp",
+      "find": "heap_caps_get_free_size(internal),heap_caps_get_minimum_free_size(internal),",
+      "replace": "heap_caps_get_minimum_free_size(internal),heap_caps_get_free_size(internal),"
+    },
+    {
+      "id": "totals-internal-without-8bit",
+      "check": "memory totals count internal byte-addressable memory",
+      "file": "components/system_services/system_services.cpp",
+      "find": "constexpr uint32_t internal=MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT;",
+      "replace": "constexpr uint32_t internal=MALLOC_CAP_INTERNAL;"
+    },
+    {
+      "id": "uptime-milliseconds",
+      "check": "uptime is in seconds",
+      "file": "components/system_services/system_services.cpp",
+      "find": "now / 1000000, heap_caps_get_free_size(internal)",
+      "replace": "now / 1000, heap_caps_get_free_size(internal)"
+    },
+    {
+      "id": "console-result-dropped",
+      "check": "the console's result is returned",
+      "file": "components/system_services/system_services.cpp",
+      "find": "static_cast<uint32_t>(elapsed/1000));\n    return result;",
+      "replace": "static_cast<uint32_t>(elapsed/1000));\n    (void)result;return length;"
+    },
+    {
+      "id": "ring-locked-while-forwarding",
+      "check": "the ring is unlocked before the console runs",
+      "file": "components/system_services/system_services.cpp",
+      "find": "xSemaphoreGive(lock);\n    }\n    if(!original)return length;\n    const auto began=esp_timer_get_time();\n    const int result=original(fmt,args);",
+      "replace": "}\n    if(!original){if(length>0)xSemaphoreGive(lock);return length;}\n    const auto began=esp_timer_get_time();\n    const int result=original(fmt,args);\n    if(length>0)xSemaphoreGive(lock);"
+    },
+    {
+      "id": "timing-before-ring-copy",
+      "check": "timing starts after the ring copy",
+      "file": "components/system_services/system_services.cpp",
+      "find": "int capture(const char *fmt, va_list args) {\n    char line[384];",
+      "replace": "int capture(const char *fmt, va_list args) {\n    const auto early=original?esp_timer_get_time():0;(void)early;\n    char line[384];"
+    },
+    {
+      "id": "report-twice",
+      "check": "each console call is reported once",
+      "file": "components/system_services/system_services.cpp",
+      "find": "amity::network_diagnostics::record_console_call(static_cast<uint32_t>(began/1000),static_cast<uint32_t>(elapsed/1000));",
+      "replace": "amity::network_diagnostics::record_console_call(static_cast<uint32_t>(began/1000),static_cast<uint32_t>(elapsed/1000));amity::network_diagnostics::record_console_call(static_cast<uint32_t>(began/1000),static_cast<uint32_t>(elapsed/1000));"
+    },
+    {
+      "id": "report-start-late",
+      "check": "the report gives the start in milliseconds",
+      "file": "components/system_services/system_services.cpp",
+      "find": "record_console_call(static_cast<uint32_t>(began/1000),",
+      "replace": "record_console_call(static_cast<uint32_t>(began/1000+1),"
+    },
+    {
+      "id": "report-duration-long",
+      "check": "the report gives the duration in milliseconds",
+      "file": "components/system_services/system_services.cpp",
+      "find": "static_cast<uint32_t>(elapsed/1000));",
+      "replace": "static_cast<uint32_t>(elapsed/1000+1));"
+    },
+    {
+      "id": "report-start-saturates",
+      "check": "the start in milliseconds wraps in 32 bits",
+      "file": "components/system_services/system_services.cpp",
+      "find": "record_console_call(static_cast<uint32_t>(began/1000),",
+      "replace": "record_console_call(static_cast<uint32_t>(std::min<int64_t>(began/1000,UINT32_MAX)),"
+    },
+    {
+      "id": "elapsed-not-clamped",
+      "check": "a negative duration is reported as zero",
+      "file": "components/system_services/system_services.cpp",
+      "find": "const auto elapsed=std::max<int64_t>(0,esp_timer_get_time()-began);",
+      "replace": "const auto elapsed=esp_timer_get_time()-began;"
+    },
+    {
+      "id": "ring-keeps-terminator",
+      "check": "the ring keeps 383 bytes of a long line",
+      "file": "components/system_services/system_services.cpp",
+      "find": "size_t n = std::min(static_cast<size_t>(length), sizeof(line)-1);",
+      "replace": "size_t n = std::min(static_cast<size_t>(length), sizeof(line));"
+    },
+    {
+      "id": "line-buffer-larger",
+      "check": "the ring line buffer is 384 bytes",
+      "file": "components/system_services/system_services.cpp",
+      "find": "char line[384];",
+      "replace": "char line[385];"
+    },
+    {
+      "id": "null-console-timed",
+      "check": "without a console nothing is timed",
+      "file": "components/system_services/system_services.cpp",
+      "find": "if(!original)return length;",
+      "replace": "if(!original){(void)esp_timer_get_time();return length;}"
+    },
+    {
+      "id": "null-console-reported",
+      "check": "without a console nothing is reported",
+      "file": "components/system_services/system_services.cpp",
+      "find": "if(!original)return length;",
+      "replace": "if(!original){amity::network_diagnostics::record_console_call(0,0);return length;}"
+    },
+    {
+      "id": "logs-oldest-at-cursor",
+      "check": "the log reads back oldest first",
+      "file": "components/system_services/system_services.cpp",
+      "find": "size_t n=used, start=(cursor+ring.size()-n)%ring.size();",
+      "replace": "size_t n=used, start=cursor%ring.size();"
+    },
+    {
+      "id": "ring-wraps-short",
+      "check": "the ring holds log_capacity bytes",
+      "file": "components/system_services/system_services.cpp",
+      "find": "used = std::min(used+n, ring.size());",
+      "replace": "used = std::min(used+n, ring.size()-1);"
+    },
+    {
+      "id": "header-size-without-segment",
+      "check": "an upload holds at least the image, segment and application headers",
+      "file": "components/system_services/system_services.cpp",
+      "find": "constexpr size_t header_size=sizeof(esp_image_header_t)+sizeof(esp_image_segment_header_t)+sizeof(esp_app_desc_t);",
+      "replace": "constexpr size_t header_size=sizeof(esp_image_header_t)+sizeof(esp_app_desc_t);"
+    },
+    {
+      "id": "metadata-cap-short",
+      "check": "an upload may carry the largest manifest and signature",
+      "file": "components/system_services/system_services.cpp",
+      "find": "constexpr size_t metadata_cap=updates::update_bundle_header_bytes+8192+64;",
+      "replace": "constexpr size_t metadata_cap=updates::update_bundle_header_bytes+8192+63;"
+    },
+    {
+      "id": "smallest-upload-rejected",
+      "check": "an upload of exactly the headers passes the size check",
+      "file": "components/system_services/system_services.cpp",
+      "find": "req->content_len<header_size",
+      "replace": "req->content_len<=header_size"
+    },
+    {
+      "id": "largest-upload-rejected",
+      "check": "an upload of exactly the partition and metadata passes the size check",
+      "file": "components/system_services/system_services.cpp",
+      "find": "uint64_t(req->content_len)>uint64_t(target->size)+metadata_cap",
+      "replace": "uint64_t(req->content_len)>=uint64_t(target->size)+metadata_cap"
+    },
+    {
+      "id": "missing-partition-accepted",
+      "check": "an upload needs an update partition",
+      "file": "components/system_services/system_services.cpp",
+      "find": "if(!target||req->content_len<header_size",
+      "replace": "if(req->content_len<header_size"
+    },
+    {
+      "id": "upload-deadline-long",
+      "check": "the whole upload has a 120-second deadline",
+      "file": "components/system_services/system_services.cpp",
+      "find": "web::BodyReader reader(req,120ULL*1000000);",
+      "replace": "web::BodyReader reader(req,121ULL*1000000);"
+    },
+    {
+      "id": "upload-deadline-short",
+      "check": "the whole upload has a 120-second deadline",
+      "file": "components/system_services/system_services.cpp",
+      "find": "web::BodyReader reader(req,120ULL*1000000);",
+      "replace": "web::BodyReader reader(req,119ULL*1000000);"
+    },
+    {
+      "id": "metadata-deadline-long",
+      "check": "the metadata has a 30-second deadline",
+      "file": "components/system_services/system_services.cpp",
+      "find": "metadata_reader.emplace(req,30ULL*1000000);",
+      "replace": "metadata_reader.emplace(req,31ULL*1000000);"
+    },
+    {
+      "id": "reader-unavailable-status",
+      "check": "an upload without a reader is answered 503",
+      "file": "components/system_services/system_services.cpp",
+      "find": "return web::error(req,\"Cannot receive firmware\",\"503 Service Unavailable\");",
+      "replace": "return web::error(req,\"Cannot receive firmware\",\"500 Internal Server Error\");"
+    },
+    {
+      "id": "metadata-reader-unchecked",
+      "check": "an upload without a metadata reader is answered 503",
+      "file": "components/system_services/system_services.cpp",
+      "find": "if(!metadata_reader->valid())return web::error(req,\"Cannot receive firmware metadata\",\"503 Service Unavailable\");",
+      "replace": ""
+    },
+    {
+      "id": "metadata-reader-kept",
+      "check": "the metadata reader is released before the image streams",
+      "file": "components/system_services/system_services.cpp",
+      "find": "metadata_reader.reset();",
+      "replace": ""
+    },
+    {
+      "id": "admission-ignored",
+      "check": "a release that fails admission is rejected",
+      "file": "components/system_services/system_services.cpp",
+      "find": "if(updates::validate_release(manifest,signature_hex,release,error)!=ESP_OK)return web::error(req,error.c_str());",
+      "replace": "updates::validate_release(manifest,signature_hex,release,error);"
+    },
+    {
+      "id": "release-size-unchecked",
+      "check": "the release describes the bundled image",
+      "file": "components/system_services/system_services.cpp",
+      "find": "if(release.image_bytes!=bundle.image_bytes)return web::error(req,\"This is not a valid Amity update file.\");",
+      "replace": ""
+    },
+    {
+      "id": "signature-not-hex",
+      "check": "admission gets the signature in hex",
+      "file": "components/system_services/system_services.cpp",
+      "find": "const auto signature_hex=amity::system::hex(signature);",
+      "replace": "const auto signature_hex=signature;"
+    },
+    {
+      "id": "metadata-order-swapped",
+      "check": "the manifest precedes the signature",
+      "file": "components/system_services/system_services.cpp",
+      "find": "if(!read_exact(manifest.data(),manifest.size())||!read_exact(signature.data(),signature.size()))",
+      "replace": "if(!read_exact(signature.data(),signature.size())||!read_exact(manifest.data(),manifest.size()))"
+    },
+    {
+      "id": "short-image-accepted",
+      "check": "an image shorter than its headers is rejected",
+      "file": "components/system_services/system_services.cpp",
+      "find": "if(first<header_size||!read_exact(buf.data(),first))",
+      "replace": "if(!read_exact(buf.data(),first))"
+    },
+    {
+      "id": "app-desc-offset",
+      "check": "the application header follows the image and segment headers",
+      "file": "components/system_services/system_services.cpp",
+      "find": "memcpy(&app,buf.data()+sizeof(esp_image_header_t)+sizeof(esp_image_segment_header_t),sizeof(app));",
+      "replace": "memcpy(&app,buf.data()+sizeof(esp_image_header_t),sizeof(app));"
+    },
+    {
+      "id": "version-end-unchecked",
+      "check": "a version field without an end is rejected",
+      "file": "components/system_services/system_services.cpp",
+      "find": "if(!memchr(app.version,'\\0',sizeof(app.version)))return web::error(req,\"Invalid firmware version field\");",
+      "replace": ""
+    },
+    {
+      "id": "downgrade-unconfirmed",
+      "check": "an older version needs confirmation",
+      "file": "components/system_services/system_services.cpp",
+      "find": "if(!comparison||*comparison<0){",
+      "replace": "if(!comparison){"
+    },
+    {
+      "id": "same-version-confirmed",
+      "check": "the same version needs no confirmation",
+      "file": "components/system_services/system_services.cpp",
+      "find": "if(!comparison||*comparison<0){",
+      "replace": "if(!comparison||*comparison<=0){"
+    },
+    {
+      "id": "unknown-version-unconfirmed",
+      "check": "an unrecognized version needs confirmation",
+      "file": "components/system_services/system_services.cpp",
+      "find": "if(!comparison||*comparison<0){",
+      "replace": "if(comparison&&*comparison<0){"
+    },
+    {
+      "id": "confirmation-inverted",
+      "check": "confirmation names the running version",
+      "file": "components/system_services/system_services.cpp",
+      "find": "strcmp(confirmed,running->version)!=0",
+      "replace": "strcmp(confirmed,running->version)==0"
+    },
+    {
+      "id": "downgrade-status",
+      "check": "an unconfirmed downgrade is answered 409",
+      "file": "components/system_services/system_services.cpp",
+      "find": "Reload the page and select the file again.\",\"409 Conflict\");",
+      "replace": "Reload the page and select the file again.\",\"400 Bad Request\");"
+    },
+    {
+      "id": "cohort-busy-status",
+      "check": "a cohort that cannot start is answered 409",
+      "file": "components/system_services/system_services.cpp",
+      "find": "if(updates::begin_system_upload(release,error)!=ESP_OK)return web::error(req,error.c_str(),\"409 Conflict\");",
+      "replace": "if(updates::begin_system_upload(release,error)!=ESP_OK)return web::error(req,error.c_str());"
+    },
+    {
+      "id": "cohort-start-ignored",
+      "check": "a cohort that cannot start stops the upload",
+      "file": "components/system_services/system_services.cpp",
+      "find": "if(updates::begin_system_upload(release,error)!=ESP_OK)return web::error(req,error.c_str(),\"409 Conflict\");",
+      "replace": "updates::begin_system_upload(release,error);"
+    },
+    {
+      "id": "failure-without-abort",
+      "check": "a failed upload aborts the receiver",
+      "file": "components/system_services/system_services.cpp",
+      "find": "auto fail=[&](const std::string& message){updates::peer_abort(message);updates::fail_system_upload(message);",
+      "replace": "auto fail=[&](const std::string& message){updates::fail_system_upload(message);"
+    },
+    {
+      "id": "failure-without-cohort",
+      "check": "a failed upload fails the cohort",
+      "file": "components/system_services/system_services.cpp",
+      "find": "auto fail=[&](const std::string& message){updates::peer_abort(message);updates::fail_system_upload(message);",
+      "replace": "auto fail=[&](const std::string& message){updates::peer_abort(message);"
+    },
+    {
+      "id": "receiver-begin-ignored",
+      "check": "a receiver that cannot begin stops the upload",
+      "file": "components/system_services/system_services.cpp",
+      "find": "if(updates::peer_begin(release,signature_hex,error)!=ESP_OK)return fail(error);",
+      "replace": "updates::peer_begin(release,signature_hex,error);"
+    },
+    {
+      "id": "first-block-ignored",
+      "check": "a first block the receiver rejects stops the upload",
+      "file": "components/system_services/system_services.cpp",
+      "find": "if(updates::peer_chunk(release.release_id,0,std::string_view(buf.data(),first),error)!=ESP_OK)return fail(error);",
+      "replace": "updates::peer_chunk(release.release_id,0,std::string_view(buf.data(),first),error);"
+    },
+    {
+      "id": "first-progress-dropped",
+      "check": "progress follows the first block",
+      "file": "components/system_services/system_services.cpp",
+      "find": "uint64_t read=first;updates::system_upload_progress(read);",
+      "replace": "uint64_t read=first;"
+    },
+    {
+      "id": "blocks-short",
+      "check": "the image goes to the receiver in 2 KiB blocks",
+      "file": "components/system_services/system_services.cpp",
+      "find": "std::array<char,2048> buf{};",
+      "replace": "std::array<char,1024> buf{};"
+    },
+    {
+      "id": "block-size-off-by-one",
+      "check": "every block but the last is 2 KiB",
+      "file": "components/system_services/system_services.cpp",
+      "find": "const auto count=size_t(std::min<uint64_t>(buf.size(),bundle.image_bytes-read));",
+      "replace": "const auto count=size_t(std::min<uint64_t>(buf.size()-1,bundle.image_bytes-read));"
+    },
+    {
+      "id": "interrupted-message",
+      "check": "an interrupted upload says the current firmware stays",
+      "file": "components/system_services/system_services.cpp",
+      "find": "return fail(\"Firmware upload was interrupted; current firmware retained\");",
+      "replace": "return fail(\"Firmware upload failed\");"
+    },
+    {
+      "id": "block-ignored",
+      "check": "a block the receiver rejects stops the upload",
+      "file": "components/system_services/system_services.cpp",
+      "find": "if(updates::peer_chunk(release.release_id,read,std::string_view(buf.data(),count),error)!=ESP_OK)return fail(error);",
+      "replace": "updates::peer_chunk(release.release_id,read,std::string_view(buf.data(),count),error);"
+    },
+    {
+      "id": "progress-dropped",
+      "check": "progress follows each block",
+      "file": "components/system_services/system_services.cpp",
+      "find": "read+=count;updates::system_upload_progress(read);",
+      "replace": "read+=count;"
+    },
+    {
+      "id": "stage-ignored",
+      "check": "a staging failure keeps the running image",
+      "file": "components/system_services/system_services.cpp",
+      "find": "if(updates::peer_stage(release.release_id,error)!=ESP_OK||updates::finish_system_upload(error)!=ESP_OK)return fail(error);",
+      "replace": "if(updates::finish_system_upload(error)!=ESP_OK)return fail(error);"
+    },
+    {
+      "id": "cohort-not-finished",
+      "check": "a staged upload finishes the cohort",
+      "file": "components/system_services/system_services.cpp",
+      "find": "if(updates::peer_stage(release.release_id,error)!=ESP_OK||updates::finish_system_upload(error)!=ESP_OK)return fail(error);",
+      "replace": "if(updates::peer_stage(release.release_id,error)!=ESP_OK)return fail(error);"
+    },
+    {
+      "id": "staged-type",
+      "check": "the staged answer is JSON",
+      "file": "components/system_services/system_services.cpp",
+      "find": "httpd_resp_set_type(req,\"application/json\");",
+      "replace": "httpd_resp_set_type(req,\"text/plain\");"
+    },
+    {
+      "id": "staged-body",
+      "check": "the staged answer says staged",
+      "file": "components/system_services/system_services.cpp",
+      "find": "return httpd_resp_sendstr(req,\"{\\\"staged\\\":true}\");",
+      "replace": "return httpd_resp_sendstr(req,\"{\\\"staged\\\":false}\");"
+    },
+    {
+      "id": "pending-state-ignored",
+      "check": "a first boot pending verification is marked valid",
+      "file": "components/system_services/system_services.cpp",
+      "find": "state==ESP_OTA_IMG_PENDING_VERIFY",
+      "replace": "state==ESP_OTA_IMG_NEW"
+    },
+    {
+      "id": "ready-after-failed-mark",
+      "check": "a failed mark leaves the firmware unready",
+      "file": "components/system_services/system_services.cpp",
+      "find": "if(result==ESP_OK)ready.store(true);",
+      "replace": "ready.store(true);"
+    },
+    {
+      "id": "reboot-delay-short",
+      "check": "a reboot comes 1.5 seconds later by default",
+      "file": "components/system_services/system_services.cpp",
+      "find": "void reboot_later() { reboot_later(1500); }",
+      "replace": "void reboot_later() { reboot_later(1000); }"
+    },
+    {
+      "id": "reboot-without-delay",
+      "check": "a reboot waits for its delay",
+      "file": "components/system_services/system_services.cpp",
+      "find": "void restart_task(void *delay) { vTaskDelay(pdMS_TO_TICKS(reinterpret_cast<uintptr_t>(delay))); esp_restart(); }",
+      "replace": "void restart_task(void *delay) { (void)delay; esp_restart(); }"
+    },
+    {
+      "id": "reboot-task-priority",
+      "check": "the restart task runs at priority 3",
+      "file": "components/system_services/system_services.cpp",
+      "find": "xTaskCreate(restart_task,\"restart\",2048,reinterpret_cast<void*>(uintptr_t(delay_ms)),3,nullptr);",
+      "replace": "xTaskCreate(restart_task,\"restart\",2048,reinterpret_cast<void*>(uintptr_t(delay_ms)),2,nullptr);"
+    }
+  ]
+}

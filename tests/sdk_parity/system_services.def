@@ -1,0 +1,45 @@
+// Copyright 2026.
+// This file is part of Amity-esp32.
+// Amity-esp32 is free software: you can redistribute it and/or modify it under the terms of the
+// GNU General Public License as published by the Free Software Foundation, either version 3 of the
+// License, or (at your option) any later version.
+
+// OTA states and the partition descriptor the system services fakes reproduce
+// from the pinned ESP-IDF. The descriptor holds a pointer, so its size differs
+// on the host and only its field order is compared.
+// fakes: tests/core_fakes tests/system_services_fakes
+// headers: esp_ota_ops.h esp_partition.h esp_random.h bootloader_random.h
+// target: components/system_services/system_services.cpp
+AMITY_PARITY(ota_handle_size, sizeof(esp_ota_handle_t))
+AMITY_PARITY(ota_img_states_size, sizeof(esp_ota_img_states_t))
+AMITY_PARITY(ota_img_new, ESP_OTA_IMG_NEW)
+AMITY_PARITY(ota_img_pending_verify, ESP_OTA_IMG_PENDING_VERIFY)
+AMITY_PARITY(ota_img_valid, ESP_OTA_IMG_VALID)
+AMITY_PARITY(ota_img_invalid, ESP_OTA_IMG_INVALID)
+AMITY_PARITY(ota_img_aborted, ESP_OTA_IMG_ABORTED)
+AMITY_PARITY(ota_img_undefined, ESP_OTA_IMG_UNDEFINED)
+
+AMITY_PARITY(partition_type_size, sizeof(esp_partition_type_t))
+AMITY_PARITY(partition_type_app, ESP_PARTITION_TYPE_APP)
+AMITY_PARITY(partition_type_data, ESP_PARTITION_TYPE_DATA)
+AMITY_PARITY(partition_type_bootloader, ESP_PARTITION_TYPE_BOOTLOADER)
+AMITY_PARITY(partition_type_partition_table, ESP_PARTITION_TYPE_PARTITION_TABLE)
+AMITY_PARITY(partition_type_any, ESP_PARTITION_TYPE_ANY)
+AMITY_PARITY(partition_subtype_size, sizeof(esp_partition_subtype_t))
+AMITY_PARITY(partition_subtype_factory, ESP_PARTITION_SUBTYPE_APP_FACTORY)
+AMITY_PARITY(partition_subtype_ota_min, ESP_PARTITION_SUBTYPE_APP_OTA_MIN)
+AMITY_PARITY(partition_subtype_ota_0, ESP_PARTITION_SUBTYPE_APP_OTA_0)
+AMITY_PARITY(partition_subtype_ota_1, ESP_PARTITION_SUBTYPE_APP_OTA_1)
+AMITY_PARITY(partition_subtype_data_ota, ESP_PARTITION_SUBTYPE_DATA_OTA)
+AMITY_PARITY(partition_subtype_data_nvs, ESP_PARTITION_SUBTYPE_DATA_NVS)
+AMITY_PARITY(partition_subtype_any, ESP_PARTITION_SUBTYPE_ANY)
+AMITY_PARITY(partition_size_bytes, sizeof(((esp_partition_t *)0)->size))
+AMITY_PARITY(partition_label_bytes, sizeof(((esp_partition_t *)0)->label))
+AMITY_PARITY(partition_type_after_chip, offsetof(esp_partition_t, type) > offsetof(esp_partition_t, flash_chip))
+AMITY_PARITY(partition_subtype_after_type, offsetof(esp_partition_t, subtype) > offsetof(esp_partition_t, type))
+AMITY_PARITY(partition_address_after_subtype, offsetof(esp_partition_t, address) > offsetof(esp_partition_t, subtype))
+AMITY_PARITY(partition_size_after_address, offsetof(esp_partition_t, size) > offsetof(esp_partition_t, address))
+AMITY_PARITY(partition_erase_size_after_size, offsetof(esp_partition_t, erase_size) > offsetof(esp_partition_t, size))
+AMITY_PARITY(partition_label_after_erase_size, offsetof(esp_partition_t, label) > offsetof(esp_partition_t, erase_size))
+AMITY_PARITY(partition_encrypted_after_label, offsetof(esp_partition_t, encrypted) > offsetof(esp_partition_t, label))
+AMITY_PARITY(partition_readonly_last, offsetof(esp_partition_t, readonly) > offsetof(esp_partition_t, encrypted))

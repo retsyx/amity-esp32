@@ -5,10 +5,8 @@
 # sdk-slice        slices of SDK or HomeKit SDK code that stay
 # whole-file       compiles whole firmware files from Python without slicing them
 admission_workflow_test.py pending:A2
-allocation_failure_diagnostics_test.py pending:F
 board_profile_config_test.py whole-file
 configuration_snapshot_web_test.py pending:E1
-console_latency_observer_test.py pending:F
 consortium_admission_startup_test.py pending:A1
 consortium_enrollment_restart_test.py pending:A2
 consortium_firmware_identity_test.py pending:A2
@@ -55,7 +53,6 @@ removed_metadata_test.py pending:A2
 runtime_peer_status_test.py pending:A2
 system_nvs_budget_test.py lint
 system_peer_record_test.py pending:Z
-update_bundle_test.py pending:F
 web_redirect_test.py lint
 web_session_tcp_test.py lint
 web_stall_test.py pending:Z
