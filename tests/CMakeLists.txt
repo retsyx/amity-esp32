@@ -379,6 +379,9 @@ if(AMITY_HOST_TESTS MATCHES "^(all|standalone)$")
     amity_command_test(provisioning_prompt.py "${PYTHON3}" -S "${T}/provisioning_prompt.py"
         "${CMAKE_BINARY_DIR}/bin/amity-provision-test")
     set_tests_properties(provisioning_prompt.py PROPERTIES FIXTURES_REQUIRED provisioning_tool)
+
+    # Python tests that read firmware sources
+    amity_python_tests(slicing_ratchet_test.py)
 endif()
 
 # Tests that read ESP-IDF sources, managed components or firmware build output,
