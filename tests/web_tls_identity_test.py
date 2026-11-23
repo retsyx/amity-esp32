@@ -43,6 +43,9 @@ unsigned draws=0;
 void esp_fill_random(void *out,size_t size){assert(size==draw.size());std::memcpy(out,draw.data(),size);++draws;}
 namespace web {
 std::string certificate,private_key;
+esp_err_t tls_identity(const std::string &hostname,std::string &certificate,std::string &private_key);
+// The scenarios keep the identity in this TU's strings, as web::start does.
+esp_err_t tls_identity(const std::string &hostname){return tls_identity(hostname,certificate,private_key);}
 '''
 SUITE = r'''
 }
@@ -117,7 +120,7 @@ int main(int argc,char **argv){
 
 
 def main():
-    firmware = (ROOT / 'components/web/web.cpp').read_text()
+    firmware = (ROOT / 'components/web/tls_identity.cpp').read_text()
     actual = ''.join(function(firmware, name) for name in
                      ('bool valid_certificate_serial(', 'esp_err_t tls_identity(')
                      if name in firmware)

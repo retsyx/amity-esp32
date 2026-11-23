@@ -1,0 +1,71 @@
+/*
+ * Copyright 2026.
+ * This file is part of Amity-esp32.
+ * Amity-esp32 is free software: you can redistribute it and/or modify it under the terms of the
+ * GNU General Public License as published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
+ */
+
+#include "tls_identity.hpp"
+#include "config_store.hpp"
+#include "esp_random.h"
+#include "mbedtls/pk.h"
+#include "mbedtls/x509_crt.h"
+#include "psa/crypto.h"
+#include <cstdint>
+namespace web {
+namespace {
+bool valid_certificate_serial(const std::string &pem) {
+    mbedtls_x509_crt cert;
+    mbedtls_x509_crt_init(&cert);
+    const int r=mbedtls_x509_crt_parse(&cert,reinterpret_cast<const uint8_t *>(pem.c_str()),pem.size()+1);
+    // Mbed TLS accepts nonminimal serials that browser TLS implementations reject.
+    const auto &serial=cert.serial;
+    const bool valid=!r && serial.len && !(serial.p[0]&0x80) &&
+        (serial.p[0]!=0 || (serial.len>1 && (serial.p[1]&0x80)));
+    mbedtls_x509_crt_free(&cert);
+    return valid;
+}
+}
+esp_err_t tls_identity(const std::string &hostname,std::string &certificate,std::string &private_key) {
+    auto a=config_store::read("tls_cert",certificate),b=config_store::read("tls_key",private_key);
+    if(a==ESP_OK && b==ESP_OK && valid_certificate_serial(certificate)) return ESP_OK;
+    if((a!=ESP_OK && a!=ESP_ERR_NVS_NOT_FOUND)||(b!=ESP_OK && b!=ESP_ERR_NVS_NOT_FOUND)) return ESP_FAIL;
+    psa_key_attributes_t attributes=PSA_KEY_ATTRIBUTES_INIT;
+    psa_set_key_type(&attributes,PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
+    psa_set_key_bits(&attributes,256);
+    psa_set_key_algorithm(&attributes,PSA_ALG_ECDSA(PSA_ALG_SHA_256));
+    psa_set_key_usage_flags(&attributes,PSA_KEY_USAGE_SIGN_HASH|PSA_KEY_USAGE_EXPORT|PSA_KEY_USAGE_COPY);
+    mbedtls_svc_key_id_t id=0;
+    if(psa_generate_key(&attributes,&id)!=PSA_SUCCESS) return ESP_FAIL;
+    mbedtls_pk_context key;
+    mbedtls_pk_init(&key);
+    int r=mbedtls_pk_copy_from_psa(id,&key);
+    psa_destroy_key(id);
+    mbedtls_x509write_cert cert;
+    mbedtls_x509write_crt_init(&cert);
+    // The raw setter preserves leading zero bytes. Keep this positive and
+    // nonzero without a redundant DER sign byte, including an all-zero draw.
+    uint8_t serial[16];esp_fill_random(serial,sizeof(serial));serial[0]=(serial[0]&0x7f)|1;
+    mbedtls_x509write_crt_set_version(&cert,MBEDTLS_X509_CRT_VERSION_3);
+    mbedtls_x509write_crt_set_md_alg(&cert,MBEDTLS_MD_SHA256);
+    mbedtls_x509write_crt_set_subject_key(&cert,&key);
+    mbedtls_x509write_crt_set_issuer_key(&cert,&key);
+    if(!r) r=mbedtls_x509write_crt_set_serial_raw(&cert,serial,sizeof(serial));
+    const std::string subject="CN="+hostname+",O=Amity";
+    if(!r) r=mbedtls_x509write_crt_set_subject_name(&cert,subject.c_str());
+    if(!r) r=mbedtls_x509write_crt_set_issuer_name(&cert,subject.c_str());
+    if(!r) r=mbedtls_x509write_crt_set_validity(&cert,"20240101000000","20500101000000");
+    if(!r) r=mbedtls_x509write_crt_set_basic_constraints(&cert,0,-1);
+    if(!r) r=mbedtls_x509write_crt_set_key_usage(&cert,MBEDTLS_X509_KU_DIGITAL_SIGNATURE);
+    unsigned char pem[1600]{};
+    if(!r) r=mbedtls_x509write_crt_pem(&cert,pem,sizeof(pem));
+    if(!r) certificate=reinterpret_cast<char *>(pem);
+    if(!r) r=mbedtls_pk_write_key_pem(&key,pem,sizeof(pem));
+    if(!r) private_key=reinterpret_cast<char *>(pem);
+    mbedtls_x509write_crt_free(&cert);mbedtls_pk_free(&key);
+    if(r) return ESP_FAIL;
+    auto e=config_store::write("tls_key",private_key);
+    return e==ESP_OK?config_store::write("tls_cert",certificate):e;
+}
+}

@@ -6,7 +6,7 @@
 
 # The HTTPS deadline guard reads HTTPD's private session state.
 set(httpd_dir "$ENV{IDF_PATH}/components/esp_http_server")
-idf_component_register(SRCS "web.cpp" "redirect.cpp" "stall.cpp" "credentials.cpp" "request.cpp" "tls_write.cpp" INCLUDE_DIRS "include"
+idf_component_register(SRCS "web.cpp" "tls_identity.cpp" "redirect.cpp" "stall.cpp" "credentials.cpp" "request.cpp" "tls_write.cpp" INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "${httpd_dir}/src" "${httpd_dir}/src/port/esp32" "${httpd_dir}/src/util"
     REQUIRES esp_https_server mbedtls config_store esp_timer esp_system lwip)
 

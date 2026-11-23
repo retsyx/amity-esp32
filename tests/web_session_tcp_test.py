@@ -84,7 +84,7 @@ std::string certificate,private_key;
 int credentials_init(const std::string &authentication) {
     ++credentials_calls;assert(authentication=="fixture-authentication");return credentials_result;
 }
-int tls_identity(const std::string &hostname) {
+int tls_identity(const std::string &hostname,std::string &certificate,std::string &private_key) {
     ++identity_calls;assert(hostname=="amity-test");
     certificate="fixture-certificate";private_key="fixture-private-key";return identity_result;
 }
