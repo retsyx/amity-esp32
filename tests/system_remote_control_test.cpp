@@ -146,5 +146,28 @@ int main(){
     const auto next_metadata=prepared(failed_hash_candidate);fail_policy_hash=true;
     assert(member.configure_passive_metadata(next_metadata)==ESP_OK&&member.configuration_snapshot()==next_metadata);fail_policy_hash=false;
     assert(serialize_configuration(*member.active_configuration())==serialize_configuration(failed_hash_candidate));
-    std::cout<<"PASS actual activity facade: generation and gate/repair parity, independent key-up, stable-ID ordered selection, offline AVR/switch intent, shared prepared snapshots without rehashing, immutable old readers, failed-commit retention and IPC-before-persistence\n";
+    // An updated image pending verification defers its staged record: startup
+    // withdraws authority and publishes the record only as passive metadata,
+    // which configures no owner. Once the image is healthy, activation commits
+    // that record, also after a failed commit, and the owner then applies it.
+    amity::SystemControl updated;updated.set_identity(config.consortium_id,*config.controller_octopus_id);updated.set_coordinator_authority(true);updated.set_boot_identity(id<BootId>(94));
+    assert(fixture_start(updated,1,2)==ESP_OK);drain();
+    const auto staged=prepared(config);unsigned activations=0;
+    assert(updated.transition_coordinator_authority(false)==ESP_OK&&updated.configure_passive_metadata(staged)==ESP_OK);drain();
+    assert(!updated.accepts_local_input()&&updated.configuration_snapshot()==staged&&updated.playback_state().applied_config_revision==0);
+    assert(updated.transition_coordinator_authority(true)==ESP_OK);
+    assert(updated.configure(staged,[&]{++activations;return ESP_FAIL;})==ESP_FAIL&&activations==1);
+    assert(updated.transition_coordinator_authority(false)==ESP_OK);drain();
+    assert(updated.configuration_snapshot()==staged&&updated.playback_state().applied_config_revision==0);
+    assert(updated.transition_coordinator_authority(true)==ESP_OK);
+    assert(updated.configure(staged,[&]{++activations;return ESP_OK;})==ESP_OK&&activations==2&&updated.configuration_snapshot()==staged);
+    // A save cannot overtake the activation its owner has not yet applied.
+    auto renamed=config;renamed.activities[0].label="Renamed";++renamed.presentation_revision;
+    assert(updated.configure(prepared(renamed),[&]{++activations;return ESP_OK;})==ESP_ERR_INVALID_STATE&&activations==2);
+    drain();
+    const auto activated=updated.applied_configuration();
+    assert(activated.config_revision==config.config_revision&&activated.presentation_revision==config.presentation_revision);
+    assert(updated.request_remote_activity(0)==ESP_OK);drain();
+    assert(updated.snapshot().current_activity==0&&updated.execution_snapshot().current_activity==first);
+    std::cout<<"PASS actual activity facade: generation and gate/repair parity, independent key-up, stable-ID ordered selection, offline AVR/switch intent, shared prepared snapshots without rehashing, immutable old readers, failed-commit retention, IPC-before-persistence and deferred activation of a staged record\n";
 }

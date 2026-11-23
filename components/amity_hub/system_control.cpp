@@ -30,8 +30,10 @@ esp_err_t SystemControl::configure(config_store::ConfigurationSnapshot published
     for(const auto& owner:config.octopuses)owners.push_back(owner.octopus_id);
     const auto previous=active_configuration();
     auto stored=std::shared_ptr<const config_store::Configuration>(published,&published->configuration);
+    // A save follows the configuration its owner applied. Passive metadata
+    // configures no owner, and an owner that has applied none must be idle.
     const auto can_commit=[previous](const Snapshot& state){
-        if(!previous)return state.current_activity<0;
+        if(!previous||!state.applied_config_revision)return state.current_activity<0;
         return state.applied_config_revision==previous->config_revision&&state.applied_presentation_revision==previous->presentation_revision;
     };
     const auto persist=[this,published,commit=std::move(commit)]{
