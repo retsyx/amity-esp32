@@ -1572,7 +1572,7 @@ bool HubService::Adapter::send(BusSide side, uint8_t destination, const uint8_t 
         cec::Frame frame; frame.size = static_cast<uint8_t>(size + 1);
         frame.data[0] = static_cast<uint8_t>((address << 4) | destination);
         for (size_t i = 0; i < size; ++i) frame.data[i + 1] = data[i];
-        // Admission is immediate. All messages drop when the eight-slot FIFO is full.
+        // Admission is immediate. All messages drop when the 24-slot FIFO is full.
         auto &bus = side == BusSide::Front ? front : back;
         // Once admitted, work finishes in FIFO order through activity changes.
         // Only a changed physical endpoint can invalidate that recipient. Key
