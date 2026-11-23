@@ -1,0 +1,37 @@
+// Copyright 2026.
+// This file is part of Amity-esp32.
+// Amity-esp32 is free software: you can redistribute it and/or modify it under the terms of the
+// GNU General Public License as published by the Free Software Foundation, either version 3 of the
+// License, or (at your option) any later version.
+
+// HTTPD's private state, which the web server fakes reproduce from the
+// pinned ESP-IDF. Layouts with pointers differ in size on the host, so for
+// those only the field order is compared.
+// fakes: tests/core_fakes tests/web_server_fakes tests/web_request_fakes
+// headers: esp_httpd_priv.h
+// target: components/web/stall.cpp
+AMITY_PARITY(parser_block_size, PARSER_BLOCK_SIZE)
+AMITY_PARITY(session_fd_first, offsetof(struct sock_db, fd))
+AMITY_PARITY(session_handle_after_fd, offsetof(struct sock_db, handle) > offsetof(struct sock_db, fd))
+AMITY_PARITY(session_send_after_handle, offsetof(struct sock_db, send_fn) > offsetof(struct sock_db, handle))
+AMITY_PARITY(session_pending_after_send, offsetof(struct sock_db, pending_data) > offsetof(struct sock_db, send_fn))
+AMITY_PARITY(session_pending_size, sizeof(((struct sock_db *)0)->pending_data))
+AMITY_PARITY(aux_session_first, offsetof(struct httpd_req_aux, sd))
+AMITY_PARITY(aux_header_limit_after_session,
+             offsetof(struct httpd_req_aux, max_req_hdr_len) > offsetof(struct httpd_req_aux, sd))
+AMITY_PARITY(aux_remaining_after_header_limit,
+             offsetof(struct httpd_req_aux, remaining_len) > offsetof(struct httpd_req_aux, max_req_hdr_len))
+AMITY_PARITY(aux_status_after_remaining,
+             offsetof(struct httpd_req_aux, status) > offsetof(struct httpd_req_aux, remaining_len))
+AMITY_PARITY(aux_type_after_status, offsetof(struct httpd_req_aux, content_type) > offsetof(struct httpd_req_aux, status))
+AMITY_PARITY(aux_first_chunk_after_type,
+             offsetof(struct httpd_req_aux, first_chunk_sent) > offsetof(struct httpd_req_aux, content_type))
+AMITY_PARITY(aux_request_headers_after_first_chunk,
+             offsetof(struct httpd_req_aux, req_hdrs_count) > offsetof(struct httpd_req_aux, first_chunk_sent))
+AMITY_PARITY(aux_response_headers_after_request_headers,
+             offsetof(struct httpd_req_aux, resp_hdrs) > offsetof(struct httpd_req_aux, resp_hdrs_count))
+AMITY_PARITY(data_config_first, offsetof(struct httpd_data, config))
+AMITY_PARITY(data_request_after_handlers, offsetof(struct httpd_data, hd_req) > offsetof(struct httpd_data, hd_calls))
+AMITY_PARITY(data_aux_after_request, offsetof(struct httpd_data, hd_req_aux) > offsetof(struct httpd_data, hd_req))
+AMITY_PARITY(data_state_after_aux,
+             offsetof(struct httpd_data, http_server_state) > offsetof(struct httpd_data, hd_req_aux))

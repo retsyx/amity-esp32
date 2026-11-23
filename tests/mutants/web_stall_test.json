@@ -1,0 +1,293 @@
+{
+  "ctest": "^web_stall_test\\.",
+  "targets": [
+    "web_stall_test"
+  ],
+  "baseline": {
+    "ctest": "^web_stall_test\\.py$",
+    "targets": []
+  },
+  "mutants": [
+    {
+      "id": "handshake-deadline-longer",
+      "check": "a TLS handshake gets 5 s",
+      "file": "components/web/stall.hpp",
+      "find": "constexpr uint64_t handshake_us=5000000,head_us=5000000;",
+      "replace": "constexpr uint64_t handshake_us=5000001,head_us=5000000;"
+    },
+    {
+      "id": "head-deadline-longer",
+      "check": "a request head gets 5 s",
+      "file": "components/web/stall.hpp",
+      "find": "constexpr uint64_t handshake_us=5000000,head_us=5000000;",
+      "replace": "constexpr uint64_t handshake_us=5000000,head_us=5000001;"
+    },
+    {
+      "id": "stub-expire-return",
+      "check": "stub: early return from expire()",
+      "file": "components/web/stall.cpp",
+      "find": "void expire(void *) {",
+      "replace": "void expire(void *) {return;"
+    },
+    {
+      "id": "expire-write-side-only",
+      "check": "expiry shuts the socket down for receiving",
+      "file": "components/web/stall.cpp",
+      "find": "shutdown(watched.load(),SHUT_RDWR);",
+      "replace": "shutdown(watched.load(),SHUT_WR);"
+    },
+    {
+      "id": "stub-prepare-error",
+      "check": "stub: early return from prepare()",
+      "file": "components/web/stall.cpp",
+      "find": "esp_err_t prepare() {",
+      "replace": "esp_err_t prepare() {return -1;"
+    },
+    {
+      "id": "prepare-creates-again",
+      "check": "prepare creates the timer once",
+      "file": "components/web/stall.cpp",
+      "find": "if(timer)return ESP_OK;",
+      "replace": ""
+    },
+    {
+      "id": "prepare-hides-failure",
+      "check": "prepare reports a failed timer creation",
+      "file": "components/web/stall.cpp",
+      "find": "return esp_timer_create(&args,&timer);",
+      "replace": "esp_timer_create(&args,&timer);return ESP_OK;"
+    },
+    {
+      "id": "prepare-timer-name",
+      "check": "the deadline timer is named https_stall",
+      "file": "components/web/stall.cpp",
+      "find": "args.name=\"https_stall\";",
+      "replace": "args.name=\"stall\";"
+    },
+    {
+      "id": "stub-serve-return",
+      "check": "stub: early return from serve()",
+      "file": "components/web/stall.cpp",
+      "find": "void serve(httpd_handle_t server) {",
+      "replace": "void serve(httpd_handle_t server) {return;"
+    },
+    {
+      "id": "stub-release-return",
+      "check": "stub: early return from release()",
+      "file": "components/web/stall.cpp",
+      "find": "void release(httpd_handle_t server) {",
+      "replace": "void release(httpd_handle_t server) {return;"
+    },
+    {
+      "id": "release-any-server",
+      "check": "release stops guarding only the matching server",
+      "file": "components/web/stall.cpp",
+      "find": "secure.compare_exchange_strong(expected,nullptr);",
+      "replace": "secure.store(nullptr);(void)expected;"
+    },
+    {
+      "id": "stub-arm-return",
+      "check": "stub: early return from arm()",
+      "file": "components/web/stall.cpp",
+      "find": "void arm(int socket,uint64_t timeout_us) {",
+      "replace": "void arm(int socket,uint64_t timeout_us) {return;"
+    },
+    {
+      "id": "arm-creates-timer",
+      "check": "arm does nothing before prepare",
+      "file": "components/web/stall.cpp",
+      "find": "void arm(int socket,uint64_t timeout_us) { if(!timer)return;",
+      "replace": "void arm(int socket,uint64_t timeout_us) { if(!timer&&prepare()!=ESP_OK)return;"
+    },
+    {
+      "id": "arm-watches-nothing",
+      "check": "an armed deadline shuts down the armed socket",
+      "file": "components/web/stall.cpp",
+      "find": "watched.store(socket);",
+      "replace": "watched.store(-1);(void)socket;"
+    },
+    {
+      "id": "stub-disarm-return",
+      "check": "stub: early return from disarm()",
+      "file": "components/web/stall.cpp",
+      "find": "void disarm() {",
+      "replace": "void disarm() {return;"
+    },
+    {
+      "id": "disarm-keeps-socket",
+      "check": "expiry after a disarm cannot reach a reused descriptor",
+      "file": "components/web/stall.cpp",
+      "find": "esp_timer_stop_blocking(timer,portMAX_DELAY); watched.store(-1);",
+      "replace": "esp_timer_stop_blocking(timer,portMAX_DELAY);",
+      "survives": "disarm stops the timer, waiting for a running expiry, before it forgets the socket, so no expiry can follow it to read the stale socket"
+    },
+    {
+      "id": "stub-Response-return",
+      "check": "stub: early return from the Response constructor",
+      "file": "components/web/stall.cpp",
+      "find": "Response::Response(httpd_req_t *request,size_t size) {",
+      "replace": "Response::Response(httpd_req_t *request,size_t size) {return;"
+    },
+    {
+      "id": "response-any-server",
+      "check": "responses of other servers are unbounded",
+      "file": "components/web/stall.cpp",
+      "find": "if(static_cast<httpd_data *>(request->handle)!=secure.load()||responder.load()!=xTaskGetCurrentTaskHandle())return;",
+      "replace": "if(responder.load()!=xTaskGetCurrentTaskHandle())return;"
+    },
+    {
+      "id": "response-any-task",
+      "check": "responses from other tasks are unbounded",
+      "file": "components/web/stall.cpp",
+      "find": "if(static_cast<httpd_data *>(request->handle)!=secure.load()||responder.load()!=xTaskGetCurrentTaskHandle())return;",
+      "replace": "if(static_cast<httpd_data *>(request->handle)!=secure.load())return;"
+    },
+    {
+      "id": "response-size-plus-one",
+      "check": "a response gets transfer_us(size)",
+      "file": "components/web/stall.cpp",
+      "find": "arm(httpd_req_to_sockfd(request),transfer_us(size));",
+      "replace": "arm(httpd_req_to_sockfd(request),transfer_us(size+1));"
+    },
+    {
+      "id": "response-not-disarmed",
+      "check": "a bounded response disarms when it ends",
+      "file": "components/web/stall.cpp",
+      "find": "Response::~Response() {if(armed_)disarm();}",
+      "replace": "Response::~Response() {(void)armed_;}"
+    },
+    {
+      "id": "stub-__wrap_httpd_req_new-error",
+      "check": "stub: early return from __wrap_httpd_req_new()",
+      "file": "components/web/stall.cpp",
+      "find": "esp_err_t __wrap_httpd_req_new(httpd_data *server,sock_db *session) {",
+      "replace": "esp_err_t __wrap_httpd_req_new(httpd_data *server,sock_db *session) {return -1;"
+    },
+    {
+      "id": "head-any-server",
+      "check": "other servers parse heads unguarded",
+      "file": "components/web/stall.cpp",
+      "find": "if(server!=web::stall::secure.load())return __real_httpd_req_new(server,session);",
+      "replace": ""
+    },
+    {
+      "id": "head-deadline-plus-one",
+      "check": "a request head is bounded by head_us",
+      "file": "components/web/stall.cpp",
+      "find": "web::stall::arm(session->fd,web::stall::head_us);",
+      "replace": "web::stall::arm(session->fd,web::stall::head_us+1);"
+    },
+    {
+      "id": "head-other-socket",
+      "check": "the head deadline watches the session socket",
+      "file": "components/web/stall.cpp",
+      "find": "web::stall::arm(session->fd,web::stall::head_us);",
+      "replace": "web::stall::arm(-1,web::stall::head_us);(void)session;"
+    },
+    {
+      "id": "head-not-disarmed",
+      "check": "nothing stays armed after a head",
+      "file": "components/web/stall.cpp",
+      "find": "const auto result=__real_httpd_req_new(server,session); web::stall::disarm();",
+      "replace": "const auto result=__real_httpd_req_new(server,session);"
+    },
+    {
+      "id": "stub-__wrap_httpd_uri-error",
+      "check": "stub: early return from __wrap_httpd_uri()",
+      "file": "components/web/stall.cpp",
+      "find": "esp_err_t __wrap_httpd_uri(httpd_data *server) {",
+      "replace": "esp_err_t __wrap_httpd_uri(httpd_data *server) {return -1;"
+    },
+    {
+      "id": "routing-keeps-head-deadline",
+      "check": "handlers run unarmed",
+      "file": "components/web/stall.cpp",
+      "find": "web::stall::disarm(); web::stall::responder.store(xTaskGetCurrentTaskHandle());",
+      "replace": "web::stall::responder.store(xTaskGetCurrentTaskHandle());"
+    },
+    {
+      "id": "routing-no-responder",
+      "check": "responses on the server task are bounded",
+      "file": "components/web/stall.cpp",
+      "find": "web::stall::responder.store(xTaskGetCurrentTaskHandle());",
+      "replace": "web::stall::responder.store(nullptr);"
+    },
+    {
+      "id": "routing-keeps-responder",
+      "check": "responses outside a handler are unbounded",
+      "file": "components/web/stall.cpp",
+      "find": "web::stall::responder.store(nullptr); return result;",
+      "replace": "return result;"
+    },
+    {
+      "id": "stub-__wrap_httpd_req_delete-error",
+      "check": "stub: early return from __wrap_httpd_req_delete()",
+      "file": "components/web/stall.cpp",
+      "find": "esp_err_t __wrap_httpd_req_delete(httpd_data *server) {",
+      "replace": "esp_err_t __wrap_httpd_req_delete(httpd_data *server) {return -1;"
+    },
+    {
+      "id": "purge-without-body",
+      "check": "only an unread body is purged under a deadline",
+      "file": "components/web/stall.cpp",
+      "find": "if(server!=web::stall::secure.load()||!server->hd_req_aux.remaining_len)return __real_httpd_req_delete(server);",
+      "replace": "if(server!=web::stall::secure.load())return __real_httpd_req_delete(server);"
+    },
+    {
+      "id": "purge-any-server",
+      "check": "other servers purge unguarded",
+      "file": "components/web/stall.cpp",
+      "find": "if(server!=web::stall::secure.load()||!server->hd_req_aux.remaining_len)return __real_httpd_req_delete(server);",
+      "replace": "if(!server->hd_req_aux.remaining_len)return __real_httpd_req_delete(server);"
+    },
+    {
+      "id": "purge-size-plus-one",
+      "check": "a purge gets transfer_us(remaining)",
+      "file": "components/web/stall.cpp",
+      "find": "web::stall::transfer_us(server->hd_req_aux.remaining_len));",
+      "replace": "web::stall::transfer_us(server->hd_req_aux.remaining_len+1));"
+    },
+    {
+      "id": "purge-other-socket",
+      "check": "the purge deadline watches the request socket",
+      "file": "components/web/stall.cpp",
+      "find": "web::stall::arm(httpd_req_to_sockfd(&server->hd_req),",
+      "replace": "web::stall::arm(-1,"
+    },
+    {
+      "id": "purge-not-disarmed",
+      "check": "nothing stays armed after a purge",
+      "file": "components/web/stall.cpp",
+      "find": "const auto result=__real_httpd_req_delete(server); web::stall::disarm();",
+      "replace": "const auto result=__real_httpd_req_delete(server);"
+    },
+    {
+      "id": "cmake-uri-unwrapped",
+      "check": "CMake wraps httpd_uri",
+      "file": "components/web/CMakeLists.txt",
+      "find": "\"-Wl,--wrap=httpd_uri\" \"-Wl,--undefined=__wrap_httpd_uri\"",
+      "replace": "\"-Wl,--undefined=__wrap_httpd_uri\""
+    },
+    {
+      "id": "stub-upload_firmware-fail",
+      "check": "stub: early return from upload_firmware()",
+      "file": "components/system_services/system_services.cpp",
+      "find": "esp_err_t upload_firmware(httpd_req_t *req) {",
+      "replace": "esp_err_t upload_firmware(httpd_req_t *req) { return ESP_FAIL;"
+    },
+    {
+      "id": "error-returns-ok",
+      "check": "web::error returns ESP_FAIL so HTTPD closes",
+      "file": "components/web/request.cpp",
+      "find": "    return ESP_FAIL;\n}\n}",
+      "replace": "    return ESP_OK;\n}\n}"
+    },
+    {
+      "id": "log-download-bounded",
+      "check": "log downloads stream without web::response",
+      "file": "components/system_services/log_download.cpp",
+      "find": "return httpd_resp_send_chunk(req,nullptr,0);",
+      "replace": "return web::response(req,nullptr,0);"
+    }
+  ]
+}

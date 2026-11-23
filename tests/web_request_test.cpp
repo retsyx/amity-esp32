@@ -22,7 +22,7 @@
 
 using Clock=std::chrono::steady_clock;
 using amity_fake::HttpRequest;
-// web_stall_test.py exercises the guard; here each response records its bound.
+// web_stall_test exercises the guard; here each response records its bound.
 static std::vector<size_t> bounded;
 web::stall::Response::Response(httpd_req_t*,size_t size) {(void)armed_;bounded.push_back(size);}
 web::stall::Response::~Response() {}
