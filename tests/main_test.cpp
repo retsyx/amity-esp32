@@ -1801,6 +1801,67 @@ void rename_member() {
     CHECK(network.hostname == "den" && network.aliases.empty() && !network.responder);
 }
 
+// The remote battery task, once a second: it flushes the Matter state that a
+// failed publication kept, polls memory, network diagnostics, the Wi-Fi signal
+// and the peer update timeout, and passes the remote's status to Matter.
+const std::vector<std::string> battery_turn{"amity_matter_flush_state", "system_services::log_memory_if_due",
+                                            "amity::network_diagnostics::poll",
+                                            "amity::network_diagnostics::poll_wifi_signal",
+                                            "system_services::updates::poll_peer_timeout", "ble_remote_get_status",
+                                            "amity_matter_update_remote"};
+// Runs the remote battery task for two turns, each ending in its wait.
+void run_battery_task() {
+    install<&amity_matter_flush_state>([] { return ESP_OK; });
+    install<&system_services::log_memory_if_due>([] {});
+    install<&amity::network_diagnostics::poll>([] {});
+    install<&amity::network_diagnostics::poll_wifi_signal>([] {});
+    install<&system_services::updates::poll_peer_timeout>([] {});
+    install<&ble_remote_get_status>([](ble_remote_status_t *status) {
+        status->bonded = true;
+        status->connected = false;
+        status->battery_percent = 87;
+        status->charging = 1;
+    });
+    amity_seam::clear_calls();
+    const unsigned before = amity_fake::delays();
+    amity_fake::on_delay([before](TickType_t ticks) {
+        CHECK(ticks == pdMS_TO_TICKS(1000));
+        const unsigned turns = amity_fake::delays() - before;
+        CHECK(amity_seam::calls().size() == turns * battery_turn.size());
+        if (turns == 2) throw amity_fake::LeaveTask{};
+    });
+    amity_fake::run_task(task("remote_battery"));
+    CHECK(tasks_named("remote_battery").front().state == amity_fake::Task::State::left);
+    auto turns = battery_turn;
+    turns.insert(turns.end(), battery_turn.begin(), battery_turn.end());
+    CHECK(amity_seam::calls() == turns);
+}
+void battery_task() {
+    install_boot();
+    app_main();
+    install<&amity_matter_update_remote>([](bool paired, bool connected, int battery, int charging) {
+        CHECK(paired && !connected && battery == 87 && charging == 1);
+        return ESP_OK;
+    });
+    run_battery_task();
+    CHECK(!amity_fake::logged("Remote battery Matter update failed"));
+}
+// A failed Matter update is logged, and the task goes on.
+void battery_update_fails() {
+    install_boot();
+    app_main();
+    install<&amity_matter_update_remote>([](bool, bool, int, int) { return ESP_ERR_INVALID_STATE; });
+    run_battery_task();
+    std::size_t warnings = 0;
+    for (const auto &line : amity_fake::log_lines()) {
+        if (line.message == "Remote battery Matter update failed: ESP_ERR_INVALID_STATE") {
+            CHECK(line.level == ESP_LOG_WARN && line.tag == "amity");
+            ++warnings;
+        }
+    }
+    CHECK(warnings == 2);
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -1878,5 +1939,7 @@ int main(int argc, char **argv) {
         {"rename-https-exhausted", rename_https_exhausted},
         {"rename-after-failed-registration", rename_after_failed_registration},
         {"rename-member", rename_member},
+        {"battery-task", battery_task},
+        {"battery-update-fails", battery_update_fails},
     });
 }

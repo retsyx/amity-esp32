@@ -1,0 +1,85 @@
+{
+  "ctest": "^main_(production_)?test\\.battery-",
+  "baseline": {
+    "ctest": "^matter_state_publication_test\\.py$"
+  },
+  "mutants": [
+    {
+      "id": "stub-remote_battery_task-return",
+      "check": "stub: early return from remote_battery_task()",
+      "file": "main/main.cpp",
+      "find": "void remote_battery_task(void *) {",
+      "replace": "void remote_battery_task(void *) { return;"
+    },
+    {
+      "id": "battery-flush-after-delay",
+      "check": "the retained Matter state is flushed before the wait",
+      "file": "main/main.cpp",
+      "find": "amity_matter_flush_state();\n        system_services::log_memory_if_due();\n        amity::network_diagnostics::poll();\n        amity::network_diagnostics::poll_wifi_signal();\n        system_services::updates::poll_peer_timeout();\n        ble_remote_status_t remote{};\n        ble_remote_get_status(&remote);\n        const auto err = amity_matter_update_remote(remote.bonded,remote.connected,remote.battery_percent,remote.charging);\n        if (err != ESP_OK) ESP_LOGW(\"amity\", \"Remote battery Matter update failed: %s\", esp_err_to_name(err));\n        vTaskDelay(pdMS_TO_TICKS(1000));",
+      "replace": "system_services::log_memory_if_due();\n        amity::network_diagnostics::poll();\n        amity::network_diagnostics::poll_wifi_signal();\n        system_services::updates::poll_peer_timeout();\n        ble_remote_status_t remote{};\n        ble_remote_get_status(&remote);\n        const auto err = amity_matter_update_remote(remote.bonded,remote.connected,remote.battery_percent,remote.charging);\n        if (err != ESP_OK) ESP_LOGW(\"amity\", \"Remote battery Matter update failed: %s\", esp_err_to_name(err));\n        vTaskDelay(pdMS_TO_TICKS(1000));\n        amity_matter_flush_state();"
+    },
+    {
+      "id": "battery-without-flush",
+      "check": "the retained Matter state is flushed",
+      "file": "main/main.cpp",
+      "find": "amity_matter_flush_state();\n        system_services::log_memory_if_due();",
+      "replace": "system_services::log_memory_if_due();"
+    },
+    {
+      "id": "battery-delay-interval",
+      "check": "the task runs once a second",
+      "file": "main/main.cpp",
+      "find": "vTaskDelay(pdMS_TO_TICKS(1000));",
+      "replace": "vTaskDelay(pdMS_TO_TICKS(2000));"
+    },
+    {
+      "id": "battery-without-memory-log",
+      "check": "memory is logged when due",
+      "file": "main/main.cpp",
+      "find": "system_services::log_memory_if_due();\n        amity::network_diagnostics::poll();",
+      "replace": "amity::network_diagnostics::poll();"
+    },
+    {
+      "id": "battery-without-diagnostics",
+      "check": "network diagnostics are polled",
+      "file": "main/main.cpp",
+      "find": "amity::network_diagnostics::poll();\n        amity::network_diagnostics::poll_wifi_signal();",
+      "replace": "amity::network_diagnostics::poll_wifi_signal();"
+    },
+    {
+      "id": "battery-without-wifi-signal",
+      "check": "the Wi-Fi signal is polled",
+      "file": "main/main.cpp",
+      "find": "amity::network_diagnostics::poll_wifi_signal();\n        system_services::updates::poll_peer_timeout();",
+      "replace": "system_services::updates::poll_peer_timeout();"
+    },
+    {
+      "id": "battery-without-peer-timeout",
+      "check": "the peer update timeout is polled",
+      "file": "main/main.cpp",
+      "find": "system_services::updates::poll_peer_timeout();\n        ble_remote_status_t remote{};",
+      "replace": "ble_remote_status_t remote{};"
+    },
+    {
+      "id": "battery-paired-connected-swapped",
+      "check": "Matter gets the remote pairing, then its connection",
+      "file": "main/main.cpp",
+      "find": "amity_matter_update_remote(remote.bonded,remote.connected,",
+      "replace": "amity_matter_update_remote(remote.connected,remote.bonded,"
+    },
+    {
+      "id": "battery-percent-charging-swapped",
+      "check": "Matter gets the battery level, then the charging state",
+      "file": "main/main.cpp",
+      "find": "remote.battery_percent,remote.charging);",
+      "replace": "remote.charging,remote.battery_percent);"
+    },
+    {
+      "id": "battery-update-error-silent",
+      "check": "a failed Matter update is logged",
+      "file": "main/main.cpp",
+      "find": "if (err != ESP_OK) ESP_LOGW(\"amity\", \"Remote battery Matter update failed: %s\", esp_err_to_name(err));",
+      "replace": "(void)err;"
+    }
+  ]
+}

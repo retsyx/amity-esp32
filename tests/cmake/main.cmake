@@ -53,7 +53,8 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         release-timing
         rename-published rename-back rename-alias-fails rename-address-fails rename-https-fails rename-homekit-fails
         rename-old-alias-fails rename-network-fails rename-without-station rename-https-busy rename-https-exhausted
-        rename-after-failed-registration rename-member)
+        rename-after-failed-registration rename-member
+        battery-task battery-update-fails)
     # app_main has two #if blocks. main_test builds with both settings off and
     # main_production_test with both on, so a step inside an #if block fails
     # one of them.
