@@ -1,0 +1,505 @@
+{
+  "ctest": "^main_(production_)?test\\.(boot|retire|setup-button|await)-",
+  "baseline": {
+    "ctest": "^controller_startup_test\\.py$"
+  },
+  "mutants": [
+    {
+      "id": "stub-refresh_admin_mdns_for_host-fail",
+      "check": "stub: early return from refresh_admin_mdns_for_host()",
+      "file": "main/main.cpp",
+      "find": "esp_err_t refresh_admin_mdns_for_host(const char* hostname) {",
+      "replace": "esp_err_t refresh_admin_mdns_for_host(const char* hostname) { return ESP_FAIL;"
+    },
+    {
+      "id": "stub-refresh_admin_mdns-return",
+      "check": "stub: early return from refresh_admin_mdns()",
+      "file": "main/main.cpp",
+      "find": "void refresh_admin_mdns() {",
+      "replace": "void refresh_admin_mdns() { return;"
+    },
+    {
+      "id": "stub-setup_matter-return",
+      "check": "stub: early return from setup_matter()",
+      "file": "main/main.cpp",
+      "find": "[[gnu::noinline]] void setup_matter(const amity::consortium::RuntimeStatus &group) {",
+      "replace": "[[gnu::noinline]] void setup_matter(const amity::consortium::RuntimeStatus &group) { return;"
+    },
+    {
+      "id": "stub-setup_button-return",
+      "check": "stub: early return from setup_button()",
+      "file": "main/main.cpp",
+      "find": "void setup_button(bool consortium_setup,void*) {",
+      "replace": "void setup_button(bool consortium_setup,void*) { return;"
+    },
+    {
+      "id": "stub-retire_original_interfaces-fail",
+      "check": "stub: early return from retire_original_interfaces()",
+      "file": "main/main.cpp",
+      "find": "esp_err_t retire_original_interfaces() {",
+      "replace": "esp_err_t retire_original_interfaces() { return ESP_FAIL;"
+    },
+    {
+      "id": "stub-start_admin_mdns-return",
+      "check": "stub: early return from start_admin_mdns()",
+      "file": "main/main.cpp",
+      "find": "void start_admin_mdns() {",
+      "replace": "void start_admin_mdns() { return;"
+    },
+    {
+      "id": "stub-start_original_interfaces-return",
+      "check": "stub: early return from start_original_interfaces()",
+      "file": "main/main.cpp",
+      "find": "void start_original_interfaces() {",
+      "replace": "void start_original_interfaces() { return;"
+    },
+    {
+      "id": "stub-station_has_address-false",
+      "check": "stub: early return from station_has_address()",
+      "file": "main/main.cpp",
+      "find": "bool station_has_address() {",
+      "replace": "bool station_has_address() { return false;"
+    },
+    {
+      "id": "stub-station_has_address-true",
+      "check": "stub: early return from station_has_address()",
+      "file": "main/main.cpp",
+      "find": "bool station_has_address() {",
+      "replace": "bool station_has_address() { return true;"
+    },
+    {
+      "id": "stub-await_original_work-return",
+      "check": "stub: early return from await_original_work()",
+      "file": "main/main.cpp",
+      "find": "void await_original_work() {",
+      "replace": "void await_original_work() { return;"
+    },
+    {
+      "id": "stub-await_original_task-return",
+      "check": "stub: early return from await_original_task()",
+      "file": "main/main.cpp",
+      "find": "void await_original_task(void*) {",
+      "replace": "void await_original_task(void*) { return;"
+    },
+    {
+      "id": "stub-app_main-return",
+      "check": "stub: early return from app_main()",
+      "file": "main/main.cpp",
+      "find": "extern \"C\" void app_main() {",
+      "replace": "extern \"C\" void app_main() { return;"
+    },
+    {
+      "id": "retire-keeps-interfaces-enabled",
+      "check": "retirement disables the original interfaces before its fence",
+      "file": "main/main.cpp",
+      "find": "original_interfaces_enabled.store(false);\n    const auto fenced=hub.retire_membership();",
+      "replace": "const auto fenced=hub.retire_membership();"
+    },
+    {
+      "id": "retire-web-before-fence",
+      "check": "the hub fence comes before HTTPS stops",
+      "file": "main/main.cpp",
+      "find": "const auto fenced=hub.retire_membership();\n    const auto web=web_admin::stop();",
+      "replace": "const auto web=web_admin::stop();\n    const auto fenced=hub.retire_membership();"
+    },
+    {
+      "id": "retire-matter-before-mdns",
+      "check": "the administration service is removed before Matter frees the responder",
+      "file": "main/main.cpp",
+      "find": "    const auto web=web_admin::stop();\n    {",
+      "replace": "const auto web=web_admin::stop();\n    const auto matter_early=amity_matter_set_controller_enabled(false);(void)matter_early;\n    {"
+    },
+    {
+      "id": "retire-homekit-before-matter",
+      "check": "Matter stops before HomeKit",
+      "file": "main/main.cpp",
+      "find": "const auto matter=amity_matter_set_controller_enabled(false);\n    const auto home=amity_homekit::stop();",
+      "replace": "const auto home=amity_homekit::stop();\n    const auto matter=amity_matter_set_controller_enabled(false);"
+    },
+    {
+      "id": "retire-removes-unregistered",
+      "check": "only a registered service is removed",
+      "file": "main/main.cpp",
+      "find": "if(admin_mdns_registered){\n            admin_mdns_registered=false;",
+      "replace": "if(true){\n            admin_mdns_registered=false;"
+    },
+    {
+      "id": "retire-keeps-registered",
+      "check": "a removed service is not removed again",
+      "file": "main/main.cpp",
+      "find": "if(admin_mdns_registered){\n            admin_mdns_registered=false;",
+      "replace": "if(admin_mdns_registered){"
+    },
+    {
+      "id": "retire-skips-mdns-lock",
+      "check": "retirement waits for a publication in flight",
+      "file": "main/main.cpp",
+      "find": "        // shared responder. Headless members never registered this service.\n        std::lock_guard<std::mutex> guard(admin_mdns_mutex);",
+      "replace": "// shared responder. Headless members never registered this service."
+    },
+    {
+      "id": "retire-stops-after-fence-error",
+      "check": "every retirement step runs after a failed fence",
+      "file": "main/main.cpp",
+      "find": "const auto fenced=hub.retire_membership();",
+      "replace": "const auto fenced=hub.retire_membership();if(fenced!=ESP_OK)return fenced;"
+    },
+    {
+      "id": "retire-hides-fence-error",
+      "check": "a failed fence is returned",
+      "file": "main/main.cpp",
+      "find": "if(fenced!=ESP_OK)return fenced;",
+      "replace": "(void)fenced;"
+    },
+    {
+      "id": "retire-hides-web-error",
+      "check": "a failed HTTPS stop is returned",
+      "file": "main/main.cpp",
+      "find": "if(web!=ESP_OK)return web;",
+      "replace": "(void)web;"
+    },
+    {
+      "id": "retire-hides-matter-error",
+      "check": "a failed Matter stop is returned",
+      "file": "main/main.cpp",
+      "find": "if(matter!=ESP_OK)return matter;",
+      "replace": "(void)matter;"
+    },
+    {
+      "id": "retire-hides-homekit-error",
+      "check": "a failed HomeKit stop is returned",
+      "file": "main/main.cpp",
+      "find": "return home;\n}",
+      "replace": "(void)home;return ESP_OK;\n}"
+    },
+    {
+      "id": "retire-returns-removal-error",
+      "check": "a failed service removal is logged, not returned",
+      "file": "main/main.cpp",
+      "find": "if(removed!=ESP_OK)ESP_LOGW(\"amity\",\"Administration mDNS removal: %s\",esp_err_to_name(removed));",
+      "replace": "if(removed!=ESP_OK)return removed;"
+    },
+    {
+      "id": "refresh-while-disabled",
+      "check": "no address refresh after the interfaces are disabled",
+      "file": "main/main.cpp",
+      "find": "if(!original_interfaces_enabled.load()||admin_mdns_hostname.empty())return;",
+      "replace": "if(admin_mdns_hostname.empty())return;"
+    },
+    {
+      "id": "start-mdns-while-disabled",
+      "check": "a disabled board never starts the responder",
+      "file": "main/main.cpp",
+      "find": "    std::lock_guard<std::mutex> guard(admin_mdns_mutex);\n    if(!original_interfaces_enabled.load())return;\n    admin_mdns_hostname=device_settings::hostname();",
+      "replace": "std::lock_guard<std::mutex> guard(admin_mdns_mutex);\n    admin_mdns_hostname=device_settings::hostname();"
+    },
+    {
+      "id": "setup-button-ignores-firmware",
+      "check": "the setup button waits for healthy firmware",
+      "file": "main/main.cpp",
+      "find": "void setup_button(bool consortium_setup,void*) {\n    if(!system_services::firmware_ready())return;",
+      "replace": "void setup_button(bool consortium_setup,void*) {"
+    },
+    {
+      "id": "setup-button-ignores-initialization",
+      "check": "the setup button waits for an initialized runtime",
+      "file": "main/main.cpp",
+      "find": "const auto group=amity::consortium::runtime_status();\n    if(!group.initialized)return;\n    if(consortium_setup){",
+      "replace": "const auto group=amity::consortium::runtime_status();\n    if(consortium_setup){"
+    },
+    {
+      "id": "add-skips-radio",
+      "check": "Add Amity reserves the shared radio first",
+      "file": "main/main.cpp",
+      "find": "const auto admitted=amity::radio::reserve_consortium(false,generation);",
+      "replace": "const esp_err_t admitted=ESP_OK;"
+    },
+    {
+      "id": "add-continues-without-radio",
+      "check": "no Add Amity window opens without the radio",
+      "file": "main/main.cpp",
+      "find": "            ESP_LOGW(\"amity\",\"Could not reserve radio for Add Amity: %s\",esp_err_to_name(admitted));\n            return;",
+      "replace": "ESP_LOGW(\"amity\",\"Could not reserve radio for Add Amity: %s\",esp_err_to_name(admitted));"
+    },
+    {
+      "id": "add-keeps-radio",
+      "check": "a window that does not open releases the radio",
+      "file": "main/main.cpp",
+      "find": "        if(opened!=ESP_OK){\n            amity::radio::release(generation);",
+      "replace": "if(opened!=ESP_OK){"
+    },
+    {
+      "id": "add-releases-open-window",
+      "check": "an open window keeps the radio",
+      "file": "main/main.cpp",
+      "find": "        if(opened!=ESP_OK){\n            amity::radio::release(generation);",
+      "replace": "amity::radio::release(generation);\n        if(opened!=ESP_OK){"
+    },
+    {
+      "id": "add-opens-matter",
+      "check": "Add Amity never opens Matter",
+      "file": "main/main.cpp",
+      "find": "    }else setup_matter(group);",
+      "replace": "}setup_matter(group);"
+    },
+    {
+      "id": "setup-matter-ignores-eligibility",
+      "check": "Matter setup needs an eligible board",
+      "file": "main/main.cpp",
+      "find": "if(amity::consortium::runtime_original_setup_eligible()&&!group.member",
+      "replace": "if(!group.member"
+    },
+    {
+      "id": "setup-matter-ignores-configuration",
+      "check": "a configured board does not offer Matter setup",
+      "file": "main/main.cpp",
+      "find": "&&!group.coordinator&&!configured&&",
+      "replace": "&&!group.coordinator&&(configured||true)&&"
+    },
+    {
+      "id": "setup-matter-one-fabric",
+      "check": "a board with a fabric does not offer Matter setup",
+      "file": "main/main.cpp",
+      "find": "amity_matter_get_status(&matter)==ESP_OK&&matter.fabric_count==0)",
+      "replace": "amity_matter_get_status(&matter)==ESP_OK&&matter.fabric_count<=1)"
+    },
+    {
+      "id": "setup-matter-window-length",
+      "check": "Matter setup opens a 300 s window",
+      "file": "main/main.cpp",
+      "find": "       amity_matter_get_status(&matter)==ESP_OK&&matter.fabric_count==0)\n        amity_matter_open_commissioning(300);",
+      "replace": "amity_matter_get_status(&matter)==ESP_OK&&matter.fabric_count==0)\n        amity_matter_open_commissioning(301);"
+    },
+    {
+      "id": "await-without-address",
+      "check": "setup waits for a station address",
+      "file": "main/main.cpp",
+      "find": "if(station_has_address()&&amity_matter_controller_enrollment_complete()){",
+      "replace": "if((station_has_address()||true)&&amity_matter_controller_enrollment_complete()){"
+    },
+    {
+      "id": "await-without-evidence",
+      "check": "setup waits for Matter commissioning evidence",
+      "file": "main/main.cpp",
+      "find": "if(station_has_address()&&amity_matter_controller_enrollment_complete()){",
+      "replace": "if(station_has_address()){"
+    },
+    {
+      "id": "await-evidence-first",
+      "check": "Matter evidence is read only with a station address",
+      "file": "main/main.cpp",
+      "find": "if(station_has_address()&&amity_matter_controller_enrollment_complete()){",
+      "replace": "if(amity_matter_controller_enrollment_complete()&&station_has_address()){"
+    },
+    {
+      "id": "station-down-with-address",
+      "check": "a station that is down has no usable address",
+      "file": "main/main.cpp",
+      "find": "return station&&esp_netif_is_netif_up(station)&&esp_netif_get_ip_info(station,&address)==ESP_OK&&address.ip.addr;",
+      "replace": "return station&&esp_netif_get_ip_info(station,&address)==ESP_OK&&address.ip.addr;"
+    },
+    {
+      "id": "station-up-without-address",
+      "check": "a station without an address is not ready",
+      "file": "main/main.cpp",
+      "find": "return station&&esp_netif_is_netif_up(station)&&esp_netif_get_ip_info(station,&address)==ESP_OK&&address.ip.addr;",
+      "replace": "return station&&esp_netif_is_netif_up(station)&&esp_netif_get_ip_info(station,&address)==ESP_OK;"
+    },
+    {
+      "id": "await-ignores-claim",
+      "check": "only a successful claim starts the original",
+      "file": "main/main.cpp",
+      "find": "if(claimed==ESP_OK){",
+      "replace": "if(claimed==ESP_OK||true){"
+    },
+    {
+      "id": "await-load-before-promotion",
+      "check": "the hub is promoted before the configuration loads",
+      "file": "main/main.cpp",
+      "find": "ESP_ERROR_CHECK(hub.transition_coordinator_authority(true));\n                ESP_ERROR_CHECK(web_admin::load(hub,false));",
+      "replace": "ESP_ERROR_CHECK(web_admin::load(hub,false));\n                ESP_ERROR_CHECK(hub.transition_coordinator_authority(true));"
+    },
+    {
+      "id": "await-deferred-load",
+      "check": "the claimed original loads its configuration for execution",
+      "file": "main/main.cpp",
+      "find": "ESP_ERROR_CHECK(web_admin::load(hub,false));\n                ESP_ERROR_CHECK(web_admin::finish_configuration_activation());",
+      "replace": "ESP_ERROR_CHECK(web_admin::load(hub,true));\n                ESP_ERROR_CHECK(web_admin::finish_configuration_activation());"
+    },
+    {
+      "id": "await-activation-before-load",
+      "check": "the configuration loads before it is activated",
+      "file": "main/main.cpp",
+      "find": "ESP_ERROR_CHECK(web_admin::load(hub,false));\n                ESP_ERROR_CHECK(web_admin::finish_configuration_activation());",
+      "replace": "ESP_ERROR_CHECK(web_admin::finish_configuration_activation());\n                ESP_ERROR_CHECK(web_admin::load(hub,false));"
+    },
+    {
+      "id": "await-unpublished-configuration",
+      "check": "the claimed original publishes its configuration revision",
+      "file": "main/main.cpp",
+      "find": "                const auto config=hub.configuration_snapshot();\n                if(config)amity::consortium::runtime_configuration_changed(config->configuration.config_revision);",
+      "replace": "const auto config=hub.configuration_snapshot();(void)config;"
+    },
+    {
+      "id": "await-enables-after-start",
+      "check": "the interfaces are enabled before they start",
+      "file": "main/main.cpp",
+      "find": "config->configuration.config_revision);\n                original_interfaces_enabled.store(true);\n                start_original_interfaces();",
+      "replace": "config->configuration.config_revision);\n                start_original_interfaces();\n                original_interfaces_enabled.store(true);"
+    },
+    {
+      "id": "await-deletes-in-claim-frame",
+      "check": "the setup frame is gone before the task deletes itself",
+      "file": "main/main.cpp",
+      "find": "ESP_LOGI(\"amity\",\"Original Amity setup complete. Administration: https://%s.local\",device_settings::hostname());\n                return;",
+      "replace": "ESP_LOGI(\"amity\",\"Original Amity setup complete. Administration: https://%s.local\",device_settings::hostname());\n                vTaskDelete(nullptr);"
+    },
+    {
+      "id": "await-deletes-in-role-frame",
+      "check": "the setup frame is gone before the task deletes itself",
+      "file": "main/main.cpp",
+      "find": "if(role.member||role.phase==\"recovery_required\")return;",
+      "replace": "if(role.member||role.phase==\"recovery_required\"){vTaskDelete(nullptr);return;}"
+    },
+    {
+      "id": "await-ignores-recovery",
+      "check": "a board that needs recovery stops waiting for setup",
+      "file": "main/main.cpp",
+      "find": "if(role.member||role.phase==\"recovery_required\")return;",
+      "replace": "if(role.member)return;"
+    },
+    {
+      "id": "await-ignores-member",
+      "check": "a member stops waiting for setup",
+      "file": "main/main.cpp",
+      "find": "if(role.member||role.phase==\"recovery_required\")return;",
+      "replace": "if(role.phase==\"recovery_required\")return;"
+    },
+    {
+      "id": "await-poll-interval",
+      "check": "setup polls every 200 ms",
+      "file": "main/main.cpp",
+      "find": "        vTaskDelay(pdMS_TO_TICKS(200));\n    }\n}",
+      "replace": "vTaskDelay(pdMS_TO_TICKS(100));\n    }\n}"
+    },
+    {
+      "id": "interfaces-without-mdns",
+      "check": "the administration hostname starts with the interfaces",
+      "file": "main/main.cpp",
+      "find": "    const amity_matter_callbacks_t callbacks{power,activity,key,mute,volume,matter_inputs,nullptr};\n    start_admin_mdns();",
+      "replace": "const amity_matter_callbacks_t callbacks{power,activity,key,mute,volume,matter_inputs,nullptr};"
+    },
+    {
+      "id": "interfaces-worker-before-web",
+      "check": "the remote worker starts after HTTPS",
+      "file": "main/main.cpp",
+      "find": "    refresh_admin_mdns();\n    if(original_interfaces_enabled.load()){",
+      "replace": "refresh_admin_mdns();\n    ESP_ERROR_CHECK(xTaskCreate(input_task,\"remote_input\",8192,nullptr,4,nullptr)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);\n    if(original_interfaces_enabled.load()){"
+    },
+    {
+      "id": "interfaces-second-worker",
+      "check": "one remote worker starts",
+      "file": "main/main.cpp",
+      "find": "    ble_remote_set_siri_callback(remote_siri,nullptr);",
+      "replace": "ESP_ERROR_CHECK(xTaskCreate(input_task,\"remote_input\",8192,nullptr,4,nullptr)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);\n    ble_remote_set_siri_callback(remote_siri,nullptr);"
+    },
+    {
+      "id": "interfaces-second-web-start",
+      "check": "HTTPS starts once",
+      "file": "main/main.cpp",
+      "find": "    ble_remote_set_siri_callback(remote_siri,nullptr);",
+      "replace": "(void)web_admin::start(hub,device_settings::hostname(),device_settings::initial_admin_auth());\n    ble_remote_set_siri_callback(remote_siri,nullptr);"
+    },
+    {
+      "id": "interfaces-homekit-before-remote",
+      "check": "HomeKit starts after the remote",
+      "file": "main/main.cpp",
+      "find": "    esp_err_t ble=ESP_ERR_INVALID_STATE;",
+      "replace": "(void)amity_homekit::start(hub,callbacks);\n    esp_err_t ble=ESP_ERR_INVALID_STATE;"
+    },
+    {
+      "id": "interfaces-second-homekit-start",
+      "check": "HomeKit starts once",
+      "file": "main/main.cpp",
+      "find": "    startup_memory(\"HomeKit\");",
+      "replace": "(void)amity_homekit::start(hub,callbacks);\n    startup_memory(\"HomeKit\");"
+    },
+    {
+      "id": "retained-without-consortium",
+      "check": "a retained original needs its consortium running",
+      "file": "main/main.cpp",
+      "find": "if(group_start==ESP_OK&&membership_read==ESP_OK&&membership.role==",
+      "replace": "if(membership_read==ESP_OK&&membership.role=="
+    },
+    {
+      "id": "retained-unread-startup",
+      "check": "a retained original needs its saved role read",
+      "file": "main/main.cpp",
+      "find": "if(group_start==ESP_OK&&membership_read==ESP_OK&&membership.role==",
+      "replace": "if(group_start==ESP_OK&&membership.role=="
+    },
+    {
+      "id": "retained-without-authority",
+      "check": "a retained original needs its authority",
+      "file": "main/main.cpp",
+      "find": "&&amity::consortium::runtime_status().authority_ready){",
+      "replace": "){"
+    },
+    {
+      "id": "confirm-after-setup-task",
+      "check": "the local boot is confirmed before the setup task starts",
+      "file": "main/main.cpp",
+      "find": "    ESP_ERROR_CHECK(system_services::confirm_firmware());\n    const auto activated=web_admin::finish_configuration_activation();\n    if(activated!=ESP_OK)ESP_LOGE(\"amity\",\"Configuration activation needs recovery; active records retained\");\n    if(group_start==ESP_OK&&activated==ESP_OK){\n        const auto synchronization=amity::start_configuration_synchronization(hub);\n        if(synchronization!=ESP_OK)ESP_LOGE(\"amity\",\"Consortium synchronization could not start; peers remain fenced\");\n    }\n    if(group_start==ESP_OK&&activated==ESP_OK){\n        start_boot_matter_setup();\n    }\n    if(awaiting_first_setup)ESP_ERROR_CHECK(xTaskCreate(await_original_task,\"await_setup\",12288,nullptr,2,nullptr)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);",
+      "replace": "const auto activated=web_admin::finish_configuration_activation();\n    if(activated!=ESP_OK)ESP_LOGE(\"amity\",\"Configuration activation needs recovery; active records retained\");\n    if(group_start==ESP_OK&&activated==ESP_OK){\n        const auto synchronization=amity::start_configuration_synchronization(hub);\n        if(synchronization!=ESP_OK)ESP_LOGE(\"amity\",\"Consortium synchronization could not start; peers remain fenced\");\n    }\n    if(group_start==ESP_OK&&activated==ESP_OK){\n        start_boot_matter_setup();\n    }\n    if(awaiting_first_setup){ESP_ERROR_CHECK(xTaskCreate(await_original_task,\"await_setup\",12288,nullptr,2,nullptr)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);}\n    ESP_ERROR_CHECK(system_services::confirm_firmware());"
+    },
+    {
+      "id": "passive-member-only",
+      "check": "a board waiting for setup starts passively",
+      "file": "main/main.cpp",
+      "find": "const bool passive_startup=passive_member||awaiting_first_setup;",
+      "replace": "const bool passive_startup=passive_member;"
+    },
+    {
+      "id": "passive-awaiting-only",
+      "check": "a member starts passively",
+      "file": "main/main.cpp",
+      "find": "const bool passive_startup=passive_member||awaiting_first_setup;",
+      "replace": "const bool passive_startup=awaiting_first_setup;"
+    },
+    {
+      "id": "load-not-deferred",
+      "check": "a passive startup defers the configuration",
+      "file": "main/main.cpp",
+      "find": "const auto configuration_load=web_admin::load(hub,passive_startup);",
+      "replace": "const auto configuration_load=web_admin::load(hub,false);"
+    },
+    {
+      "id": "authority-inverted",
+      "check": "only an active startup has the coordinator authority",
+      "file": "main/main.cpp",
+      "find": "hub.set_coordinator_authority(!passive_startup);",
+      "replace": "hub.set_coordinator_authority(passive_startup);"
+    },
+    {
+      "id": "authority-never-set",
+      "check": "the coordinator authority is set before Matter starts",
+      "file": "main/main.cpp",
+      "find": "    hub.set_coordinator_authority(!passive_startup);\n    const auto boot=amity::system::BootId::parse(system_services::boot_id());",
+      "replace": "const auto boot=amity::system::BootId::parse(system_services::boot_id());"
+    },
+    {
+      "id": "hostname-handler-never-installed",
+      "check": "the hostname handler is installed before Matter starts",
+      "file": "main/main.cpp",
+      "find": "    device_settings::set_hostname_handler(rename_hostname);\n    system_services::start_log_capture();",
+      "replace": "system_services::start_log_capture();"
+    },
+    {
+      "id": "lifecycle-without-retirement",
+      "check": "retirement is the lifecycle hook",
+      "file": "main/main.cpp",
+      "find": "amity::consortium::runtime_lifecycle_hooks({retire_original_interfaces,",
+      "replace": "amity::consortium::runtime_lifecycle_hooks({[]{return ESP_OK;},"
+    }
+  ]
+}

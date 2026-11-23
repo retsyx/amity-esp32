@@ -26,7 +26,6 @@ consortium_task_lifetime_test.py pending:A2
 consortium_tcp_ack_trace_test.py pending:A4
 consortium_worker_poll_test.py pending:A4
 controller_integration_test.py pending:Z
-controller_startup_test.py pending:I
 esp_aes_dma_cleanup_test.py sdk-slice
 hardware_capacity_test.py lint
 homekit_crypto_test.py whole-file

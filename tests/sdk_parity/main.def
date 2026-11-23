@@ -1,0 +1,70 @@
+// Copyright 2026.
+// This file is part of Amity-esp32.
+// Amity-esp32 is free software: you can redistribute it and/or modify it under the terms of the
+// GNU General Public License as published by the Free Software Foundation, either version 3 of the
+// License, or (at your option) any later version.
+
+// Network, event, Wi-Fi, mDNS and GPIO constants and layouts that the main
+// fakes reproduce from the pinned ESP-IDF, the managed mdns component and the
+// Amity build's configuration. Layouts with pointers differ in size on the
+// host, so for those only the field order is compared.
+// fakes: tests/core_fakes tests/main_fakes
+// headers: sdkconfig.h esp_event.h esp_netif.h esp_wifi.h mdns.h driver/gpio.h
+// target: main/main.cpp
+AMITY_PARITY(lwip_ipv6_addresses, CONFIG_LWIP_IPV6_NUM_ADDRESSES)
+
+AMITY_PARITY(event_any_id, ESP_EVENT_ANY_ID)
+AMITY_PARITY(ip_event_sta_got_ip, IP_EVENT_STA_GOT_IP)
+AMITY_PARITY(ip_event_sta_lost_ip, IP_EVENT_STA_LOST_IP)
+AMITY_PARITY(ip_event_got_ip6, IP_EVENT_GOT_IP6)
+AMITY_PARITY(ipaddr_type_v4, ESP_IPADDR_TYPE_V4)
+AMITY_PARITY(ipaddr_type_v6, ESP_IPADDR_TYPE_V6)
+AMITY_PARITY(ip4_addr_size, sizeof(esp_ip4_addr_t))
+AMITY_PARITY(ip6_addr_size, sizeof(esp_ip6_addr_t))
+AMITY_PARITY(ip6_addr_zone, offsetof(esp_ip6_addr_t, zone))
+AMITY_PARITY(ip_addr_size, sizeof(esp_ip_addr_t))
+AMITY_PARITY(ip_addr_type, offsetof(esp_ip_addr_t, type))
+AMITY_PARITY(ip_info_size, sizeof(esp_netif_ip_info_t))
+AMITY_PARITY(ip_info_netmask, offsetof(esp_netif_ip_info_t, netmask))
+AMITY_PARITY(ip_info_gw, offsetof(esp_netif_ip_info_t, gw))
+AMITY_PARITY(got_ip_info_after_netif, offsetof(ip_event_got_ip_t, ip_info) > offsetof(ip_event_got_ip_t, esp_netif))
+AMITY_PARITY(got_ip_changed_after_info, offsetof(ip_event_got_ip_t, ip_changed) > offsetof(ip_event_got_ip_t, ip_info))
+
+AMITY_PARITY(wifi_ps_none, WIFI_PS_NONE)
+AMITY_PARITY(wifi_ps_min_modem, WIFI_PS_MIN_MODEM)
+AMITY_PARITY(wifi_ps_max_modem, WIFI_PS_MAX_MODEM)
+AMITY_PARITY(wifi_event_sta_connected, WIFI_EVENT_STA_CONNECTED)
+AMITY_PARITY(wifi_event_sta_disconnected, WIFI_EVENT_STA_DISCONNECTED)
+AMITY_PARITY(wifi_connected_size, sizeof(wifi_event_sta_connected_t))
+AMITY_PARITY(wifi_connected_channel, offsetof(wifi_event_sta_connected_t, channel))
+AMITY_PARITY(wifi_connected_authmode, offsetof(wifi_event_sta_connected_t, authmode))
+AMITY_PARITY(wifi_connected_aid, offsetof(wifi_event_sta_connected_t, aid))
+AMITY_PARITY(wifi_disconnected_size, sizeof(wifi_event_sta_disconnected_t))
+AMITY_PARITY(wifi_disconnected_reason, offsetof(wifi_event_sta_disconnected_t, reason))
+AMITY_PARITY(wifi_disconnected_rssi, offsetof(wifi_event_sta_disconnected_t, rssi))
+
+AMITY_PARITY(mdns_txt_value_after_key, offsetof(mdns_txt_item_t, value) > offsetof(mdns_txt_item_t, key))
+AMITY_PARITY(mdns_address_first, offsetof(mdns_ip_addr_t, addr))
+AMITY_PARITY(mdns_next_after_address, offsetof(mdns_ip_addr_t, next) >= sizeof(esp_ip_addr_t))
+
+// Each pin's validity as a bit, for pins 0 to 49.
+#define AMITY_GPIO_BITS(check) \
+    ((check(0) ? 1ULL << 0 : 0) | (check(1) ? 1ULL << 1 : 0) | (check(2) ? 1ULL << 2 : 0) | \
+     (check(3) ? 1ULL << 3 : 0) | (check(4) ? 1ULL << 4 : 0) | (check(5) ? 1ULL << 5 : 0) | \
+     (check(6) ? 1ULL << 6 : 0) | (check(7) ? 1ULL << 7 : 0) | (check(8) ? 1ULL << 8 : 0) | \
+     (check(9) ? 1ULL << 9 : 0) | (check(10) ? 1ULL << 10 : 0) | (check(11) ? 1ULL << 11 : 0) | \
+     (check(12) ? 1ULL << 12 : 0) | (check(13) ? 1ULL << 13 : 0) | (check(14) ? 1ULL << 14 : 0) | \
+     (check(15) ? 1ULL << 15 : 0) | (check(16) ? 1ULL << 16 : 0) | (check(17) ? 1ULL << 17 : 0) | \
+     (check(18) ? 1ULL << 18 : 0) | (check(19) ? 1ULL << 19 : 0) | (check(20) ? 1ULL << 20 : 0) | \
+     (check(21) ? 1ULL << 21 : 0) | (check(22) ? 1ULL << 22 : 0) | (check(23) ? 1ULL << 23 : 0) | \
+     (check(24) ? 1ULL << 24 : 0) | (check(25) ? 1ULL << 25 : 0) | (check(26) ? 1ULL << 26 : 0) | \
+     (check(27) ? 1ULL << 27 : 0) | (check(28) ? 1ULL << 28 : 0) | (check(29) ? 1ULL << 29 : 0) | \
+     (check(30) ? 1ULL << 30 : 0) | (check(31) ? 1ULL << 31 : 0) | (check(32) ? 1ULL << 32 : 0) | \
+     (check(33) ? 1ULL << 33 : 0) | (check(34) ? 1ULL << 34 : 0) | (check(35) ? 1ULL << 35 : 0) | \
+     (check(36) ? 1ULL << 36 : 0) | (check(37) ? 1ULL << 37 : 0) | (check(38) ? 1ULL << 38 : 0) | \
+     (check(39) ? 1ULL << 39 : 0) | (check(40) ? 1ULL << 40 : 0) | (check(41) ? 1ULL << 41 : 0) | \
+     (check(42) ? 1ULL << 42 : 0) | (check(43) ? 1ULL << 43 : 0) | (check(44) ? 1ULL << 44 : 0) | \
+     (check(45) ? 1ULL << 45 : 0) | (check(46) ? 1ULL << 46 : 0) | (check(47) ? 1ULL << 47 : 0) | \
+     (check(48) ? 1ULL << 48 : 0) | (check(49) ? 1ULL << 49 : 0))
+AMITY_PARITY(gpio_valid_pins, (long long)AMITY_GPIO_BITS(GPIO_IS_VALID_GPIO))
+AMITY_PARITY(gpio_valid_output_pins, (long long)AMITY_GPIO_BITS(GPIO_IS_VALID_OUTPUT_GPIO))
