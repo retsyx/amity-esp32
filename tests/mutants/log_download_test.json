@@ -413,6 +413,20 @@
       "file": "components/system_services/system_services.cpp",
       "find": "heap_caps_malloc(ring.size(),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)",
       "replace": "heap_caps_malloc(used,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)"
+    },
+    {
+      "id": "failure-shuts-write-side-only",
+      "check": "a failed send shuts both directions of the connection",
+      "file": "components/system_services/log_download.cpp",
+      "find": "if(result!=ESP_OK&&active_socket>=0)shutdown(active_socket,SHUT_RDWR);",
+      "replace": "if(result!=ESP_OK&&active_socket>=0)shutdown(active_socket,SHUT_WR);"
+    },
+    {
+      "id": "stop-shuts-write-side-only",
+      "check": "stopping shuts both directions of the connection",
+      "file": "components/system_services/log_download.cpp",
+      "find": "if(active_socket>=0)shutdown(active_socket,SHUT_RDWR);\n    download_finished.wait(guard,[]{return !active_request;});",
+      "replace": "if(active_socket>=0)shutdown(active_socket,SHUT_WR);\n    download_finished.wait(guard,[]{return !active_request;});"
     }
   ]
 }

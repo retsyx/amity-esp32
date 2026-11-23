@@ -12,22 +12,26 @@
 // seams for the runtime, device settings and web.
 #include "esp_http_server.h"
 #include "freertos/FreeRTOS.h"
+#include <sys/socket.h>
 #include <sys/types.h>
 
-// Four calls are observed where the included file makes them. Each forwards
-// to the shared fakes unless the scenario scripts a failure, and the last two
-// run the scenario's hook first.
+// Five calls are observed where the included file makes them. Each forwards
+// to the shared fakes or the system unless the scenario scripts a failure;
+// two run the scenario's hook first, and shutdowns are recorded.
 namespace observed {
 BaseType_t queue_send(QueueHandle_t queue, const void *item, TickType_t wait, BaseType_t position);
 esp_err_t async_begin(httpd_req_t *request, httpd_req_t **out);
 esp_err_t async_complete(httpd_req_t *request);
 esp_err_t send_chunk(httpd_req_t *request, const char *bytes, ssize_t size);
+int shutdown(int socket, int how);
 }  // namespace observed
 #define xQueueGenericSend observed::queue_send
 #define httpd_req_async_handler_begin observed::async_begin
 #define httpd_req_async_handler_complete observed::async_complete
 #define httpd_resp_send_chunk observed::send_chunk
+#define shutdown observed::shutdown
 #include "../components/system_services/log_download.cpp"
+#undef shutdown
 #undef httpd_resp_send_chunk
 #undef httpd_req_async_handler_complete
 #undef httpd_req_async_handler_begin
@@ -90,6 +94,25 @@ esp_err_t send_chunk(httpd_req_t *request, const char *bytes, ssize_t size) {
         if (result != ESP_OK) return result;
     }
     return httpd_resp_send_chunk(request, bytes, size);
+}
+
+// The worker and a stop shut sockets down from their own threads.
+std::mutex shutdown_mutex;
+std::vector<std::pair<int, int>> shutdowns;
+int shutdown(int socket, int how) {
+    {
+        std::lock_guard<std::mutex> lock(shutdown_mutex);
+        shutdowns.emplace_back(socket, how);
+    }
+    return ::shutdown(socket, how);
+}
+// How each shutdown of socket so far closed it, in order.
+std::vector<int> shutdowns_of(int socket) {
+    std::lock_guard<std::mutex> lock(shutdown_mutex);
+    std::vector<int> result;
+    for (const auto &[shut, how] : shutdowns)
+        if (shut == socket) result.push_back(how);
+    return result;
 }
 
 }  // namespace observed
@@ -442,8 +465,8 @@ void main_download() {
     stop(worker);
 }
 
-// A failed send while the local log streams shuts the connection without
-// pulling any member log.
+// A failed send while the local log streams shuts both directions of the
+// connection, so a blocked transfer ends, without pulling any member log.
 void http_failure() {
     start();
     write_log(std::string(10000, 'L'));
@@ -457,10 +480,12 @@ void http_failure() {
     drain();
     CHECK(!download.response->finished && sends == 3 && pulled.empty());
     CHECK(socket.shut() && system_services::active_socket < 0);
+    CHECK(observed::shutdowns_of(socket.ends[0]) == std::vector<int>{SHUT_RDWR});
     stop(worker);
 }
 
-// A failed send while a member's log streams ends the download there.
+// A failed send while a member's log streams ends the download there and
+// shuts both directions of the connection.
 void member_send_failure() {
     start();
     static unsigned sends = 0;
@@ -475,7 +500,7 @@ void member_send_failure() {
     CHECK(download.response->body ==
           section("Main Amity", "living-room", 1, boot) + "[No logs captured.]\n" + member_section(2) +
               std::string(c::log_chunk_bytes, 'A'));
-    CHECK(socket.shut());
+    CHECK(socket.shut() && observed::shutdowns_of(socket.ends[0]) == std::vector<int>{SHUT_RDWR});
     stop(worker);
 }
 
@@ -513,8 +538,9 @@ void local_memory() {
 }
 
 // A slow member keeps the one worker busy after the handler returned, and
-// other downloads are refused. Stopping shuts the connection, refuses new
-// downloads and waits for the worker to finish and delete itself.
+// other downloads are refused. Stopping shuts both directions of the
+// connection, refuses new downloads and waits for the worker to finish and
+// delete itself; the interrupted download shuts it again, also both ways.
 void slow_member() {
     start();
     block_pull = true;
@@ -536,7 +562,7 @@ void slow_member() {
         system_services::stop_log_downloads();
         stopped = true;
     });
-    CHECK(socket.shut(true));
+    CHECK(socket.shut(true) && observed::shutdowns_of(socket.ends[0]) == std::vector<int>{SHUT_RDWR});
     CHECK(!stopped);
     nested_download("Administration is stopping.");
     {
@@ -548,6 +574,7 @@ void slow_member() {
     worker.join();
     CHECK(stopped && amity_fake::tasks()[0].state == amity_fake::Task::State::deleted);
     CHECK((pulled == std::vector<unsigned>{2}) && !slow.response->finished);
+    CHECK((observed::shutdowns_of(socket.ends[0]) == std::vector<int>{SHUT_RDWR, SHUT_RDWR}));
     CHECK(amity_fake::queues().back().deleted && amity_fake::pending_async_requests() == 0);
     CHECK(amity_fake::live_allocations() == 0 && !system_services::download_task);
     system_services::stop_log_downloads();
