@@ -249,14 +249,18 @@ request=json.loads(line)
 reply={key:request[key] for key in ('request_id','device_id','operation')}
 reply['result']=0
 """
-        cases = ("reply['request_id']='wrong'; print(json.dumps(reply),flush=True)",
-                 "reply['device_id']='f'*32; print(json.dumps(reply),flush=True)",
-                 "reply['operation']='power'; print(json.dumps(reply),flush=True)",
-                 "print('x'*17000,flush=True)", "print('invalid JSON',flush=True)",
-                 "sys.stdout.write('{');sys.stdout.flush()", "pass", "time.sleep(10)")
-        for ending in cases:
+        # Each deadline only has to cover starting the fake and logging the
+        # request on a loaded machine. Every fake but the last ends its reply
+        # at once; the last never answers, so its shorter deadline expires.
+        answered = ("reply['request_id']='wrong'; print(json.dumps(reply),flush=True)",
+                    "reply['device_id']='f'*32; print(json.dumps(reply),flush=True)",
+                    "reply['operation']='power'; print(json.dumps(reply),flush=True)",
+                    "print('x'*17000,flush=True)", "print('invalid JSON',flush=True)",
+                    "sys.stdout.write('{');sys.stdout.flush()", "pass")
+        cases = [(ending, 5) for ending in answered] + [("time.sleep(10)", 2)]
+        for ending, timeout in cases:
             with self.subTest(ending=ending), tempfile.TemporaryDirectory() as directory:
-                worker, process, path = self.worker(base + ending, directory, timeout=.2)
+                worker, process, path = self.worker(base + ending, directory, timeout=timeout)
                 request = {"request_id": "a" * 32, "device_id": DEVICE,
                            "operation": "send_key", "arguments": {"key": 3}}
                 with self.assertRaises(Exception):
