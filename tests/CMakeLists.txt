@@ -67,8 +67,8 @@ add_library(amity_consortium STATIC
 target_include_directories(amity_consortium PRIVATE "${C}/consortium/include" "${C}/amity_system/include")
 target_link_libraries(amity_consortium PRIVATE strict)
 
-# The functions below label each test with AMITY_TEST_TIER, which is set only
-# while the area files are read.
+# AMITY_TEST_TIER is set only while the area files are read. The functions
+# below label each test with it, and fail anywhere else.
 function(amity_require_tier name)
     if(NOT AMITY_TEST_TIER)
         message(FATAL_ERROR "Register ${name} in a tests/cmake/<area>.cmake file")
@@ -120,6 +120,19 @@ function(amity_test name)
     if(A_FIXTURES)
         set_tests_properties(${tests} PROPERTIES FIXTURES_REQUIRED "${A_FIXTURES}")
     endif()
+endfunction()
+
+# amity_host_compile(<name> SOURCES ... [INCLUDES ...] [DEFINES ...])
+# Compiles firmware sources with the strict flags and links nothing, so every
+# build checks that they still compile on the host, and they appear in
+# compile_commands.json.
+function(amity_host_compile name)
+    cmake_parse_arguments(PARSE_ARGV 1 A "" "" "SOURCES;INCLUDES;DEFINES")
+    amity_require_tier(${name})
+    add_library(${name} OBJECT ${A_SOURCES})
+    target_include_directories(${name} PRIVATE ${A_INCLUDES} "${T}/fakes")
+    target_compile_definitions(${name} PRIVATE ${A_DEFINES})
+    target_link_libraries(${name} PRIVATE strict)
 endfunction()
 
 function(amity_command_test name)
