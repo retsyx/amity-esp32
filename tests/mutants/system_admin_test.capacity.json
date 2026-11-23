@@ -1,0 +1,75 @@
+{
+  "ctest": "^system_admin_test\\.",
+  "targets": [
+    "system_admin_test"
+  ],
+  "baseline": {
+    "ctest": "^membership_capacity_api_test\\.py$",
+    "targets": []
+  },
+  "mutants": [
+    {
+      "id": "stub-string-empty",
+      "check": "stub: early return from string()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "std::string string(cJSON* root,const char* key){",
+      "replace": "std::string string(cJSON* root,const char* key){ return {};"
+    },
+    {
+      "id": "stub-json-empty",
+      "check": "stub: early return from json()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "std::string json(cJSON* root){",
+      "replace": "std::string json(cJSON* root){ return {};"
+    },
+    {
+      "id": "stub-error-fail",
+      "check": "stub: early return from error()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "esp_err_t error(httpd_req_t* req,const char* code,const std::string& text,const char* status=\"400 Bad Request\",bool retry=false){",
+      "replace": "esp_err_t error(httpd_req_t* req,const char* code,const std::string& text,const char* status=\"400 Bad Request\",bool retry=false){ return ESP_FAIL;"
+    },
+    {
+      "id": "capacity-as-unavailable",
+      "check": "a full roster is refused as capacity_reached",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(e==ESP_ERR_INVALID_SIZE){result=error(req,\"capacity_reached\"",
+      "replace": "if(e==ESP_ERR_INVALID_SIZE&&false){result=error(req,\"capacity_reached\""
+    },
+    {
+      "id": "capacity-retryable",
+      "check": "a full roster is not worth retrying",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "\"capacity_reached\",\"Up to \"+std::to_string(amity::consortium::maximum_roster_peers+1)+\" Amity devices are supported. Remove one before adding another.\",\"409 Conflict\")",
+      "replace": "\"capacity_reached\",\"Up to \"+std::to_string(amity::consortium::maximum_roster_peers+1)+\" Amity devices are supported. Remove one before adding another.\",\"409 Conflict\",true)"
+    },
+    {
+      "id": "capacity-without-main",
+      "check": "the refusal counts the main among the supported Amity devices",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "std::to_string(amity::consortium::maximum_roster_peers+1)+\" Amity devices are supported.",
+      "replace": "std::to_string(amity::consortium::maximum_roster_peers)+\" Amity devices are supported."
+    },
+    {
+      "id": "capacity-status",
+      "check": "a full roster is refused with 409 Conflict",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "\"capacity_reached\",\"Up to \"+std::to_string(amity::consortium::maximum_roster_peers+1)+\" Amity devices are supported. Remove one before adding another.\",\"409 Conflict\")",
+      "replace": "\"capacity_reached\",\"Up to \"+std::to_string(amity::consortium::maximum_roster_peers+1)+\" Amity devices are supported. Remove one before adding another.\",\"503 Service Unavailable\")"
+    },
+    {
+      "id": "unavailable-not-retryable",
+      "check": "a search that could not start asks for a retry",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "\"scan_unavailable\",\"The search could not start. Close this window and try again.\",\"409 Conflict\",true)",
+      "replace": "\"scan_unavailable\",\"The search could not start. Close this window and try again.\",\"409 Conflict\")"
+    },
+    {
+      "id": "scan-refusal-ignored",
+      "check": "a search the runtime refused is not reported as started",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(e!=ESP_OK){result=error(req,\"scan_unavailable\"",
+      "replace": "if(false){result=error(req,\"scan_unavailable\""
+    }
+  ]
+}

@@ -753,6 +753,36 @@ void admission_status() {
     CHECK(reply.text("candidate_id") == id<m::OctopusId>(9).str() && cJSON_GetArraySize(reply.item("candidates")) == 0);
 }
 
+// A search the runtime cannot start is refused. A full roster states how many
+// Amity devices a system supports and is not worth retrying; any other refusal
+// asks for a retry.
+void scan_refusals() {
+    System system;
+    system.save(direct_configuration());
+    system.boot();
+    static esp_err_t refusal = ESP_OK;
+    static unsigned request = 0;
+    install<&c::runtime_scan_admission>([](m::MessageId scan) {
+        CHECK(scan == id<m::MessageId>(request));
+        return refusal;
+    });
+    const auto scan = [] {
+        ++request;
+        return send(HTTP_POST, "/api/membership/scan", "{\"request_id\":\"" + id<m::MessageId>(request).str() + "\"}");
+    };
+    refusal = ESP_ERR_INVALID_SIZE;
+    auto reply = scan();
+    CHECK(rejected(reply, "capacity_reached", "409 Conflict"));
+    CHECK(reply.text("message") == "Up to 4 Amity devices are supported. Remove one before adding another.");
+    for (const esp_err_t other : {ESP_ERR_INVALID_STATE, ESP_ERR_NO_MEM, ESP_FAIL}) {
+        refusal = other;
+        reply = scan();
+        CHECK(rejected(reply, "scan_unavailable", "409 Conflict", true));
+        CHECK(reply.text("message") == "The search could not start. Close this window and try again.");
+    }
+    CHECK(amity_seam::count("amity::consortium::runtime_scan_admission") == 4 && web_admin::operations.empty());
+}
+
 // Removing and replacing an added Amity
 
 const config_store::ConfiguredActivity &activity(const Configuration &config, const std::string &label) {
@@ -1219,6 +1249,7 @@ int main(int argc, char **argv) {
                                {"admission-scan-change", admission_scan_change},
                                {"admission-failure", admission_failure},
                                {"admission-status", admission_status},
+                               {"scan-refusals", scan_refusals},
                                {"removal-review", removal_review},
                                {"removal-reservation-failure", removal_reservation_failure},
                                {"removal-update-required", removal_update_required},
