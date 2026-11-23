@@ -262,6 +262,7 @@ static void one_adapter(bool hold){
             "the release and its audio status request to the AVR are the only member frames of the reboot");
     }else CHECK(messages(before_reboot,{3,4}).empty(),"the reboot and the new boot's bind send nothing on member wires");
     expect_new_boot_adopted(bench,captured);
+    bench.pump(10);
     CHECK(messages(after_reboot,{3,4}).empty(),"no member TX after the bind while idle");
     expect_no_activity_policy(bench,3,4,8,0x1200,"adapter 0");
     const auto status=power_status(bench,3);
