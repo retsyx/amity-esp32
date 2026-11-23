@@ -50,7 +50,10 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         matter-boot-fabric-appears matter-boot-role-changes matter-boot-authority-lost matter-button-reopens
         wifi-policy-unclaimed wifi-policy-member wifi-policy-already-off wifi-policy-max-modem wifi-policy-matter-fails
         wifi-policy-read-fails wifi-policy-set-fails wifi-policy-verify-fails wifi-policy-stays-on
-        release-timing)
+        release-timing
+        rename-published rename-back rename-alias-fails rename-address-fails rename-https-fails rename-homekit-fails
+        rename-old-alias-fails rename-network-fails rename-without-station rename-https-busy rename-https-exhausted
+        rename-after-failed-registration rename-member)
     # app_main has two #if blocks. main_test builds with both settings off and
     # main_production_test with both on, so a step inside an #if block fails
     # one of them.

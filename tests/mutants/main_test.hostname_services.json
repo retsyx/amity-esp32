@@ -1,0 +1,148 @@
+{
+  "ctest": "^main_(production_)?test\\.rename-",
+  "baseline": {
+    "ctest": "^hostname_services_test\\.py$"
+  },
+  "mutants": [
+    {
+      "id": "stub-rename_hostname-fail",
+      "check": "stub: early return from rename_hostname()",
+      "file": "main/main.cpp",
+      "find": "esp_err_t rename_hostname(const std::string& previous,const std::string& hostname) {",
+      "replace": "esp_err_t rename_hostname(const std::string& previous,const std::string& hostname) { return ESP_FAIL;"
+    },
+    {
+      "id": "rename-without-station-check",
+      "check": "a rename needs the station interface",
+      "file": "main/main.cpp",
+      "find": "if(!netif)return ESP_ERR_INVALID_STATE;",
+      "replace": "(void)ESP_ERR_INVALID_STATE;"
+    },
+    {
+      "id": "rename-network-unchecked",
+      "check": "nothing else is tried when the network hostname cannot change",
+      "file": "main/main.cpp",
+      "find": "auto err=esp_netif_set_hostname(netif,hostname.c_str());\n    if(err!=ESP_OK)return err;",
+      "replace": "auto err=esp_netif_set_hostname(netif,hostname.c_str());"
+    },
+    {
+      "id": "rename-headless-publishes",
+      "check": "a member renames only its network hostname",
+      "file": "main/main.cpp",
+      "find": "if(err!=ESP_OK)return err;\n    if(!original_interfaces_enabled.load())return ESP_OK;",
+      "replace": "if(err!=ESP_OK)return err;"
+    },
+    {
+      "id": "rename-alias-not-added",
+      "check": "the new alias is added before its addresses",
+      "file": "main/main.cpp",
+      "find": "err=mdns_delegate_hostname_add(hostname.c_str(),nullptr);",
+      "replace": "err=ESP_OK;"
+    },
+    {
+      "id": "rename-alias-unmarked",
+      "check": "a rename that fails removes the alias it added",
+      "file": "main/main.cpp",
+      "find": "if(err==ESP_OK){added=true;err=refresh_admin_mdns_for_host(hostname.c_str());}",
+      "replace": "if(err==ESP_OK){err=refresh_admin_mdns_for_host(hostname.c_str());}"
+    },
+    {
+      "id": "rename-without-address",
+      "check": "the new alias carries the station addresses",
+      "file": "main/main.cpp",
+      "find": "{added=true;err=refresh_admin_mdns_for_host(hostname.c_str());}",
+      "replace": "{added=true;}"
+    },
+    {
+      "id": "rename-without-https",
+      "check": "the new alias gets the HTTPS service",
+      "file": "main/main.cpp",
+      "find": "err=mdns_service_add_for_host(\"Amity Home Theater\",\"_https\",\"_tcp\",hostname.c_str(),443,nullptr,0);",
+      "replace": "err=ESP_OK;"
+    },
+    {
+      "id": "rename-retry-count",
+      "check": "a busy responder is asked at most 100 times",
+      "file": "main/main.cpp",
+      "find": "for(unsigned attempt=0;attempt<100&&err==ESP_ERR_INVALID_ARG;++attempt){",
+      "replace": "for(unsigned attempt=0;attempt<99&&err==ESP_ERR_INVALID_ARG;++attempt){"
+    },
+    {
+      "id": "rename-retry-interval",
+      "check": "a busy responder is asked again after 20 ms",
+      "file": "main/main.cpp",
+      "find": "if(err==ESP_ERR_INVALID_ARG)vTaskDelay(pdMS_TO_TICKS(20));",
+      "replace": "if(err==ESP_ERR_INVALID_ARG)vTaskDelay(pdMS_TO_TICKS(40));"
+    },
+    {
+      "id": "rename-homekit-skipped",
+      "check": "HomeKit takes the new name",
+      "file": "main/main.cpp",
+      "find": "if(err==ESP_OK){err=amity_homekit::rename_hostname(hostname.c_str());home_changed=err==ESP_OK;}",
+      "replace": "if(err==ESP_OK){home_changed=false;}"
+    },
+    {
+      "id": "rename-homekit-unmarked",
+      "check": "HomeKit takes the old name back when the rename fails after it",
+      "file": "main/main.cpp",
+      "find": "home_changed=err==ESP_OK;",
+      "replace": "home_changed=false;"
+    },
+    {
+      "id": "rename-keeps-old-alias",
+      "check": "the old alias is removed",
+      "file": "main/main.cpp",
+      "find": "if(err==ESP_OK)err=mdns_delegate_hostname_remove(previous.c_str());",
+      "replace": "if(err==ESP_OK)err=ESP_OK;"
+    },
+    {
+      "id": "rename-old-alias-first",
+      "check": "the old alias goes only after HomeKit took the new name",
+      "file": "main/main.cpp",
+      "find": "if(err==ESP_OK){err=amity_homekit::rename_hostname(hostname.c_str());home_changed=err==ESP_OK;}\n    if(err==ESP_OK)err=mdns_delegate_hostname_remove(previous.c_str());",
+      "replace": "if(err==ESP_OK)err=mdns_delegate_hostname_remove(previous.c_str());\n    if(err==ESP_OK){err=amity_homekit::rename_hostname(hostname.c_str());home_changed=err==ESP_OK;}"
+    },
+    {
+      "id": "rename-forgets-hostname",
+      "check": "the board administers the new hostname",
+      "file": "main/main.cpp",
+      "find": "{admin_mdns_hostname=hostname;admin_mdns_registered=true;return ESP_OK;}",
+      "replace": "{admin_mdns_registered=true;return ESP_OK;}"
+    },
+    {
+      "id": "rename-leaves-unregistered",
+      "check": "the service a rename registers is removed at retirement",
+      "file": "main/main.cpp",
+      "find": "{admin_mdns_hostname=hostname;admin_mdns_registered=true;return ESP_OK;}",
+      "replace": "{admin_mdns_hostname=hostname;return ESP_OK;}"
+    },
+    {
+      "id": "rename-no-homekit-restore",
+      "check": "HomeKit takes the old name back when the rename fails after it",
+      "file": "main/main.cpp",
+      "find": "if(home_changed&&amity_homekit::rename_hostname(previous.c_str())!=ESP_OK)",
+      "replace": "if(home_changed&&false)"
+    },
+    {
+      "id": "rename-keeps-incomplete-alias",
+      "check": "a rename that fails removes the alias it added",
+      "file": "main/main.cpp",
+      "find": "if(added&&mdns_delegate_hostname_remove(hostname.c_str())!=ESP_OK)",
+      "replace": "if(added&&false)"
+    },
+    {
+      "id": "rename-keeps-network-name",
+      "check": "a rename that fails restores the network hostname",
+      "file": "main/main.cpp",
+      "find": "if(esp_netif_set_hostname(netif,previous.c_str())!=ESP_OK)",
+      "replace": "if(false)"
+    },
+    {
+      "id": "rename-hides-error",
+      "check": "a rename that fails returns its error",
+      "file": "main/main.cpp",
+      "find": "ESP_LOGE(\"amity\",\"Could not restore network hostname after rename failure\");\n    return err;",
+      "replace": "ESP_LOGE(\"amity\",\"Could not restore network hostname after rename failure\");\n    return ESP_OK;"
+    }
+  ]
+}

@@ -188,16 +188,26 @@ struct Board {
 struct Network {
     alignas(8) unsigned char handle[8]{};
     esp_netif_t *station() { return reinterpret_cast<esp_netif_t *>(handle); }
+    bool station_exists = true;
     bool up = false;
     uint32_t address = 0;
     std::vector<esp_ip6_addr_t> ipv6;
-    // The addresses of the last alias update, in list order.
+    // The alias and the addresses of the last alias update, in list order.
+    std::string published_for;
     std::vector<esp_ip_addr_t> published;
     std::string hostname = "amity-test";
     bool responder = false;
     std::string responder_hostname = "matter-host";
     std::set<std::string> aliases, services;
     unsigned address_updates = 0;
+    // Errors calls return for a hostname instead of acting, and the number of
+    // further service registrations the busy responder refuses.
+    std::map<std::pair<std::string, std::string>, esp_err_t> errors;
+    unsigned busy = 0;
+    esp_err_t error(const char *call, const char *name) const {
+        const auto found = errors.find({call, name});
+        return found == errors.end() ? ESP_OK : found->second;
+    }
 } network;
 
 // What app_main registered.
@@ -508,7 +518,7 @@ void install_boot() {
 void install_network() {
     install<&esp_netif_get_handle_from_ifkey>([](const char *key) {
         CHECK(std::string(key) == "WIFI_STA_DEF");
-        return network.station();
+        return network.station_exists ? network.station() : nullptr;
     });
     install<&esp_netif_is_netif_up>([](esp_netif_t *station) {
         CHECK(station == network.station());
@@ -526,6 +536,7 @@ void install_network() {
     });
     install<&esp_netif_set_hostname>([](esp_netif_t *station, const char *hostname) {
         CHECK(station == network.station());
+        if (const auto error = network.error("esp_netif_set_hostname", hostname)) return error;
         network.hostname = hostname;
         return ESP_OK;
     });
@@ -545,18 +556,23 @@ void install_network() {
     });
     install<&mdns_delegate_hostname_add>([](const char *hostname, const mdns_ip_addr_t *addresses) {
         CHECK(network.responder && !addresses);
+        if (const auto error = network.error("mdns_delegate_hostname_add", hostname)) return error;
         network.aliases.insert(hostname);
         return ESP_OK;
     });
     install<&mdns_delegate_hostname_set_address>([](const char *hostname, const mdns_ip_addr_t *addresses) {
         CHECK(network.responder && network.aliases.count(hostname));
+        if (const auto error = network.error("mdns_delegate_hostname_set_address", hostname)) return error;
+        network.published_for = hostname;
         network.published.clear();
         for (; addresses; addresses = addresses->next) network.published.push_back(addresses->addr);
         ++network.address_updates;
         return ESP_OK;
     });
+    // Removing an alias removes its services too.
     install<&mdns_delegate_hostname_remove>([](const char *hostname) {
         CHECK(network.responder);
+        if (const auto error = network.error("mdns_delegate_hostname_remove", hostname)) return error;
         network.aliases.erase(hostname);
         network.services.erase(hostname);
         return ESP_OK;
@@ -566,6 +582,11 @@ void install_network() {
         CHECK(network.responder && network.aliases.count(hostname));
         CHECK(std::string(instance) == "Amity Home Theater" && std::string(type) == "_https" &&
               std::string(protocol) == "_tcp" && port == 443 && items == 0);
+        if (network.busy) {
+            --network.busy;
+            return ESP_ERR_INVALID_ARG;
+        }
+        if (const auto error = network.error("mdns_service_add_for_host", hostname)) return error;
         network.services.insert(hostname);
         return ESP_OK;
     });
@@ -1605,6 +1626,181 @@ void release_timing() {
     CHECK((released == std::vector<uint8_t>{4, 4, 4}));
 }
 
+// A rename moves the administration hostname: the station's network hostname,
+// then the delegated alias with the station's addresses, its HTTPS service and
+// HomeKit's name, and only then is the old alias removed. HomeKit's own side,
+// in the HomeKit SDK fork, is outside main.cpp.
+
+// HomeKit's mDNS hostname, and a name HomeKit cannot take.
+struct HomeKitName {
+    std::string name = "amity-test", refused;
+} homekit;
+
+// Boots an original on a station with an IPv4 and an IPv6 address.
+void boot_on_station() {
+    install_boot();
+    install_interfaces();
+    install_retirement();
+    install<&amity_homekit::rename_hostname>([](const char *hostname) {
+        if (homekit.refused == hostname) return ESP_FAIL;
+        homekit.name = hostname;
+        return ESP_OK;
+    });
+    original();
+    network.up = true;
+    network.address = 0x0a00000a;
+    network.ipv6 = {{{0x20010db8, 0, 0, 2}, 0}};
+    app_main();
+    amity_seam::clear_calls();
+}
+// Boots an original that publishes amity-test.
+void boot_published() {
+    boot_on_station();
+    CHECK(network.aliases == std::set<std::string>{"amity-test"} && network.services == network.aliases);
+}
+
+const std::vector<std::string> rename_steps{"esp_netif_set_hostname", "mdns_delegate_hostname_add",
+                                            "mdns_delegate_hostname_set_address", "mdns_service_add_for_host",
+                                            "amity_homekit::rename_hostname", "mdns_delegate_hostname_remove"};
+std::vector<std::string> rename_calls() {
+    return calls({"esp_netif_set_hostname", "mdns_delegate_hostname_add", "mdns_delegate_hostname_set_address",
+                  "mdns_service_add_for_host", "amity_homekit::rename_hostname", "mdns_delegate_hostname_remove"});
+}
+
+// Every service names hostname, and its alias alone is published.
+void check_published(const std::string &hostname) {
+    CHECK(network.hostname == hostname && homekit.name == hostname);
+    CHECK(network.aliases == std::set<std::string>{hostname} && network.services == network.aliases);
+}
+
+// The board administers hostname: an address change refreshes that alias, and
+// retirement removes its service.
+void check_administers(const std::string &hostname) {
+    network.address = 0x0a00000b;
+    ip_event_got_ip_t got{};
+    got.ip_info.ip.addr = network.address;
+    registered.ip_events(nullptr, IP_EVENT, IP_EVENT_STA_GOT_IP, &got);
+    CHECK(network.published_for == hostname && network.published.size() == 2);
+    CHECK(network.published[0].type == ESP_IPADDR_TYPE_V4 && network.published[0].u_addr.ip4.addr == 0x0a00000b);
+    CHECK(registered.lifecycle.retire() == ESP_OK && network.services.empty());
+}
+
+void rename_published() {
+    boot_published();
+    CHECK(registered.hostname("amity-test", "den") == ESP_OK);
+    CHECK(rename_calls() == rename_steps);
+    check_published("den");
+    CHECK(network.published_for == "den" && network.published.size() == 2);
+    CHECK(network.published[1].type == ESP_IPADDR_TYPE_V6 && network.published[1].u_addr.ip6.addr[0] == 0x20010db8);
+    check_administers("den");
+}
+
+// A failed rename saving the new name renames back the same way.
+void rename_back() {
+    boot_published();
+    CHECK(registered.hostname("amity-test", "den") == ESP_OK);
+    amity_seam::clear_calls();
+    CHECK(registered.hostname("den", "amity-test") == ESP_OK);
+    CHECK(rename_calls() == rename_steps);
+    check_published("amity-test");
+    check_administers("amity-test");
+}
+
+// A rename that fails returns its error and leaves everything as it was,
+// including the hostname the board administers.
+void check_unrenamed(esp_err_t returned, esp_err_t expected) {
+    CHECK(returned == expected);
+    check_published("amity-test");
+    check_administers("amity-test");
+}
+void rename_alias_fails() {
+    boot_published();
+    network.errors[{"mdns_delegate_hostname_add", "den"}] = ESP_ERR_NO_MEM;
+    check_unrenamed(registered.hostname("amity-test", "den"), ESP_ERR_NO_MEM);
+}
+void rename_address_fails() {
+    boot_published();
+    network.errors[{"mdns_delegate_hostname_set_address", "den"}] = ESP_ERR_INVALID_STATE;
+    check_unrenamed(registered.hostname("amity-test", "den"), ESP_ERR_INVALID_STATE);
+}
+void rename_https_fails() {
+    boot_published();
+    network.errors[{"mdns_service_add_for_host", "den"}] = ESP_ERR_NO_MEM;
+    check_unrenamed(registered.hostname("amity-test", "den"), ESP_ERR_NO_MEM);
+}
+void rename_homekit_fails() {
+    boot_published();
+    homekit.refused = "den";
+    check_unrenamed(registered.hostname("amity-test", "den"), ESP_FAIL);
+}
+// HomeKit took the new name before the old alias could go, so it takes the
+// old one back.
+void rename_old_alias_fails() {
+    boot_published();
+    network.errors[{"mdns_delegate_hostname_remove", "amity-test"}] = ESP_ERR_NO_MEM;
+    const auto returned = registered.hostname("amity-test", "den");
+    CHECK((calls({"amity_homekit::rename_hostname"}) ==
+           std::vector<std::string>{"amity_homekit::rename_hostname", "amity_homekit::rename_hostname"}));
+    check_unrenamed(returned, ESP_ERR_NO_MEM);
+}
+// Nothing else is tried when the network hostname cannot change.
+void rename_network_fails() {
+    boot_published();
+    network.errors[{"esp_netif_set_hostname", "den"}] = ESP_FAIL;
+    const auto returned = registered.hostname("amity-test", "den");
+    CHECK((rename_calls() == std::vector<std::string>{"esp_netif_set_hostname"}));
+    check_unrenamed(returned, ESP_FAIL);
+}
+void rename_without_station() {
+    boot_published();
+    network.station_exists = false;
+    const auto returned = registered.hostname("amity-test", "den");
+    CHECK(rename_calls().empty());
+    network.station_exists = true;
+    check_unrenamed(returned, ESP_ERR_INVALID_STATE);
+}
+// A busy responder refuses the service for a while; the rename retries every
+// 20 ms, at most 100 times, and then fails.
+void rename_https_busy() {
+    boot_published();
+    network.busy = 3;
+    amity_fake::on_delay([](TickType_t ticks) { CHECK(ticks == pdMS_TO_TICKS(20)); });
+    CHECK(registered.hostname("amity-test", "den") == ESP_OK);
+    CHECK(count("mdns_service_add_for_host") == 4 && amity_fake::delays() == 3);
+    check_published("den");
+}
+void rename_https_exhausted() {
+    boot_published();
+    network.busy = 100;
+    amity_fake::on_delay([](TickType_t ticks) { CHECK(ticks == pdMS_TO_TICKS(20)); });
+    const auto returned = registered.hostname("amity-test", "den");
+    CHECK(count("mdns_service_add_for_host") == 100 && amity_fake::delays() == 100 && network.busy == 0);
+    check_unrenamed(returned, ESP_ERR_INVALID_ARG);
+}
+// A rename registers the service even when the boot could not, so retirement
+// removes it.
+void rename_after_failed_registration() {
+    network.errors[{"mdns_service_add_for_host", "amity-test"}] = ESP_FAIL;
+    boot_on_station();
+    CHECK(network.aliases == std::set<std::string>{"amity-test"} && network.services.empty());
+    CHECK(original_interfaces_enabled.load());
+    CHECK(registered.hostname("amity-test", "den") == ESP_OK);
+    CHECK(network.aliases == std::set<std::string>{"den"} && network.services == network.aliases);
+    CHECK(registered.lifecycle.retire() == ESP_OK && network.services.empty());
+}
+// A member never published the administration hostname: a rename changes only
+// its network hostname.
+void rename_member() {
+    install_boot();
+    install_network();
+    member();
+    app_main();
+    amity_seam::clear_calls();
+    CHECK(registered.hostname("amity-test", "den") == ESP_OK);
+    CHECK((amity_seam::calls() == std::vector<std::string>{"esp_netif_get_handle_from_ifkey", "esp_netif_set_hostname"}));
+    CHECK(network.hostname == "den" && network.aliases.empty() && !network.responder);
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -1669,5 +1865,18 @@ int main(int argc, char **argv) {
         {"wifi-policy-verify-fails", wifi_policy_verify_fails},
         {"wifi-policy-stays-on", wifi_policy_stays_on},
         {"release-timing", release_timing},
+        {"rename-published", rename_published},
+        {"rename-back", rename_back},
+        {"rename-alias-fails", rename_alias_fails},
+        {"rename-address-fails", rename_address_fails},
+        {"rename-https-fails", rename_https_fails},
+        {"rename-homekit-fails", rename_homekit_fails},
+        {"rename-old-alias-fails", rename_old_alias_fails},
+        {"rename-network-fails", rename_network_fails},
+        {"rename-without-station", rename_without_station},
+        {"rename-https-busy", rename_https_busy},
+        {"rename-https-exhausted", rename_https_exhausted},
+        {"rename-after-failed-registration", rename_after_failed_registration},
+        {"rename-member", rename_member},
     });
 }
