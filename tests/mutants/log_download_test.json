@@ -406,6 +406,13 @@
       "file": "components/system_services/log_download.cpp",
       "find": "download_finished.wait(guard,[]{return !download_task;});\n        vQueueDelete(download_queue);download_queue=nullptr;",
       "replace": "download_finished.wait(guard,[]{return !download_task;});\n        download_queue=nullptr;"
+    },
+    {
+      "id": "snapshot-sized-by-used",
+      "check": "a log snapshot allocates the whole ring before it takes the ring lock",
+      "file": "components/system_services/system_services.cpp",
+      "find": "heap_caps_malloc(ring.size(),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)",
+      "replace": "heap_caps_malloc(used,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)"
     }
   ]
 }

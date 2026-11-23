@@ -358,11 +358,25 @@ void setup_failures() {
 }
 
 // A snapshot copies the ring, oldest first, into one PSRAM allocation made
-// outside the ring's lock. Later writes do not change it, it is freed with its
-// last owner, and a failed allocation gives no snapshot.
+// outside the ring's lock. The allocation holds the whole ring, however little
+// the ring holds, since a line can arrive before the lock is taken. Later
+// writes do not change the copy, it is freed with its last owner, and a failed
+// allocation gives no snapshot.
 void snapshot() {
     start();
     write_log("old\nnew\n");
+    static size_t failed_bytes = 0;
+    static uint32_t failed_caps = 0;
+    static bool failed_locked = true;
+    CHECK(heap_caps_register_failed_alloc_callback([](size_t bytes, uint32_t caps, const char *) {
+              failed_bytes = bytes;
+              failed_caps = caps;
+              failed_locked = xSemaphoreGetMutexHolder(ring_lock()) != nullptr;
+          }) == ESP_OK);
+    amity_fake::fail_allocations(1);
+    CHECK(!system_services::log_snapshot());
+    CHECK(failed_bytes == c::log_capacity && failed_caps == (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) && !failed_locked);
+    CHECK(amity_fake::live_allocations() == 0);
     {
         const auto copy = system_services::log_snapshot();
         CHECK(copy && copy.size == 8 && std::string(copy.bytes.get(), copy.size) == "old\nnew\n");
@@ -383,17 +397,6 @@ void snapshot() {
         CHECK(copy.size == c::log_capacity);
         CHECK(std::string(copy.bytes.get(), copy.size) == written.substr(written.size() - c::log_capacity));
     }
-    static size_t failed_bytes = 0;
-    static uint32_t failed_caps = 0;
-    static bool failed_locked = true;
-    CHECK(heap_caps_register_failed_alloc_callback([](size_t bytes, uint32_t caps, const char *) {
-              failed_bytes = bytes;
-              failed_caps = caps;
-              failed_locked = xSemaphoreGetMutexHolder(ring_lock()) != nullptr;
-          }) == ESP_OK);
-    amity_fake::fail_allocations(1);
-    CHECK(!system_services::log_snapshot());
-    CHECK(failed_bytes == c::log_capacity && failed_caps == (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) && !failed_locked);
     CHECK(amity_fake::live_allocations() == 0);
 }
 
