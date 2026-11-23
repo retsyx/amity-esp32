@@ -1,0 +1,369 @@
+{
+  "ctest": "^consortium_gatt_fragment_test\\.",
+  "targets": [
+    "consortium_gatt_fragment_test"
+  ],
+  "baseline": {
+    "ctest": "^consortium_gatt_fragment_test\\.py$",
+    "targets": []
+  },
+  "mutants": [
+    {
+      "id": "stub-access-empty",
+      "check": "stub: early return from access()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "int access(uint16_t connection,uint16_t,ble_gatt_access_ctxt *context,void*){",
+      "replace": "int access(uint16_t connection,uint16_t,ble_gatt_access_ctxt *context,void*){ return {};"
+    },
+    {
+      "id": "stub-capture_gatt_link-return",
+      "check": "stub: early return from capture_gatt_link()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "void capture_gatt_link(GattTiming& timing){",
+      "replace": "void capture_gatt_link(GattTiming& timing){ return;"
+    },
+    {
+      "id": "stub-gatt_client_exchange-false",
+      "check": "stub: early return from gatt_client_exchange()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "bool gatt_client_exchange(bool encrypted,std::string_view request,std::string &response){",
+      "replace": "bool gatt_client_exchange(bool encrypted,std::string_view request,std::string &response){ return false;"
+    },
+    {
+      "id": "stub-gatt_client_exchange-true",
+      "check": "stub: early return from gatt_client_exchange()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "bool gatt_client_exchange(bool encrypted,std::string_view request,std::string &response){",
+      "replace": "bool gatt_client_exchange(bool encrypted,std::string_view request,std::string &response){ return true;"
+    },
+    {
+      "id": "stub-GattTiming-issued-false",
+      "check": "stub: early return from GattTiming::issued()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "bool issued(int result){",
+      "replace": "bool issued(int result){ return false;"
+    },
+    {
+      "id": "stub-GattTiming-issued-true",
+      "check": "stub: early return from GattTiming::issued()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "bool issued(int result){",
+      "replace": "bool issued(int result){ return true;"
+    },
+    {
+      "id": "stub-GattTiming-await-false",
+      "check": "stub: early return from GattTiming::await()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "bool await(uint64_t submitted,uint32_t timeout){",
+      "replace": "bool await(uint64_t submitted,uint32_t timeout){ return false;"
+    },
+    {
+      "id": "stub-GattTiming-await-true",
+      "check": "stub: early return from GattTiming::await()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "bool await(uint64_t submitted,uint32_t timeout){",
+      "replace": "bool await(uint64_t submitted,uint32_t timeout){ return true;"
+    },
+    {
+      "id": "stub-GattTiming-done-return",
+      "check": "stub: early return from GattTiming::done()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "void done(){successful=true;failure=\"none\";emit();}",
+      "replace": "void done(){ return;successful=true;failure=\"none\";emit();}"
+    },
+    {
+      "id": "stub-GattTiming-emit-return",
+      "check": "stub: early return from GattTiming::emit()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "void emit(){",
+      "replace": "void emit(){ return;"
+    },
+    {
+      "id": "write-fragment-mtu-12",
+      "check": "every write fits the MTU",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "std::min<size_t>(mtu-13,BLE_ATT_ATTR_MAX_LEN-10):7;",
+      "replace": "std::min<size_t>(mtu-12,BLE_ATT_ATTR_MAX_LEN-10):7;"
+    },
+    {
+      "id": "write-fragment-max-503",
+      "check": "every write fits the 512-byte ATT value limit",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "std::min<size_t>(mtu-13,BLE_ATT_ATTR_MAX_LEN-10):7;",
+      "replace": "std::min<size_t>(mtu-13,BLE_ATT_ATTR_MAX_LEN-9):7;"
+    },
+    {
+      "id": "read-capacity-502",
+      "check": "every read fits the 512-byte ATT value limit",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "capacity=mtu>12?std::min<size_t>(500,mtu-12):1;",
+      "replace": "capacity=mtu>12?std::min<size_t>(502,mtu-12):1;"
+    },
+    {
+      "id": "read-capacity-mtu-11",
+      "check": "every read fits the MTU",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "capacity=mtu>12?std::min<size_t>(500,mtu-12):1;",
+      "replace": "capacity=mtu>12?std::min<size_t>(500,mtu-11):1;"
+    },
+    {
+      "id": "request-endpoint-flipped",
+      "check": "records carry their endpoint",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "uint8_t bytes[BLE_ATT_ATTR_MAX_LEN]={1,uint8_t(encrypted),",
+      "replace": "uint8_t bytes[BLE_ATT_ATTR_MAX_LEN]={1,uint8_t(!encrypted),"
+    },
+    {
+      "id": "request-offset-low-byte",
+      "check": "fragments carry their offset",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "work.offset=(uint16_t(bytes[8])<<8)|bytes[9];",
+      "replace": "work.offset=bytes[9];"
+    },
+    {
+      "id": "request-total-low-byte",
+      "check": "fragments carry their record size",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "work.total=(uint16_t(bytes[6])<<8)|bytes[7];",
+      "replace": "work.total=bytes[7];"
+    },
+    {
+      "id": "request-record-changes",
+      "check": "all fragments of a record carry its id",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "uint8_t(rid>>24),uint8_t(rid>>16),uint8_t(rid>>8),uint8_t(rid),uint8_t(request.size()>>8)",
+      "replace": "uint8_t(rid>>24),uint8_t(rid>>16),uint8_t(rid>>8),uint8_t(rid+offset),uint8_t(request.size()>>8)"
+    },
+    {
+      "id": "response-endpoint-zero",
+      "check": "responses carry their endpoint",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "uint8_t(srv_response.size()>>8),uint8_t(srv_response.size()),response_endpoint,",
+      "replace": "uint8_t(srv_response.size()>>8),uint8_t(srv_response.size()),0,"
+    },
+    {
+      "id": "response-offset-ignored",
+      "check": "reads continue at the cursor",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "srv_response.data()+response_offset,count",
+      "replace": "srv_response.data(),count"
+    },
+    {
+      "id": "request-limit-4095",
+      "check": "a 4096-byte request is sent",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(request.empty()||request.size()>4096||",
+      "replace": "if(request.empty()||request.size()>=4096||"
+    },
+    {
+      "id": "server-limit-4095",
+      "check": "a 4096-byte request is accepted",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "||work.total>4096||",
+      "replace": "||work.total>=4096||"
+    },
+    {
+      "id": "timing-writes-uncounted",
+      "check": "timing counts request writes",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "timing.failure=\"request_write\";++timing.request_writes;",
+      "replace": "timing.failure=\"request_write\";"
+    },
+    {
+      "id": "timing-cursors-uncounted",
+      "check": "timing counts cursor writes",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "timing.failure=\"cursor_write\";++timing.cursor_writes;",
+      "replace": "timing.failure=\"cursor_write\";"
+    },
+    {
+      "id": "timing-reads-uncounted",
+      "check": "timing counts reads",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "timing.failure=\"response_read\";++timing.reads;",
+      "replace": "timing.failure=\"response_read\";"
+    },
+    {
+      "id": "timing-pending-uncounted",
+      "check": "timing counts pending reads",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "++timing.pending_reads;vTaskDelay(",
+      "replace": "vTaskDelay("
+    },
+    {
+      "id": "timing-fragments-uncounted",
+      "check": "timing counts response fragments",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "++timing.response_fragments;offset=response.size();",
+      "replace": "offset=response.size();"
+    },
+    {
+      "id": "timing-reply-start-zero",
+      "check": "timing splits request and reply time",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "timing.reply_started=now_ms();size_t offset=0",
+      "replace": "timing.reply_started=0;size_t offset=0"
+    },
+    {
+      "id": "timing-max-last",
+      "check": "timing reports the longest ATT wait",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "att_max_ms=std::max(att_max_ms,elapsed);",
+      "replace": "att_max_ms=elapsed;"
+    },
+    {
+      "id": "timing-record-dropped",
+      "check": "timing names the record",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "const auto rid=++client_record;timing.record=rid;",
+      "replace": "const auto rid=++client_record;"
+    },
+    {
+      "id": "timing-endpoint-dropped",
+      "check": "timing names the endpoint",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "timing.endpoint=encrypted?1:0;",
+      "replace": "timing.endpoint=0;"
+    },
+    {
+      "id": "timing-exchange-under-lock",
+      "check": "timing lines are logged with no transport lock held",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(offset==total){timing.done();return true;}",
+      "replace": "if(offset==total){std::lock_guard<std::mutex> guard(client_mutex);timing.done();return true;}"
+    },
+    {
+      "id": "timing-exchange-content",
+      "check": "timing lines carry no request bytes",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "GattTiming timing(\"exchange\");",
+      "replace": "GattTiming timing(request.data());"
+    },
+    {
+      "id": "timing-exchange-unbounded",
+      "check": "timing lines stay under 384 bytes",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "att_max_ms=%llu mtu=%u interval_units=%u latency=%u status=%d\",",
+      "replace": "att_max_ms=%llu mtu=%u interval_units=%u latency=%u status=%d pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad\","
+    },
+    {
+      "id": "request-wait-4990",
+      "check": "a request write is awaited 5 s",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(!timing.issued(ble_gattc_write_flat(client_connection,client_attribute,bytes,count+10,on_write,token))||!timing.await(submitted,5000))",
+      "replace": "if(!timing.issued(ble_gattc_write_flat(client_connection,client_attribute,bytes,count+10,on_write,token))||!timing.await(submitted,4990))"
+    },
+    {
+      "id": "cursor-wait-4990",
+      "check": "a cursor write is awaited 5 s",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "timing.await(positioning,5000)",
+      "replace": "timing.await(positioning,4990)"
+    },
+    {
+      "id": "read-wait-4990",
+      "check": "a read is awaited 5 s",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "timing.await(reading,5000)",
+      "replace": "timing.await(reading,4990)"
+    },
+    {
+      "id": "pending-delay-50",
+      "check": "a pending read waits 25 ms",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "vTaskDelay(pdMS_TO_TICKS(25));",
+      "replace": "vTaskDelay(pdMS_TO_TICKS(50));"
+    },
+    {
+      "id": "cursor-every-read",
+      "check": "only an advanced position is written again",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "            cursor_needed=false;\n        }",
+      "replace": "        }"
+    },
+    {
+      "id": "cursor-not-first",
+      "check": "the cursor is written before the first read",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "size_t offset=0,total=0;bool cursor_needed=true;",
+      "replace": "size_t offset=0,total=0;bool cursor_needed=false;"
+    },
+    {
+      "id": "cursor-not-advanced",
+      "check": "the cursor is written after each fragment",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(offset==total){timing.done();return true;}cursor_needed=true;continue;}",
+      "replace": "if(offset==total){timing.done();return true;}continue;}"
+    },
+    {
+      "id": "server-cursor-ignored",
+      "check": "the server keeps the written cursor",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(rid==response_record&&offset<=srv_response.size())response_offset=offset;else response_offset=0;return 0;}",
+      "replace": "response_offset=0;(void)rid;(void)offset;return 0;}"
+    },
+    {
+      "id": "server-stale-cursor-kept",
+      "check": "a cursor for an unpublished record resets the position",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(rid==response_record&&offset<=srv_response.size())response_offset=offset;else response_offset=0;return 0;}",
+      "replace": "if(rid==response_record&&offset<=srv_response.size())response_offset=offset;return 0;}"
+    },
+    {
+      "id": "rejected-ignored",
+      "check": "a rejected reply fails the exchange",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(uint8_t(bytes[1])==2){timing.failure=\"response_rejected\";return false;}",
+      "replace": ""
+    },
+    {
+      "id": "frame-cursor-unchecked",
+      "check": "a reply off the cursor fails the exchange",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(length>4096||!length||cursor!=offset||",
+      "replace": "if(length>4096||!length||(cursor!=offset&&false)||"
+    },
+    {
+      "id": "reply-deadline-40s",
+      "check": "the reply is awaited 45 s",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "const auto end=now_ms()+45000;",
+      "replace": "const auto end=now_ms()+40000;"
+    },
+    {
+      "id": "reply-deadline-50s",
+      "check": "the reply is awaited no more than 50 s",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "const auto end=now_ms()+45000;",
+      "replace": "const auto end=now_ms()+50000;"
+    },
+    {
+      "id": "empty-request-sent",
+      "check": "an empty request is a precondition failure",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(request.empty()||request.size()>4096||",
+      "replace": "if(request.size()>4096||"
+    },
+    {
+      "id": "rejected-publication",
+      "check": "a failed record is published as rejected",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "response_status=good?1:2;",
+      "replace": "response_status=1;"
+    },
+    {
+      "id": "request-write-retried",
+      "check": "a failed request write is not tried again",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "||!timing.await(submitted,5000))return false;}",
+      "replace": "||!timing.await(submitted,5000)){if(timing.request_writes<2){offset-=fragment;continue;}return false;}}"
+    },
+    {
+      "id": "frame-failure-renamed",
+      "check": "a malformed reply fails with its own stage name",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "timing.failure=\"response_frame\";",
+      "replace": "timing.failure=\"response_read\";"
+    }
+  ]
+}

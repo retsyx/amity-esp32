@@ -45,9 +45,17 @@ if(AMITY_TEST_TIER STREQUAL standalone)
             mtu-before-discovery bounded-stage-waits missing-attributes mtu-already-sent mtu-failures
             mtu-callback-fences mtu-event-fences readvertise seal-prepared seal-stops-advertising stage-timing
             progressive-selection scan-stop-failure scan-natural-end scan-window-bounds cookie-exhaustion)
+    amity_test(consortium_gatt_fragment_test
+        SOURCES "${T}/consortium_gatt_fragment_test.cpp"
+        INCLUDES ${gatt_includes} "${T}"
+        LIBS consortium_gatt_fakes consortium_admission_server_seams consortium_credentials_seams core_fakes
+            amity_consortium amity_model
+        PTHREAD
+        REGISTRY
+        SCENARIOS mtu-framing exchange-timing published-before-cursor request-write-failure request-wait-failure
+            att-wait-bounds reply-rejected reply-malformed reply-deadline empty-request)
     unset(gatt_includes)
     amity_python_tests(
         consortium_gatt_admission_test.py
-        consortium_gatt_fragment_test.py
     )
 endif()
