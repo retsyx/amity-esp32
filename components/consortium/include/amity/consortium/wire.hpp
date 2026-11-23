@@ -48,6 +48,7 @@ bool is_bulk_kind(Kind);
 // Supported kinds all have closed payload validators.
 Error parse_envelope(std::string_view body, Envelope &out, JsonError *detail = nullptr);
 bool valid_envelope_payload(Kind, const Json&);
+std::string envelope_json(const Envelope &,std::string_view payload);
 // A member's station signal in device_status. Protocol integers are unsigned,
 // so the dBm value travels negated.
 struct WifiSignalReport { int8_t rssi = 0; uint8_t channel = 0; };

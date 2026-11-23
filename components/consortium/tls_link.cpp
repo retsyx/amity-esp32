@@ -5,22 +5,11 @@
 #include "lwip/sockets.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "esp_log.h"
 #include <cerrno>
 #include <algorithm>
 #include <cstring>
 #include <fcntl.h>
 namespace amity::consortium::platform {
-void emit_setup_timing(const char *area,const SetupTimingEntry& entry,model::OctopusId peer,model::LinkId link,model::MessageId scan){
-    if(scan){
-        ESP_LOGI("setup_timing","area=%s stage=%s at_ms=%llu elapsed_ms=%llu result=%s scan=%s peer=%s code=%d",area,entry.stage,
-            static_cast<unsigned long long>(entry.at_ms),static_cast<unsigned long long>(entry.elapsed_ms),entry.result,scan.str().c_str(),peer.str().c_str(),entry.code);
-        return;
-    }
-    ESP_LOGI("setup_timing","area=%s stage=%s at_ms=%llu elapsed_ms=%llu result=%s peer=%s link=%s count=%u call_ms=%llu wait_ms=%llu code=%d metric=%s",area,entry.stage,
-        static_cast<unsigned long long>(entry.at_ms),static_cast<unsigned long long>(entry.elapsed_ms),entry.result,peer.str().c_str(),link.str().c_str(),unsigned(entry.count),
-        static_cast<unsigned long long>(entry.call_ms),static_cast<unsigned long long>(entry.wait_ms),entry.code,entry.summed?"sum":"span");
-}
 namespace {
 int send_socket(void *ctx,const uint8_t *data,size_t size){int fd=*static_cast<int*>(ctx);int n=::send(fd,data,size,MSG_DONTWAIT);if(n<0&&(errno==EWOULDBLOCK||errno==EAGAIN||errno==EINTR))return MBEDTLS_ERR_SSL_WANT_WRITE;return n<0?MBEDTLS_ERR_NET_SEND_FAILED:n;}
 int receive_socket(void *ctx,uint8_t *data,size_t size){int fd=*static_cast<int*>(ctx);int n=::recv(fd,data,size,MSG_DONTWAIT);if(n<0&&(errno==EWOULDBLOCK||errno==EAGAIN||errno==EINTR))return MBEDTLS_ERR_SSL_WANT_READ;return n<0?MBEDTLS_ERR_NET_RECV_FAILED:n;}
@@ -238,5 +227,4 @@ bool TlsLink::receive(std::string &out,uint32_t duration){
     }
     return false;
 }
-std::string envelope_json(const Envelope &e,std::string_view payload){return "{\"config_revision\":\""+std::to_string(e.config_revision)+"\",\"kind\":\""+kind_name(e.kind)+"\",\"ttl_ms\":"+std::to_string(e.ttl_ms)+",\"payload\":"+std::string(payload)+"}";}
 } // namespace

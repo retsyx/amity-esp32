@@ -1,6 +1,7 @@
 #pragma once
 #include "amity/consortium/runtime.hpp"
 #include "amity/consortium/credential_types.hpp"
+#include "hex.hpp"
 #include "setup_timing.hpp"
 #include "tls_receive_trace.hpp"
 #include "connection_admission.hpp"
@@ -10,8 +11,6 @@
 #include <atomic>
 #include <mutex>
 namespace amity::consortium::platform {
-std::string hex(std::string_view);
-bool unhex(std::string_view,std::string &,size_t limit);
 std::string sha256(std::string_view);
 std::string random_hex(size_t);
 uint64_t now_ms();
@@ -71,7 +70,6 @@ private:
     ReceiveResult receive_failed(TlsReceiveDiagnostic::Cause,int,uint64_t);
     ReceiveResult receive_expired(TlsReceiveDiagnostic::Cause,int,uint64_t);
 };
-std::string envelope_json(const Envelope &,std::string_view payload);
 } // namespace
 namespace amity::consortium::platform {
 using BootstrapHandler=std::function<esp_err_t(std::string_view,std::string&)>;

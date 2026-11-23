@@ -107,13 +107,12 @@ int main(){try{restart_tests();return 0;}catch(const std::exception& error){std:
 def main():
     source = (ROOT / 'components/consortium/runtime.cpp').read_text()
     actual = function(source, 'std::string control_json(') + function(source, 'bool enroll_lan(')
-    encoder = function((ROOT / 'components/consortium/tls_link.cpp').read_text(), 'std::string envelope_json(')
     with tempfile.TemporaryDirectory(prefix='amity-enrollment-restart-') as directory:
         directory = Path(directory)
         (directory / 'esp_err.h').write_text('#pragma once\nusing esp_err_t=int;constexpr int ESP_OK=0,ESP_FAIL=-1;\n')
         cpp = directory / 'test.cpp'
         binary = directory / 'test'
-        cpp.write_text(timing_support() + PREFIX + encoder + actual + SUITE)
+        cpp.write_text(timing_support() + PREFIX + actual + SUITE)
         sources = AMITY_CONSORTIUM_SOURCES + [ROOT / 'components/amity_system/model.cpp']
         subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) +
                        ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined',

@@ -61,9 +61,10 @@ target_link_libraries(amity_model PRIVATE strict)
 # The host-compilable consortium codecs. The other consortium sources are
 # ESP_PLATFORM-only; a static library links only the objects a test uses.
 add_library(amity_consortium STATIC
-    "${C}/consortium/bootstrap.cpp" "${C}/consortium/enrollment.cpp" "${C}/consortium/json.cpp"
-    "${C}/consortium/owned_intent.cpp" "${C}/consortium/radio.cpp" "${C}/consortium/session.cpp"
-    "${C}/consortium/settings.cpp" "${C}/consortium/update.cpp" "${C}/consortium/wire.cpp")
+    "${C}/consortium/bootstrap.cpp" "${C}/consortium/enrollment.cpp" "${C}/consortium/hex.cpp"
+    "${C}/consortium/json.cpp" "${C}/consortium/owned_intent.cpp" "${C}/consortium/radio.cpp"
+    "${C}/consortium/session.cpp" "${C}/consortium/settings.cpp" "${C}/consortium/update.cpp"
+    "${C}/consortium/wire.cpp")
 target_include_directories(amity_consortium PRIVATE "${C}/consortium/include" "${C}/amity_system/include")
 target_link_libraries(amity_consortium PRIVATE strict)
 

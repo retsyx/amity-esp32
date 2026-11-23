@@ -21,8 +21,8 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 # The consortium sources outside the component's if(ESP_PLATFORM) block.
 AMITY_CONSORTIUM_SOURCES = [ROOT / 'components/consortium' / name for name in (
-    'bootstrap.cpp', 'enrollment.cpp', 'json.cpp', 'owned_intent.cpp', 'radio.cpp', 'session.cpp',
-    'settings.cpp', 'update.cpp', 'wire.cpp')]
+    'bootstrap.cpp', 'enrollment.cpp', 'hex.cpp', 'json.cpp', 'owned_intent.cpp', 'radio.cpp',
+    'session.cpp', 'settings.cpp', 'update.cpp', 'wire.cpp')]
 
 _TOKENS = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|//[^\n]*|/\*.*?\*/|[{}]', re.S)
 

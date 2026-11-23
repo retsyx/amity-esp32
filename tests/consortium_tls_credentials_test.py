@@ -134,13 +134,13 @@ int main(){using namespace amity::consortium;using namespace amity::consortium::
 
 def main():
     source,build=native_library();credentials=(ROOT/'components/consortium/credentials.cpp').read_text();tls=(ROOT/'components/consortium/tls_link.cpp').read_text()
-    actual='}\nnamespace amity::consortium {\n'+function((ROOT/'components/consortium/wire.cpp').read_text(),'bool decimal(')+'}\nnamespace amity::consortium::platform {\n'+''.join(function(credentials,name) for name in ['std::string hex(', 'bool unhex(', 'std::string sha256(', 'bool certificate_binding(', 'bool parse_certificate(', 'bool decode_identity(', 'bool certificate(', 'bool pinned_leaf(', 'esp_err_t load_identity(', 'esp_err_t load_group(', 'esp_err_t save_group('])
+    actual='}\nnamespace amity::consortium {\n'+function((ROOT/'components/consortium/wire.cpp').read_text(),'bool decimal(')+'}\nnamespace amity::consortium::platform {\n'+''.join(function(credentials,name) for name in ['std::string sha256(', 'bool certificate_binding(', 'bool parse_certificate(', 'bool decode_identity(', 'bool certificate(', 'bool pinned_leaf(', 'esp_err_t load_identity(', 'esp_err_t load_group(', 'esp_err_t save_group('])
     actual=actual.replace('bool certificate(std::string_view der,model::OctopusId id,std::string &pin){','bool certificate(std::string_view der,model::OctopusId id,std::string &pin){++full_checks;')
     actual+=''.join(function(tls,name) for name in ['int send_socket(', 'int receive_socket(', 'void reject_handshake(', 'TlsLink::TlsLink(', 'TlsLink::~TlsLink()', 'int TlsLink::verify(', 'bool TlsLink::setup(', 'bool TlsLink::handshake('])
     suite=SUITE
     with tempfile.TemporaryDirectory(prefix='amity-tls-credentials-') as directory:
         cpp,binary=Path(directory)/'test.cpp',Path(directory)/'test';cpp.write_text(timing_support()+PREFIX+actual+suite)
         include=[ROOT/'components/consortium',ROOT/'components/consortium/include',ROOT/'components/amity_system/include',ROOT/'tests/reset_fakes',source/'include',source/'tf-psa-crypto/include',source/'tf-psa-crypto/drivers/builtin/include',build/'tf-psa-crypto/include']
-        command=shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-g','-fsanitize=address,undefined',*['-I'+str(path)for path in include],str(cpp),str(ROOT/'components/consortium/json.cpp'),str(ROOT/'components/amity_system/model.cpp'),*[str(build/'library'/name)for name in ['libmbedtls.a','libmbedx509.a','libtfpsacrypto.a']],'-o',str(binary)]
+        command=shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-g','-fsanitize=address,undefined',*['-I'+str(path)for path in include],str(cpp),str(ROOT/'components/consortium/hex.cpp'),str(ROOT/'components/consortium/json.cpp'),str(ROOT/'components/amity_system/model.cpp'),*[str(build/'library'/name)for name in ['libmbedtls.a','libmbedx509.a','libtfpsacrypto.a']],'-o',str(binary)]
         subprocess.run(command,check=True);return subprocess.run([str(binary)],check=False).returncode
 if __name__=='__main__':raise SystemExit(main())

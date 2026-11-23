@@ -105,8 +105,7 @@ def main():
     prefix = prefix.replace('model::OctopusId peer;', 'model::OctopusId peer;model::BootId claimed_boot;')
     prefix = prefix.replace('struct Active{', function(source, 'struct LinkTrace {').rstrip() + ';\nstruct Active{')
     prefix = prefix.replace('bool send(Active&,Kind,std::string_view,uint32_t ttl=1000);', '')
-    actual = function((ROOT / 'components/consortium/tls_link.cpp').read_text(), 'std::string envelope_json(')
-    actual += ''.join(function(source, name) for name in ('Envelope outgoing(', 'bool send(Active &link,', 'bool fence_replaced_links(', 'bool establish(', 'bool synchronize_connection('))
+    actual = ''.join(function(source, name) for name in ('Envelope outgoing(', 'bool send(Active &link,', 'bool fence_replaced_links(', 'bool establish(', 'bool synchronize_connection('))
     with tempfile.TemporaryDirectory(prefix='amity-firmware-identity-') as directory:
         temp = Path(directory)
         (temp / 'esp_err.h').write_text('#pragma once\nusing esp_err_t=int;constexpr int ESP_OK=0,ESP_ERR_INVALID_ARG=1,ESP_ERR_INVALID_STATE=2,ESP_ERR_NO_MEM=3,ESP_ERR_TIMEOUT=4,ESP_FAIL=5,ESP_ERR_NOT_FOUND=6,ESP_ERR_NOT_SUPPORTED=7;\n')

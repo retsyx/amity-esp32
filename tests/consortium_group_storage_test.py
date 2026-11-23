@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PREFIX = r'''
 #include "amity/consortium/session.hpp"
 #include "controller_policy.hpp"
+#include "hex.hpp"
 #include "setup_timing.hpp"
 #include "amity/consortium/hostname.hpp"
 #include <algorithm>
@@ -25,8 +26,6 @@ template<class T>T ident(unsigned n){char text[33];snprintf(text,sizeof(text),"%
 std::string replace(std::string s,std::string_view a,std::string_view b){auto at=s.find(a);assert(at!=std::string::npos);s.replace(at,a.size(),b);return s;}
 std::map<std::string,std::string> records;std::string fail_write;std::vector<std::string> writes;
 namespace amity::consortium::platform {
-std::string hex(std::string_view v){std::string out;for(unsigned char c:v){out+="0123456789abcdef"[c>>4];out+="0123456789abcdef"[c&15];}return out;}
-bool unhex(std::string_view v,std::string& out,size_t cap){if(v.size()%2||v.size()>cap*2)return false;out.clear();for(size_t i=0;i<v.size();i+=2){auto digit=[](char c){return c>='0'&&c<='9'?c-'0':c>='a'&&c<='f'?c-'a'+10:-1;};const auto a=digit(v[i]),b=digit(v[i+1]);if(a<0||b<0)return false;out+=char(a*16+b);}return true;}
 int read_record(const char* space,const char* key,std::string& out,size_t cap){auto it=records.find(std::string(space)+"/"+key);if(it==records.end())return ESP_ERR_NVS_NOT_FOUND;if(it->second.size()>cap)return ESP_ERR_INVALID_SIZE;out=it->second;return ESP_OK;}
 int write_record(const char* space,const char* key,std::string_view value){writes.emplace_back(key);if(fail_write==key)return ESP_ERR_INVALID_STATE;records[std::string(space)+"/"+key]=value;return ESP_OK;}
 // Certificate/secret generation is outside this storage/parser regression.

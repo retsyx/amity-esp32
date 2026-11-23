@@ -45,7 +45,7 @@ int main(){using namespace amity::consortium::platform;
 }
 '''
 def main():
-    actual=function((ROOT/'components/consortium/tls_link.cpp').read_text(),'void emit_setup_timing(')
+    actual=function((ROOT/'components/consortium/setup_timing.cpp').read_text(),'void emit_setup_timing(')
     with tempfile.TemporaryDirectory(prefix='amity-setup-timing-') as directory:
         cpp,binary=Path(directory)/'test.cpp',Path(directory)/'test';cpp.write_text(PREFIX+actual+SUITE)
         subprocess.run(shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-Wall','-Wextra','-Werror','-g','-fsanitize=address,undefined',*['-I'+str(ROOT/p) for p in ['components/consortium','components/consortium/include','components/amity_system/include']],str(cpp),'-o',str(binary)],check=True)

@@ -8,7 +8,6 @@
 
 // Seams for the consortium platform primitives defined in
 // components/consortium/credentials.cpp. Never link them with credentials.cpp.
-// hex and unhex are pure and have no seams.
 #include "platform.hpp"
 #include "seams.hpp"
 

@@ -74,7 +74,7 @@ def main():
         (ROOT / "components/consortium/wire.cpp").read_text(), "bool decimal(")
     actual += "}\nnamespace amity::consortium::platform {\n"
     actual += "".join(function(credentials, name) for name in (
-        "std::string hex(", "bool unhex(", "std::string sha256(", "bool certificate_binding(",
+        "std::string sha256(", "bool certificate_binding(",
         "bool parse_certificate(", "bool decode_identity(", "bool certificate(", "bool pinned_leaf(",
         "esp_err_t load_identity(", "esp_err_t load_group(", "esp_err_t save_group("))
     actual += "".join(function(tls, name) for name in (
@@ -92,7 +92,8 @@ def main():
         command = shlex.split(os.environ.get("CXX", "c++")) + [
             "-std=c++17", "-Wall", "-Wextra", "-Werror", "-Wno-misleading-indentation", "-g",
             "-fsanitize=address,undefined", *["-I" + str(path) for path in include], str(cpp),
-            str(ROOT / "components/consortium/json.cpp"), str(ROOT / "components/amity_system/model.cpp"),
+            str(ROOT / "components/consortium/hex.cpp"), str(ROOT / "components/consortium/json.cpp"),
+            str(ROOT / "components/amity_system/model.cpp"),
             *[str(build / "library" / name) for name in ("libmbedtls.a", "libmbedx509.a", "libtfpsacrypto.a")],
             "-o", str(binary)]
         subprocess.run(command, check=True)

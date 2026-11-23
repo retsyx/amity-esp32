@@ -97,6 +97,7 @@ Error parse_envelope(std::string_view body,Envelope &out,JsonError *detail) {
     x.ttl_ms=ttl;x.payload=std::move(*v.get("payload"));
     out=std::move(x);return Error::none;
 }
+std::string envelope_json(const Envelope &e,std::string_view payload){return "{\"config_revision\":\""+std::to_string(e.config_revision)+"\",\"kind\":\""+kind_name(e.kind)+"\",\"ttl_ms\":"+std::to_string(e.ttl_ms)+",\"payload\":"+std::string(payload)+"}";}
 std::string hello_json(const HelloFrame &h){
     // Firmware is the fixed lowercase ELF digest supplied by runtime. The
     // optional transaction pair never authorizes an ordinary execution session.
