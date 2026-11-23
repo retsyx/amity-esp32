@@ -155,6 +155,7 @@ struct HubService::Impl : Adapter {
         system::OctopusId controller;system::LinkId link;uint64_t config_revision=0,presentation_revision=1;
         std::function<esp_err_t()> persist;std::function<void(system::OwnedContextResult)> context_completion;
         system::BootId settings_boot;std::vector<AdapterAddressChange> settings_adapters;uint64_t settings_deadline=0;
+        system::BootId controller_boot;
     };
     struct ConfigurationCommand:ManagementCommand {
         using ManagementCommand::ManagementCommand;
@@ -2122,9 +2123,9 @@ system::AdmissionResult HubService::submit_key_edges(const std::array<system::Ke
     if(!timeout){const auto result=impl_->submit(c);return result==ESP_OK?system::AdmissionResult{system::AdmissionCode::accepted,{}}:system::AdmissionResult{system::AdmissionCode::overloaded,"Owner input IPC is full"};}
     return impl_->request(c,timeout);
 }
-esp_err_t HubService::bind_owned_controller(system::OctopusId controller,uint64_t revision){
-    if(!controller||!revision)return ESP_ERR_INVALID_ARG;
-    auto* c=new(std::nothrow)Impl::ManagementCommand{Impl::Kind::OwnedBind};if(!c)return ESP_ERR_NO_MEM;c->management().controller=controller;c->management().config_revision=revision;
+esp_err_t HubService::bind_owned_controller(system::OctopusId controller,uint64_t revision,system::BootId controller_boot){
+    if(!controller||!revision||!controller_boot)return ESP_ERR_INVALID_ARG;
+    auto* c=new(std::nothrow)Impl::ManagementCommand{Impl::Kind::OwnedBind};if(!c)return ESP_ERR_NO_MEM;c->management().controller=controller;c->management().config_revision=revision;c->management().controller_boot=controller_boot;
     xSemaphoreTake(impl_->lock,portMAX_DELAY);if(impl_->owned_controller!=controller)++impl_->activity_instance;xSemaphoreGive(impl_->lock);
     const auto result=impl_->request(c,5000);return result?ESP_OK:ESP_ERR_INVALID_STATE;
 }

@@ -15,7 +15,7 @@ static void adapter_settings_owner_tests() {
     {
         LocalHubService owner; setup(owner);
         assert(owner.start(cec::legacy_buttonless_profile, std::array<uint16_t,4>{{0x2000,0x3000,0x4000,0x5000}}) == ESP_OK);
-        assert(owner.bind_owned_controller(live_id<OctopusId>(2),1)==ESP_OK);fixture_finish_discovery(owner);
+        assert(owner.bind_owned_controller(live_id<OctopusId>(2),1,boot)==ESP_OK);fixture_finish_discovery(owner);
         const auto initial = owner.snapshot();
         const auto slots = owner.adapter_runtime_snapshot(); assert(slots.size() == 4);
         for (unsigned i=0;i<4;++i) assert(slots[i].tentacle_id == i && slots[i].configured == (i==0));
@@ -44,7 +44,7 @@ static void adapter_settings_owner_tests() {
     auto sparse = cec::legacy_buttonless_profile; sparse.id = cec::BoardProfileId::Development4Tentacle; sparse.tentacle_count = 4;
     for(unsigned i=0;i<8;++i)sparse.ports[i]={static_cast<uint8_t>(i/2),i%2?cec::Side::Back:cec::Side::Front,-1};
     {
-        LocalHubService owner; setup(owner); assert(fixture_start(owner,sparse)==ESP_OK);assert(owner.bind_owned_controller(live_id<OctopusId>(2),1)==ESP_OK);run_idle(2);
+        LocalHubService owner; setup(owner); assert(fixture_start(owner,sparse)==ESP_OK);assert(owner.bind_owned_controller(live_id<OctopusId>(2),1,boot)==ESP_OK);run_idle(2);
         for(const auto& slot:owner.adapter_runtime_snapshot())assert(!slot.configured&&!slot.effective_front_physical);
         unsigned writes=0;assert(owner.commit_adapter_settings(boot,{{3,0x5200}},deadline(),[&]{++writes;return ESP_OK;})==ESP_ERR_INVALID_STATE);assert(!writes);
     }
@@ -52,7 +52,7 @@ static void adapter_settings_owner_tests() {
     {
         LocalHubService owner;setup(owner);
         assert(owner.start(sparse,std::array<uint16_t,4>{{0x1000,0x2000,0x3000,0x4000}})==ESP_OK);
-        assert(owner.bind_owned_controller(live_id<OctopusId>(2),1)==ESP_OK);run_idle(2);
+        assert(owner.bind_owned_controller(live_id<OctopusId>(2),1,boot)==ESP_OK);run_idle(2);
         assert(owner.adapter_runtime_snapshot()[3].configured);
         // A configured wire is editable without a responding device. Its
         // communication attempts still get their real CEC result normally.
@@ -195,7 +195,7 @@ static void release_carrier(){
 }
 static void explicit_scan_reports_unwired_adapters_until_they_scan(){
     LocalHubService owner;start_carrier(owner);
-    assert(owner.bind_owned_controller(fixture_local::owner(),1)==ESP_OK);
+    assert(owner.bind_owned_controller(fixture_local::owner(),1,fixture_local::id<BootId>(3))==ESP_OK);
     hold_unwired_claims(owner);
     const auto before=carrier_reports(owner);const auto aggregate=owner.snapshot().discovery_generation;
     // What the UI and the main read after the request and after every later owner pass.
@@ -227,7 +227,7 @@ static void owner_reports_scan_requests_on_unwired_adapters(){
     const auto controller=live_id<OctopusId>(7);
     const OwnedAuthorization auth{controller,live_id<BootId>(8),live_id<BootId>(3),live_id<LinkId>(9),1,0};
     LocalHubService owner;owner.set_coordinator_authority(false);start_carrier(owner);
-    assert(owner.bind_owned_controller(controller,1)==ESP_OK);
+    assert(owner.bind_owned_controller(controller,1,auth.controller_boot)==ESP_OK);
     hold_unwired_claims(owner);
     const auto submit=[&](OwnedIntentKind kind,const char* name){
         OwnedIntent intent;intent.kind=kind;intent.on=true;intent.generation=1;

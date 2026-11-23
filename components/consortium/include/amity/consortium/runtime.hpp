@@ -79,9 +79,9 @@ struct RuntimeNetworkHooks {
 };
 void runtime_network_hooks(RuntimeNetworkHooks);
 struct RuntimeControlHooks {
-    // A member binds its controller's configuration revision. Its device
-    // reports then travel as ordinary results.
-    std::function<Error(model::OctopusId controller,uint64_t config_revision)> synchronize;
+    // A member binds its controller's authenticated boot and configuration
+    // revision. Its device reports then travel as ordinary results.
+    std::function<Error(model::OctopusId controller,model::BootId controller_boot,uint64_t config_revision)> synchronize;
     // The authenticated logical session and the exact receiver-local deadline.
     std::function<Error(const LinkScope&,const Envelope &,uint64_t)> control;
     std::function<bool(model::OctopusId,model::BootId,model::LinkId)> disconnected;

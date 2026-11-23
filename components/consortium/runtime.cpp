@@ -286,7 +286,7 @@ bool enroll_lan(Active &active,bool server){
     if(!server)runtime_close_enrollment();
     return timing.done(true);
 }
-// A member binds its controller's configuration revision before it
+// A member binds its controller's boot and configuration revision before it
 // acknowledges a barrier or applies an advance. Its device reports then
 // travel as ordinary results on the ready session.
 bool bind_configuration(Active& active,uint64_t revision,LinkTrace& trace){
@@ -294,7 +294,7 @@ bool bind_configuration(Active& active,uint64_t revision,LinkTrace& trace){
     trace.phase="configuration_apply";
     RuntimeControlHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=controls;}
     if(!hooks.synchronize)return timing.done(trace.fail("synchronization_hooks",Error::not_ready));
-    const auto apply=timing.begin("config_apply");const auto applied=hooks.synchronize(active.peer,revision);timing.finish(apply,applied==Error::none);
+    const auto apply=timing.begin("config_apply");const auto applied=hooks.synchronize(active.peer,active.session.scope().peer_boot_id,revision);timing.finish(apply,applied==Error::none);
     if(applied!=Error::none)return timing.done(trace.fail("synchronization_apply",applied));
     return timing.done(true);
 }

@@ -227,7 +227,7 @@ static void authority_loss_between_source_phases(bool rebind){
     const auto link=fixture_local::id<m::LinkId>(6);
     HubService hub;hub.set_system_identity(group,member);hub.set_boot_identity(boot);hub.set_coordinator_authority(false);
     std::array<uint16_t,amity::max_tentacles> physical;physical.fill(0x1000);physical[1]=0x1200;
-    assert(hub.start(two_adapters,physical)==ESP_OK);assert(hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
+    assert(hub.start(two_adapters,physical)==ESP_OK);assert(hub.bind_owned_controller(controller,1,controller_boot)==ESP_OK);fixture_finish_discovery(hub);
     fixture_tick=0;
     fixture_incoming.push_back({6,{{0x4f,0x84,0x12,0x10,4},5}});
     fixture_incoming.push_back({6,{{0x40,0x47,'S','o','u','r','c','e'},8}});
@@ -243,7 +243,7 @@ static void authority_loss_between_source_phases(bool rebind){
     // The announcement completes; a new controller may bind before the owner
     // resumes the source step's second phase.
     fixture_complete_all();
-    if(rebind)assert(hub.bind_owned_controller(other,1)==ESP_OK);
+    if(rebind)assert(hub.bind_owned_controller(other,1,controller_boot)==ESP_OK);
     run_idle(8);fixture_complete_all();run_idle(8);
     std::printf("rebind=%d route=%zu settling=%d current=%d\n",rebind,count(6,{0x86,0x12,0x10}),hub.snapshot().activity_settling,hub.snapshot().current_activity);
     assert(count(6,{0x86,0x12,0x10})==(rebind?0u:1u)&&!hub.snapshot().activity_settling);
@@ -260,7 +260,7 @@ static void lookup_fifo(bool step_first){
     fixture_tick=100000;fixture_present=true;fixture_async_autocomplete=true;fixture_sent.clear();
     fixture_peer_address=[](int gpio)->uint8_t{return gpio%2?0:4;};
     HubService hub;hub.set_system_identity(group,member);hub.set_boot_identity(boot);hub.set_coordinator_authority(false);
-    assert(fixture_start(hub,two_adapters)==ESP_OK&&hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
+    assert(fixture_start(hub,two_adapters)==ESP_OK&&hub.bind_owned_controller(controller,1,controller_boot)==ESP_OK);fixture_finish_discovery(hub);
     m::OwnedAuthorization auth{controller,controller_boot,boot,link,1,0};
     fixture_send=[](int gpio,const cec::Frame& frame){
         if(frame.size<2||frame.destination()!=fixture_peer(gpio))return true;

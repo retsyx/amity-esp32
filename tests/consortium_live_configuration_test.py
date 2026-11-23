@@ -143,7 +143,7 @@ void terminal_receive_trace(){
 void coordinator_refresh(){
  auto a=start(true);const auto original=a->session.scope();const auto* tls=a->tls.get();std::vector<std::string> cached={"TV","AVR","Player"};
  a->advertised_hostname="renamed-main";network.get_hostname=[]{return "renamed-main";};
- controls.synchronize=[](auto,uint64_t){assert(false&&"The main binds no configuration");return Error::none;};
+ controls.synchronize=[](auto,auto,uint64_t){assert(false&&"The main binds no configuration");return Error::none;};
  controls.control=[](const auto&,const auto&,auto){assert(false&&"Observation refresh must not deliver a CEC completion");return Error::none;};
  on_send=[&](Active& active,const Envelope&){unchanged(active,original,tls);assert(cached.size()==3);};
  const auto woken=wakes;runtime_configuration_changed(8);
@@ -190,7 +190,7 @@ void member_refresh(){
  a->advertised_hostname="renamed-member";network.get_hostname=[]{return "renamed-member";};
  const auto advance=inbound(original,7,Kind::synchronization,synchronization_json(ident<model::MessageId>(81),"advance",8));
  assert(a->session.admit(advance,clock_ms,clock_ms)==Error::none); // The real outer loop admits the coordinator's marker.
- controls.synchronize=[&](auto owner,uint64_t revision){assert(owner==a->peer&&revision==8&&a->session.scope()==original&&cached.size()==2);++applied;return Error::none;};
+ controls.synchronize=[&](auto owner,auto boot,uint64_t revision){assert(owner==a->peer&&boot==original.peer_boot_id&&revision==8&&a->session.scope()==original&&cached.size()==2);++applied;return Error::none;};
  LinkTrace trace;assert(bind_configuration(*a,8,trace)&&apply_configuration_advance(*a,false,8,trace));unchanged(*a,original,tls);
  assert(configuration==8&&applied==1&&cached.size()==2&&shutdowns==0&&a->session.scope().config_revision==8&&a->status.config_revision==8);
  assert(a->advertised_hostname.empty()&&a->tls->sent.empty()&&!a->context_ready);
@@ -201,7 +201,7 @@ void member_refresh(){
 }
 void rejected_bind_keeps_scope(){
  auto a=start(false);const auto original=a->session.scope();
- controls.synchronize=[](auto,uint64_t){return Error::not_ready;};
+ controls.synchronize=[](auto,auto,uint64_t){return Error::not_ready;};
  LinkTrace trace;assert(!bind_configuration(*a,8,trace)&&std::string(trace.reason)=="synchronization_apply"&&trace.error==Error::not_ready);
  assert(a->session.scope()==original&&configuration==7&&a->ready);
  controls.synchronize={};trace=LinkTrace{};assert(!bind_configuration(*a,8,trace)&&std::string(trace.reason)=="synchronization_hooks");

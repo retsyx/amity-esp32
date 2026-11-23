@@ -52,7 +52,7 @@ static void start_owner(HubService& hub,m::OctopusId id,bool two_adapters=false,
              {2,cec::Side::Front,-1},{2,cec::Side::Back,-1},{3,cec::Side::Front,-1},{3,cec::Side::Back,-1}},-1,-1};
         assert(fixture_start(hub,profile)==ESP_OK);
     }else assert(fixture_start(hub,front,back)==ESP_OK);
-    assert(hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
+    assert(hub.bind_owned_controller(controller,1,controller_boot)==ESP_OK);fixture_finish_discovery(hub);
     fixture_tick=0;
 }
 static void drain(HubService& hub,FakeTask* task=nullptr){
@@ -154,7 +154,7 @@ static void revision_bind_waits_for_old_recipe_cleanup(){
             assert(fixture_complete_next(cec::TxResult::Success,2));++completed;
         }
     };
-    assert(hub.bind_owned_controller(controller,2)==ESP_OK);
+    assert(hub.bind_owned_controller(controller,2,controller_boot)==ESP_OK);
     fixture_delay={};assert(completed==2&&hub.executing_configuration_revision()==2);
     assert(count(1,{0x36})==1&&count(2,{0x36})==1&&fixture_completed.size()==2&&fixture_pending.empty());
     auto stale=power(owner,m::Side::front);stale.generation=1;stale.config_revision=1;
@@ -325,7 +325,7 @@ static void isolated_source_input(bool nested,bool same_adapter,bool front_sourc
         {{0,cec::Side::Front,1},{0,cec::Side::Back,2},{1,cec::Side::Front,5},{1,cec::Side::Back,6},
          {2,cec::Side::Front,-1},{2,cec::Side::Back,-1},{3,cec::Side::Front,-1},{3,cec::Side::Back,-1}},-1,-1};
     std::array<uint16_t,amity::max_tentacles> physical;physical.fill(0x1000);physical[1]=nested?0x1200:0x1000;
-    assert(hub.start(profile,physical)==ESP_OK);assert(hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
+    assert(hub.start(profile,physical)==ESP_OK);assert(hub.bind_owned_controller(controller,1,controller_boot)==ESP_OK);fixture_finish_discovery(hub);
     fixture_tick=0;
     const int source_gpio=front_source?5:6;const uint8_t address=front_source?8:4;
     // Boot had no peers, so the configured Front PA remains independent of
@@ -375,7 +375,7 @@ static void selected_display_announces_its_own_input(bool projector,bool source_
         {{0,cec::Side::Front,1},{0,cec::Side::Back,2},{1,cec::Side::Front,5},{1,cec::Side::Back,6},
          {2,cec::Side::Front,-1},{2,cec::Side::Back,-1},{3,cec::Side::Front,-1},{3,cec::Side::Back,-1}},-1,-1};
     std::array<uint16_t,amity::max_tentacles> physical;physical.fill(0x1000);physical[0]=0x3000;physical[1]=0x2000;
-    assert(hub.start(profile,physical)==ESP_OK);assert(hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
+    assert(hub.start(profile,physical)==ESP_OK);assert(hub.bind_owned_controller(controller,1,controller_boot)==ESP_OK);fixture_finish_discovery(hub);
     // Peers announce after boot so their downstream source PA cannot change
     // either adapter's already determined upstream display input.
     fixture_tick=0;

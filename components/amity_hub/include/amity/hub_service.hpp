@@ -41,7 +41,8 @@ public:
     system::AdmissionResult submit_owned(const system::OwnedIntent&,const system::OwnedAuthorization&,uint32_t timeout_ms=1000);
     system::AdmissionResult submit_key_edges(const std::array<system::KeyEdge,2>&,uint8_t count,uint64_t activity_generation,
         system::LinkId,uint64_t deadline_ms,uint32_t timeout_ms=1000);
-    esp_err_t bind_owned_controller(system::OctopusId,uint64_t config_revision);
+    // A member binds its main's authenticated boot and configuration revision.
+    esp_err_t bind_owned_controller(system::OctopusId,uint64_t config_revision,system::BootId controller_boot);
     void set_owned_authorizer(std::function<bool(const system::OwnedAuthorization&)>);
     void set_owned_observer(std::function<void(const system::OwnedAdapterSnapshot&)>);
     bool update_owned_snapshot(system::OwnedAdapterSnapshot);

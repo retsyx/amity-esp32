@@ -35,7 +35,7 @@ std::shared_ptr<Active> initial(bool server){
  assert(active->session.authenticate(scope,scope.peer_id,server?PeerRole::actuator:PeerRole::coordinator,true)==Error::none);
  assert(active->session.hello(hello)==Error::none);
  active->ready=active->status.ready=false;active->context_ready=false;
- controls.synchronize=[](auto,uint64_t){return Error::none;};
+ controls.synchronize=[](auto,auto,uint64_t){return Error::none;};
  return active;
 }
 Envelope sync_frame(const LinkScope& scope,model::MessageId round,std::string_view phase,uint64_t target,uint64_t envelope_revision=0){
@@ -68,7 +68,7 @@ void coordinator_recovers_rejection_and_ignores_old_round(){
  auto active=initial(true);const auto original=active->session.scope();const auto* tls=active->tls.get();
  auto seen=inbound(original,7,Kind::device_status,"{\"hostname\":\"amity-member\"}");
  assert(active->session.admit(seen,clock_ms,clock_ms)==Error::none);
- controls.synchronize=[](auto,uint64_t){assert(false&&"The main binds no configuration");return Error::none;};
+ controls.synchronize=[](auto,auto,uint64_t){assert(false&&"The main binds no configuration");return Error::none;};
  ServerScript script{original};script.reject_first=true;script.stale_only_second=true;
  on_send=[&](auto& a,const auto& e){script(a,e);};
  assert(synchronize_connection(*active,true)&&active->ready&&active->status.ready&&script.rounds==3);
@@ -94,7 +94,7 @@ struct MemberScript {
 void member_binds_before_acknowledging(){
  auto active=initial(false);const auto original=active->session.scope();const auto* tls=active->tls.get();
  MemberScript script{original};script.begin(*active);unsigned applies=0;
- controls.synchronize=[&](auto owner,uint64_t revision){assert(owner==original.peer_id&&revision==7);++applies;return applies==1?Error::not_ready:Error::none;};
+ controls.synchronize=[&](auto owner,auto boot,uint64_t revision){assert(owner==original.peer_id&&boot==original.peer_boot_id&&revision==7);++applies;return applies==1?Error::not_ready:Error::none;};
  on_send=[&](auto& a,const auto& e){script(a,e);};
  // The failed bind is answered with a rejection, never an acknowledgement.
  assert(synchronize_connection(*active,false)&&script.rounds==2&&script.acks==1&&applies==2);
@@ -103,7 +103,7 @@ void member_binds_before_acknowledging(){
 void new_begin_unwinds_pending_round_without_reauthenticating(){
  auto active=initial(false);const auto original=active->session.scope();const auto* tls=active->tls.get();
  MemberScript script{original};script.interrupt_hostname_first=true;script.begin(*active);unsigned applies=0;
- controls.synchronize=[&](auto,uint64_t){++applies;return Error::none;};on_send=[&](auto& a,const auto& e){script(a,e);};
+ controls.synchronize=[&](auto,auto,uint64_t){++applies;return Error::none;};on_send=[&](auto& a,const auto& e){script(a,e);};
  assert(synchronize_connection(*active,false)&&script.rounds==2&&script.acks==2&&applies==2&&!active->pending_synchronization);
  same_connection(*active,original,tls,7);
  for(const auto& e:active->tls->sent)if(e.kind==Kind::synchronization){model::MessageId round;std::string phase;uint64_t revision;assert(parse_synchronization(e.payload,round,phase,revision)==Error::none&&phase=="ack");}
@@ -120,7 +120,7 @@ void hostname_persistence_failure_retains_same_stream(){
 void recovery_revision_preserves_identity_and_fences_ordinary_revision(){
  for(bool server:{false,true}){
   auto active=start(server);credentials_current=true;const auto original=active->session.scope();const auto* tls=active->tls.get();configuration=8;
-  controls.synchronize=[](auto,uint64_t revision){assert(revision==8);return Error::none;};
+  controls.synchronize=[](auto,auto,uint64_t revision){assert(revision==8);return Error::none;};
   ServerScript main{original};MemberScript member{original};member.target=8;
   if(server)on_send=[&](auto& a,const auto& e){main(a,e);};
   else{member.begin(*active);on_send=[&](auto& a,const auto& e){member(a,e);};}
@@ -213,7 +213,7 @@ void late_old_link_callbacks_cannot_cancel_fenced_tls(){
 void expired_operational_frame_uses_existing_connection(){
  for(bool server:{false,true}){
   auto active=start(server);credentials_current=true;const auto original=active->session.scope();const auto* tls=active->tls.get();
-  controls.synchronize=[](auto,uint64_t){return Error::none;};
+  controls.synchronize=[](auto,auto,uint64_t){return Error::none;};
   ServerScript main{original};MemberScript member{original};active->synchronization={member.round,7};unsigned rejects=0;
   on_send=[&](Active& a,const Envelope& envelope){
    if(envelope.kind==Kind::synchronization&&envelope.payload.get("phase")->string=="reject"){++rejects;assert(!server&&envelope.payload.get("round_id")->string==member.round.str());}
@@ -292,7 +292,7 @@ PairedResult paired_endpoint(bool server,int fd){
   active->tls->incoming.push_back(std::move(body));
  };
  unsigned applies=0,rounds=0;
- controls.synchronize=[&](auto peer,uint64_t revision){
+ controls.synchronize=[&](auto peer,auto,uint64_t revision){
   assert(!server&&peer==original.peer_id&&revision==7);
   ++applies;return applies==1?Error::not_ready:Error::none; // The real member fails its first bind.
  };

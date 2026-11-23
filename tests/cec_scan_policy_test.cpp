@@ -37,7 +37,7 @@ static m::OwnedAdapterSnapshot observed(const HubService& hub){
 }
 static void setup(HubService& hub){
     hub.set_system_identity(group,owner);hub.set_boot_identity(boot);hub.set_coordinator_authority(false);
-    assert(fixture_start(hub,1,2)==ESP_OK);assert(hub.bind_owned_controller(controller,1)==ESP_OK);
+    assert(fixture_start(hub,1,2)==ESP_OK);assert(hub.bind_owned_controller(controller,1,controller_boot)==ESP_OK);
     fixture_finish_discovery(hub);
     assert(hub.snapshot().discovery_generation==1&&observed(hub).devices.size()==2);
 }
@@ -105,7 +105,7 @@ static void no_configuration_or_rebind_scan(){
     }
     assert(fixture_sent.empty());
     // Same-runtime controller/scope rebinding is not a boot or a UI scan.
-    assert(hub.bind_owned_controller(controller,5)==ESP_OK);run_idle(10);
+    assert(hub.bind_owned_controller(controller,5,controller_boot)==ESP_OK);run_idle(10);
     assert(hub.snapshot().discovery_generation==generation&&fixture_sent.empty());
 }
 static void unrelated_scan_does_not_defer_cooldown_miss(){
@@ -131,7 +131,7 @@ static void independent_adapters(){
         {{0,cec::Side::Front,1},{0,cec::Side::Back,2},{1,cec::Side::Front,5},{1,cec::Side::Back,6},
          {2,cec::Side::Front,-1},{2,cec::Side::Back,-1},{3,cec::Side::Front,-1},{3,cec::Side::Back,-1}},-1,-1};
     LocalHubService hub;hub.set_system_identity(group,owner);hub.set_boot_identity(boot);hub.set_coordinator_authority(false);
-    assert(fixture_start(hub,profile)==ESP_OK);assert(hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
+    assert(fixture_start(hub,profile)==ESP_OK);assert(hub.bind_owned_controller(controller,1,controller_boot)==ESP_OK);fixture_finish_discovery(hub);
     const auto generation=hub.snapshot().discovery_generation;assert(generation==2);
     fixture_time=200000000;fixture_sent.clear();missing(hub,m::Side::back,0);fixture_finish_discovery(hub,generation);
     assert(polls(2)&&!polls(1)&&!polls(5)&&!polls(6));

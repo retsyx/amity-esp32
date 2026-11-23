@@ -71,7 +71,7 @@ static void distributed_source_comparison(){
     HubService primary,other;
     primary.set_system_identity(group,controller);primary.set_boot_identity(controller_boot);assert(fixture_start(primary,1,2)==ESP_OK);auto* primary_task=latest_task;
     other.set_system_identity(group,member);other.set_boot_identity(member_boot);other.set_coordinator_authority(false);assert(fixture_start(other,3,4)==ESP_OK);auto* other_task=latest_task;
-    assert(other.bind_owned_controller(controller,1)==ESP_OK);
+    assert(other.bind_owned_controller(controller,1,controller_boot)==ESP_OK);
     other.set_owned_observer([&](const auto& report){assert(primary.update_owned_snapshot(report));});
     latest_task=primary_task;
     assert(primary.configure_scoped({{"Main","tv-a","player-a","","",0},{"Member","tv-b","player-b","","",0}},
@@ -140,8 +140,8 @@ static void three_owner_standby_cycles(){
     fixture_present=true;fixture_peer_address=[](int gpio)->uint8_t{return gpio%2?0:4;};
     HubService primary,second,tertiary;
     primary.set_system_identity(group,controller);primary.set_boot_identity(controller_boot);assert(fixture_start(primary,1,2)==ESP_OK);auto* primary_task=latest_task;
-    second.set_system_identity(group,member);second.set_boot_identity(member_boot);second.set_coordinator_authority(false);assert(fixture_start(second,3,4)==ESP_OK);auto* second_task=latest_task;assert(second.bind_owned_controller(controller,1)==ESP_OK);
-    tertiary.set_system_identity(group,third);tertiary.set_boot_identity(third_boot);tertiary.set_coordinator_authority(false);assert(fixture_start(tertiary,5,6)==ESP_OK);auto* third_task=latest_task;assert(tertiary.bind_owned_controller(controller,1)==ESP_OK);
+    second.set_system_identity(group,member);second.set_boot_identity(member_boot);second.set_coordinator_authority(false);assert(fixture_start(second,3,4)==ESP_OK);auto* second_task=latest_task;assert(second.bind_owned_controller(controller,1,controller_boot)==ESP_OK);
+    tertiary.set_system_identity(group,third);tertiary.set_boot_identity(third_boot);tertiary.set_coordinator_authority(false);assert(fixture_start(tertiary,5,6)==ESP_OK);auto* third_task=latest_task;assert(tertiary.bind_owned_controller(controller,1,controller_boot)==ESP_OK);
     for(auto* owner:{&second,&tertiary})owner->set_owned_observer([&](const auto& report){assert(primary.update_owned_snapshot(report));});
     latest_task=primary_task;
     // All three activities exist before the first cycle, just as on the bench.

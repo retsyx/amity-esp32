@@ -69,11 +69,11 @@ void publish_configuration_revision(){
 void flush_configuration(){
     if(state.configuration_pending.exchange(false))publish_configuration_revision();
 }
-// The member binds its controller's revision, then republishes every adapter
-// report in the new scope as ordinary results.
-c::Error synchronize(s::OctopusId controller,uint64_t revision){
+// The member binds its controller's boot and revision, then republishes every
+// adapter report in the new scope as ordinary results.
+c::Error synchronize(s::OctopusId controller,s::BootId controller_boot,uint64_t revision){
     if(!c::runtime_status().member||!revision)return c::Error::unauthorized_role;
-    if(state.control->bind_owned_controller(controller,revision)!=ESP_OK)return c::Error::not_ready;
+    if(state.control->bind_owned_controller(controller,revision,controller_boot)!=ESP_OK)return c::Error::not_ready;
     const auto latest=state.control->owned_snapshots();const auto local=state.control->octopus_id();
     std::lock_guard<std::mutex> guard(state.mutex);state.controller=controller;
     for(const auto& report:latest)if(report.owner==local&&report.adapter<amity::max_tentacles)state.dirty_reports|=uint8_t(1u<<report.adapter);

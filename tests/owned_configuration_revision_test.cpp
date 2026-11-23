@@ -103,7 +103,7 @@ static void owner_revision_preserves_admitted_press_and_hold(){
     const auto group=id<m::ConsortiumId>('1');const auto controller=id<m::OctopusId>('2'),member=id<m::OctopusId>('3');
     const auto boot=id<m::BootId>('4'),owner_boot=id<m::BootId>('5');const auto link=id<m::LinkId>('6');
     fixture_present=true;HubService hub;hub.set_system_identity(group,member);hub.set_boot_identity(owner_boot);hub.set_coordinator_authority(false);assert(fixture_start(hub,1,2)==ESP_OK);
-    assert(hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
+    assert(hub.bind_owned_controller(controller,1,boot)==ESP_OK);fixture_finish_discovery(hub);
     uint64_t authorized_revision=1;unsigned refreshed_authorizations=0;
     const auto authorized=[&](const auto& authorization){
         const bool current=authorization.controller_id==controller&&authorization.controller_boot==boot&&authorization.owner_boot==owner_boot&&
@@ -121,7 +121,7 @@ static void owner_revision_preserves_admitted_press_and_hold(){
     m::OwnedIntent press;press.kind=m::OwnedIntentKind::key_edges;press.target.port={group,member,0,m::Side::front};press.generation=7;press.edge_count=1;press.edges[0]={0x01,true};
     assert(hub.submit_key_edges(press.edges,press.edge_count,press.generation,link,0));
     assert(fixture_pending.size()==1&&fixture_pending.front().frame.data[1]==0x44);const auto generation=hub.snapshot().activity_generation;
-    authorized_revision=2;assert(hub.bind_owned_controller(controller,2)==ESP_OK);
+    authorized_revision=2;assert(hub.bind_owned_controller(controller,2,boot)==ESP_OK);
     assert(fixture_pending.size()==1&&fixture_complete_next(cec::TxResult::Success));run_idle(3);
     assert(hub.snapshot().activity_generation==generation&&hub.snapshot().current_activity==selected);
     assert(std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& tx){return tx.frame.size>=2&&tx.frame.data[1]==0x45;}));
@@ -324,7 +324,7 @@ struct RecoveryOwners {
         main.set_system_identity(group,controller);main.set_boot_identity(controller_boot);assert(fixture_start(main,1,2)==ESP_OK);main_task=latest_task;
         owner.set_system_identity(group,member);owner.set_boot_identity(member_boot);owner.set_coordinator_authority(false);
         assert(fixture_start(owner,3,4)==ESP_OK);owner_task=latest_task;
-        assert(owner.bind_owned_controller(controller,revision)==ESP_OK);fixture_finish_discovery(owner);
+        assert(owner.bind_owned_controller(controller,revision,controller_boot)==ESP_OK);fixture_finish_discovery(owner);
         owner.set_owned_authorizer([&](const auto& auth){return auth.controller_id==controller&&auth.controller_boot==current_controller_boot&&
             auth.owner_boot==member_boot&&auth.link_id==current_link&&auth.config_revision==revision;});
         owner.set_owned_observer([&](const auto& report){assert(main.update_owned_snapshot(report));});

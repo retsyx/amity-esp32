@@ -26,6 +26,7 @@ public:
     std::function<void()> configuration_applied;
     system::OctopusId bound_controller;
     uint64_t bound_revision = 0;
+    system::BootId bound_boot;
     std::vector<system::OwnedIntent> submitted;
     struct KeyDelivery {
         std::array<system::KeyEdge,2> edges;
@@ -71,11 +72,11 @@ public:
         key_deliveries.push_back({edges,count,generation,link,deadline_ms});
         return {admission,{}};
     }
-    esp_err_t bind_owned_controller(system::OctopusId controller,uint64_t revision) {
+    esp_err_t bind_owned_controller(system::OctopusId controller,uint64_t revision,system::BootId controller_boot) {
         ++bind_calls;
         if(!configuration.controller_octopus_id||*configuration.controller_octopus_id!=controller)return ESP_ERR_INVALID_STATE;
         if(bind_result!=ESP_OK)return bind_result;
-        bound_controller=controller;bound_revision=revision;return ESP_OK;
+        bound_controller=controller;bound_revision=revision;bound_boot=controller_boot;return ESP_OK;
     }
     bool update_owned_snapshot(system::OwnedAdapterSnapshot report) {
         if(before_snapshot_update)before_snapshot_update(report);

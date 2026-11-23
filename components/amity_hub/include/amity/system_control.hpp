@@ -74,7 +74,7 @@ public:
     void set_owned_authorizer(std::function<bool(const system::OwnedAuthorization&)> check){local_.set_owned_authorizer(std::move(check));}
     system::AdmissionResult submit_owned(const system::OwnedIntent& intent,const system::OwnedAuthorization& auth,uint32_t timeout=1000){return local_.submit_owned(intent,auth,timeout);}
     system::AdmissionResult submit_key_edges(const std::array<system::KeyEdge,2>& edges,uint8_t count,uint64_t generation,system::LinkId link,uint64_t deadline,uint32_t timeout=1000){return local_.submit_key_edges(edges,count,generation,link,deadline,timeout);}
-    esp_err_t bind_owned_controller(system::OctopusId controller,uint64_t revision){return local_.bind_owned_controller(controller,revision);}
+    esp_err_t bind_owned_controller(system::OctopusId controller,uint64_t revision,system::BootId controller_boot){return local_.bind_owned_controller(controller,revision,controller_boot);}
     bool update_owned_snapshot(system::OwnedAdapterSnapshot report){return local_.update_owned_snapshot(std::move(report));}
     void forget_owned_snapshots(system::OctopusId owner){local_.forget_owned_snapshots(owner);}
     std::vector<system::OwnedAdapterSnapshot> owned_snapshots()const{return local_.owned_snapshots();}

@@ -146,17 +146,18 @@ void startup_and_minimal_handshake(){
     assert(hooks.synchronize&&hooks.control&&hooks.disconnected&&hooks.ready&&hooks.restart_session&&main.sender&&main.observer&&main.authorizer);
     assert(amity::start_configuration_synchronization(main)==ESP_OK&&task_creations==1);
     auto other=control();assert(amity::start_configuration_synchronization(other)==ESP_ERR_INVALID_STATE);
-    assert(hooks.synchronize(id<s::OctopusId>(9),1)==c::Error::unauthorized_role); // The main binds no controller.
+    assert(hooks.synchronize(id<s::OctopusId>(9),id<s::BootId>(10),1)==c::Error::unauthorized_role); // The main binds no controller.
     assert(memory.writes==0&&main.configure_calls==0&&fixture::sent.empty());
     const auto ready_owner=id<s::OctopusId>(9);assert(hooks.ready(ready_owner,1,{})&&main.refreshed_context==std::vector<s::OctopusId>{ready_owner});
     main.refresh_result=false;assert(!hooks.ready(ready_owner,1,{})&&main.refreshed_context.size()==2&&memory.writes==0&&fixture::sent.empty());
     reset();auto member=control(true);const auto original=*member.configuration.controller_octopus_id;
     assert(amity::start_configuration_synchronization(member)==ESP_OK);
     const auto saved=serialize_configuration(member.configuration);
-    assert(hooks.synchronize(original,37)==c::Error::none&&member.bound_controller==original&&member.bound_revision==37);
+    // The bind names the controller's authenticated boot along with its revision.
+    assert(hooks.synchronize(original,id<s::BootId>(10),37)==c::Error::none&&member.bound_controller==original&&member.bound_revision==37&&member.bound_boot==id<s::BootId>(10));
     assert(memory.writes==0&&member.configure_calls==0&&serialize_configuration(member.configuration)==saved);
-    assert(hooks.synchronize(original,0)==c::Error::unauthorized_role);
-    assert(hooks.synchronize(id<s::OctopusId>(99),1)!=c::Error::none&&member.bound_controller==original);
+    assert(hooks.synchronize(original,id<s::BootId>(10),0)==c::Error::unauthorized_role);
+    assert(hooks.synchronize(id<s::OctopusId>(99),id<s::BootId>(10),1)!=c::Error::none&&member.bound_controller==original);
     reset();task_ok=false;auto unavailable=control();assert(amity::start_configuration_synchronization(unavailable)==ESP_ERR_NO_MEM&&amity::state.control==nullptr);
     assert(!hooks.synchronize&&!hooks.control&&!hooks.disconnected&&!hooks.ready&&!hooks.restart_session);
     assert(!unavailable.sender&&!unavailable.observer&&!unavailable.authorizer);
@@ -405,7 +406,7 @@ void report_coalescing_and_no_intent_backlog(){
     auto local=report(member.identity,member.boot);member.snapshots={local};
     const auto original=*member.configuration.controller_octopus_id;peers={remote(2,12,1,1)};assert(peers[0].id==original);
     // Binding the controller republishes every adapter as an ordinary result.
-    assert(hooks.synchronize(original,23)==c::Error::none&&amity::state.dirty_reports==1);
+    assert(hooks.synchronize(original,id<s::BootId>(10),23)==c::Error::none&&amity::state.dirty_reports==1);
     amity::flush_reports();assert(packets.size()==1&&!amity::state.dirty_reports);
     // Observations coalesce into one mark; the send reads the latest report.
     member.observer(local);local.discovery_generation=4;member.snapshots={local};member.observer(local);assert(amity::state.dirty_reports==1);
@@ -426,7 +427,7 @@ void dropped_report_republishes_latest(){
     auto decoded=[&](const std::string& payload){s::OwnedAdapterSnapshot value;const auto body=json(payload);assert(c::parse_owned_snapshot(*body.get("snapshot"),value));return value;};
     // Without a bound controller there is nowhere to report.
     member.observer(latest);amity::flush_reports();assert(packets.empty()&&!amity::state.dirty_reports);
-    assert(hooks.synchronize(controller,23)==c::Error::none);amity::flush_reports();
+    assert(hooks.synchronize(controller,id<s::BootId>(10),23)==c::Error::none);amity::flush_reports();
     assert(packets.size()==1&&packets.back().owner==controller&&decoded(packets.back().payload).discovery_generation==3);
     // The link dropped the queued report. Only the adapter comes back; the
     // worker sends the current cache rather than the payload that expired.
