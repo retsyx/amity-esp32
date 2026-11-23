@@ -947,7 +947,9 @@ struct HubService::Impl : Adapter {
         if(!admit_unadmitted_selection(owner))std::rotate(unadmitted_selection_owners.begin(),unadmitted_selection_owners.begin()+1,unadmitted_selection_owners.end());
     }
     bool refresh_selection_context(system::OctopusId owner){
-        if(!shared_selection||owner==octopus)return activity_hub.refresh_owned_context(owner);
+        // Every member adopts no activity when it binds to this main boot. Only
+        // a selection made since this boot has anything to offer.
+        if(!shared_selection||owner==octopus)return true;
         if(std::find(activity_owners.begin(),activity_owners.end(),owner)==activity_owners.end()&&
            std::none_of(active_selectors.begin(),active_selectors.end(),[&](const auto& item){return item.target.port.octopus_id==owner;}))return true;
         // A newer accepted selection is queued. Its broadcast must establish

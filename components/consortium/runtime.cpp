@@ -868,10 +868,12 @@ void context_capture_completed(const LinkScope& scope,model::OwnedContextResult 
     for(auto& active:links)if(!active->cancelled&&!active->retiring&&!active->restart_requested&&!active->execution_fenced&&active->ready){
         std::lock_guard<std::mutex> queue(active->mutex);
         if(!(active->session.scope()==scope))continue;
-        // Empty selector sets publish successfully without an outbound context.
-        // Finish the revision refresh, but keep positive work gated until an
-        // actual current context enters the link FIFO. Leave the accepted
-        // request parked so an empty capture is not repeated on every operational turn.
+        // A capture with nothing to offer publishes successfully without an
+        // outbound context: no selection since this main booted, or none that
+        // involves this owner. Finish the revision refresh, but keep positive
+        // work gated until an actual current context enters the link FIFO.
+        // Leave the accepted request parked so an empty capture is not repeated
+        // on every operational turn.
         if(result==model::OwnedContextResult::published){if(scope.config_revision==configuration)active->refreshing=false;continue;}
         // A stale or failed capture put nothing on this link. Unless a current
         // context has entered it since, ask again on this same logical

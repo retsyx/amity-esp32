@@ -241,8 +241,8 @@ if(AMITY_HOST_TESTS MATCHES "^(all|standalone)$")
         INCLUDES ${hub_includes}
         LIBS amity_model
         SCENARIOS one-adapter one-adapter-hold two-adapters unreferenced-adapter roster-only reselect-after-forced-standby
-            member-settings shared-after-forced-standby reboot-mid-recipe standby-after-reboot dropped-equipment outage-keeps-activity
-            release-before-adoption)
+            member-settings shared-after-forced-standby reboot-mid-recipe standby-after-reboot unconfigured-context dropped-equipment
+            outage-keeps-activity release-before-adoption)
     amity_test(activity_sequence_test
         SOURCES "${C}/amity_hub/hub.cpp" "${C}/amity_hub/hub_service.cpp" "${C}/ble_remote/remote_input.cpp"
             "${C}/ble_remote/siri_remote.cpp" "${T}/activity_sequence_test.cpp"

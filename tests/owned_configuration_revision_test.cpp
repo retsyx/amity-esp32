@@ -300,6 +300,30 @@ static void never_admitted_selection_idle_progress(){
     const auto removed=attempts.size();available=true;run_idle(4);
     assert(hub.refresh_owned_context(member,2));run_one_command();assert(attempts.size()==removed);
 }
+// A main boots with nothing selected, and each member adopts that when it
+// binds the new main boot. Until this boot's first selection, a link-ready
+// capture sends a member nothing, however many of its adapters, configured
+// or not, the saved equipment names. Afterwards it offers that selection.
+static void capture_without_selection_sends_nothing(){
+    const auto group=id<m::ConsortiumId>('1');const auto controller=id<m::OctopusId>('2'),member=id<m::OctopusId>('3');
+    fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
+    HubService hub;hub.set_system_identity(group,controller);hub.set_boot_identity(id<m::BootId>('4'));assert(fixture_start(hub,1,2)==ESP_OK);
+    const std::vector<m::ScopedSelector> selectors{{"display",{{group,controller,0,m::Side::front},"TV"}},
+        {"source",{{group,member,0,m::Side::back},"Source"}},{"audio",{{group,member,1,m::Side::back},"AVR"}},{"spare",{{group,member,3,m::Side::back},"Spare"}}};
+    std::vector<m::OwnedIntent> sent;
+    const auto sender=[&](const m::OwnedIntent& intent){assert(intent.config_revision==hub.executing_configuration_revision());sent.push_back(intent);return true;};
+    assert(hub.configure_scoped({{"Watch","display","source","audio","",0,id<m::ActivityId>('5')}},selectors,sender,controller,1,{},1,{member})==ESP_OK);
+    run_one_command();fixture_finish_discovery(hub);sent.clear();
+    std::vector<m::OwnedContextResult> completed;
+    assert(hub.refresh_owned_context(member,1,[&](auto result){completed.push_back(result);}));run_one_command();
+    assert(completed==std::vector<m::OwnedContextResult>{m::OwnedContextResult::published}&&sent.empty());
+    assert(fixture_select(hub,0));run_one_command();settle(hub);
+    const auto broadcast=std::count_if(sent.begin(),sent.end(),[&](const auto& intent){return intent.kind==m::OwnedIntentKind::activity&&intent.target.port.octopus_id==member;});
+    assert(broadcast==1);sent.clear();completed.clear();
+    assert(hub.refresh_owned_context(member,1,[&](auto result){completed.push_back(result);}));run_one_command();
+    assert(completed==std::vector<m::OwnedContextResult>{m::OwnedContextResult::published});
+    assert(sent.size()==1&&sent[0].kind==m::OwnedIntentKind::activity&&sent[0].selected&&!sent[0].repair&&sent[0].source==selectors[1].target);
+}
 // Two real HubService workers separated by a transport admission boundary.
 // Returning true while discarding one activity models a queued transport item
 // lost before owner admission. Recovery must produce the original CEC recipe,
@@ -589,4 +613,4 @@ static void new_controller_boot_bind_adopts_no_activity_and_restarts_generation(
     assert(owners.owner.snapshot().current_activity>=0&&owners.count(4,8,{0x44,0x6d})==2&&owners.count(4,15,{0x86,0x20,0})==2);
     assert(owners.count(4,4,{0x36})==1&&"The forgotten activity's devices get no Standby");
 }
-int main(){transport_admitted_selection_recovers_its_physical_recipe();owner_admitted_selection_survives_recovery(false);owner_admitted_selection_survives_recovery(true);same_target_selection_is_fresh_but_recovery_is_not();reselected_target_still_transitions_an_owner_that_missed_it();recovery_of_newer_queued_selection_preserves_order();conflicting_duplicate_and_stale_repair_are_rejected();standby_recovery_does_not_repeat_one_shot_repairs();new_controller_boot_cancels_old_activity_and_restarts_generation();new_controller_boot_bind_adopts_no_activity_and_restarts_generation();never_admitted_selection_delivery();never_admitted_selection_is_not_current();never_admitted_selection_idle_progress();saved_edits_preserve_current();owner_revision_preserves_admitted_press_and_hold();scoped_save_preserves_admitted_frames_and_timed_release();retired_owner_does_not_resume_admitted_activity();std::puts("PASS scoped edits preserve current activity and holds; recovery delivers lost selections once and preserves admitted local progress; duplicate recovery is nonemitting; same-target and Standby decisions remain fresh; repairs stay one-shot");}
+int main(){capture_without_selection_sends_nothing();transport_admitted_selection_recovers_its_physical_recipe();owner_admitted_selection_survives_recovery(false);owner_admitted_selection_survives_recovery(true);same_target_selection_is_fresh_but_recovery_is_not();reselected_target_still_transitions_an_owner_that_missed_it();recovery_of_newer_queued_selection_preserves_order();conflicting_duplicate_and_stale_repair_are_rejected();standby_recovery_does_not_repeat_one_shot_repairs();new_controller_boot_cancels_old_activity_and_restarts_generation();new_controller_boot_bind_adopts_no_activity_and_restarts_generation();never_admitted_selection_delivery();never_admitted_selection_is_not_current();never_admitted_selection_idle_progress();saved_edits_preserve_current();owner_revision_preserves_admitted_press_and_hold();scoped_save_preserves_admitted_frames_and_timed_release();retired_owner_does_not_resume_admitted_activity();std::puts("PASS scoped edits preserve current activity and holds; recovery delivers lost selections once and preserves admitted local progress; duplicate recovery is nonemitting; same-target and Standby decisions remain fresh; repairs stay one-shot");}

@@ -541,17 +541,16 @@ bool ActivityHub::owned(system::OwnedIntentKind kind, const std::string& value, 
     return bool(owned_sender_(intent));
 }
 
-bool ActivityHub::publish_owned_context(bool source_changed,system::OctopusId owner) {
+bool ActivityHub::publish_owned_context(bool source_changed) {
     bool admitted=true;
     const auto activity = current(); std::vector<system::CecPortRef> ports;
     for (const auto& selector : scoped_selectors_) {
-        if(owner&&selector.target.port.octopus_id!=owner)continue;
-        if(!owner&&selector.target.port.octopus_id!=scoped_owner_)continue;
+        if(selector.target.port.octopus_id!=scoped_owner_)continue;
         auto port = selector.target.port; port.side = system::Side::front;
         if (std::find(ports.begin(), ports.end(), port) != ports.end()) continue;
         ports.push_back(port);
     }
-    for(auto port:scoped_owner_ports_)if((!owner||port.octopus_id==owner)&&std::find(ports.begin(),ports.end(),port)==ports.end())ports.push_back(port);
+    for(auto port:scoped_owner_ports_)if(std::find(ports.begin(),ports.end(),port)==ports.end())ports.push_back(port);
     for(const auto& port:ports){system::OwnedIntent intent; intent.kind = system::OwnedIntentKind::context;
         intent.target.port = port; intent.generation = owned_generation_; intent.selected = selected_ >= 0;
         intent.source_changed = source_changed; intent.source = target(activity.source); intent.audio = target(activity.audio);

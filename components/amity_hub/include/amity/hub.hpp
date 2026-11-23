@@ -170,7 +170,6 @@ public:
     void selection_generation(uint64_t generation){next_owned_generation_=generation;}
     uint64_t scoped_generation() const { return owned_generation_; }
     void owned_step_result(const system::OwnedIntent&,const system::AdmissionResult&);
-    bool refresh_owned_context(system::OctopusId owner){return publish_owned_context(false,owner);}
     void scoped_audio_status(bool known, bool muted, uint8_t volume);
     bool select_activity(int index, ActionReady ready = {});
     bool press_key(uint8_t key, bool repeat = false);
@@ -195,7 +194,7 @@ private:
     void request_audio_status();
     std::optional<system::QualifiedDeviceName> target(const std::string&) const;
     bool owned(system::OwnedIntentKind, const std::string&, bool on = false, uint8_t value = 0);
-    bool publish_owned_context(bool source_changed,system::OctopusId owner={});
+    bool publish_owned_context(bool source_changed);
     Transport &transport_;
     std::vector<system::ScopedSelector> scoped_selectors_;
     OwnedDispatcher owned_sender_ = [](system::OwnedIntent&){return system::OwnedDispatchResult{};};

@@ -191,22 +191,24 @@ static void print_deliveries(const Bench& bench){
 static void expect_nothing_current(Bench& bench,const char* what){
     CHECK(bench.member.snapshot().current_activity==-1,"%s: the member has no current activity",what);
 }
-// The member adopted no activity when it bound the new main boot.
+// The member adopted no activity when it bound the new main boot, so before
+// its first selection the new main owes this member nothing.
 static void expect_new_boot_adopted(Bench& bench,m::OwnedContextResult captured){
     print_deliveries(bench);
-    CHECK(captured==m::OwnedContextResult::published,"the new main's capture publishes");
+    CHECK(captured==m::OwnedContextResult::published&&bench.delivered.empty(),"the new main's capture publishes and sends the member nothing before its first selection (deliveries=%zu)",bench.delivered.size());
     expect_nothing_current(bench,"after binding the new main boot");
 }
-// A key on the new link before any selection: the old activity's key routes
-// ended with it, so nothing is sent, and a lone release is a no-op.
+// A key on the new link before any selection: no input binding exists yet.
+// A press is refused (dropped and logged, the link stays up), a lone release
+// is a no-op, and neither sends a frame.
 static void expect_unbound_keys(Bench& bench,std::initializer_list<int> gpios){
     const auto mark=fixture_sent.size();
     const std::array<m::KeyEdge,2> down{{{0x41,true},{}}};const std::array<m::KeyEdge,2> up{{{0x41,false},{}}};
     latest_task=bench.member_task;const auto pressed=bench.member.submit_key_edges(down,1,1,second_link,0);bench.pump(3);
     latest_task=bench.member_task;const auto released=bench.member.submit_key_edges(up,1,1,second_link,0);bench.pump(3);
     print("member frames for a key on the new link",messages(mark,gpios));
-    CHECK(messages(mark,gpios).empty()&&released.code==m::AdmissionCode::accepted,
-        "a key on the new link before any selection sends nothing, and its release is a no-op (press=%d release=%d)",static_cast<int>(pressed.code),static_cast<int>(released.code));
+    CHECK(messages(mark,gpios).empty()&&pressed.code==m::AdmissionCode::stale&&released.code==m::AdmissionCode::accepted,
+        "a key on the new link before any selection is refused, its release is a no-op, and nothing is sent (press=%d release=%d)",static_cast<int>(pressed.code),static_cast<int>(released.code));
 }
 
 // One adapter: the old activity's source and AVR are on member adapter 0.
@@ -477,6 +479,29 @@ static void standby_after_reboot(){
     CHECK(count(from,3,15,{0x36})==1&&count(from,4,15,{0x36})==1&&messages(from,{3,4}).size()==2,"the member broadcasts Standby on its front and back and sends nothing else");
 }
 
+// Saved equipment names a member adapter that the member does not configure
+// (adapter 1 is unwired on this board). Before its first selection the new
+// main sends the member nothing, so nothing is refused and the link stays up.
+static void unconfigured_context(){
+    install_wire();main_tv();
+    peers.push_back({4,4,"Source",0x1100,4});
+    Bench bench(member_profile(false));
+    bench.selectors={{"tv",named(controller,m::Side::front,"TV")},{"spare",named(member_id,m::Side::back,"Spare",1)},{"source",named(member_id,m::Side::back,"Source")}};
+    bench.activities={{"Watch","tv","source","","",0}};
+    bench.owners={controller,member_id};
+    bench.start_main();bench.connect();
+    CHECK(bench.select(0),"Watch completes before the reboot");
+    bench.delivered.clear();
+    const auto captured=bench.reboot_main();
+    expect_new_boot_adopted(bench,captured);
+    CHECK(std::none_of(bench.delivered.begin(),bench.delivered.end(),[](const auto& d){return d.code==m::AdmissionCode::invalid;}),"the member refuses nothing as invalid");
+    expect_no_activity_policy(bench,3,4,4,0x1100,"adapter 0");
+    // The new main's first selection never names a connector either.
+    bench.delivered.clear();
+    CHECK(bench.select(0),"Watch completes after the reboot");
+    print_deliveries(bench);
+    CHECK(!bench.delivered.empty()&&std::all_of(bench.delivered.begin(),bench.delivered.end(),[](const auto& d){return d.code==m::AdmissionCode::accepted;}),"the member accepts every intent of the new main's first selection");
+}
 // The main comes back with a saved configuration that no longer names the
 // member's equipment (edited while the member's link was down).
 static void dropped_equipment(){
@@ -572,6 +597,7 @@ int main(int argc,char** argv){
     else if(scenario=="shared-after-forced-standby")shared_after_forced_standby();
     else if(scenario=="reboot-mid-recipe")reboot_mid_recipe();
     else if(scenario=="standby-after-reboot")standby_after_reboot();
+    else if(scenario=="unconfigured-context")unconfigured_context();
     else if(scenario=="dropped-equipment")dropped_equipment();
     else if(scenario=="outage-keeps-activity")outage_keeps_activity();
     else if(scenario=="release-before-adoption")release_before_adoption();
