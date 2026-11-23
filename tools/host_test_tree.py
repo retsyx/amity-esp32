@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Run host tests in a disposable copy of the repository.
 
-check_test_mutants.py edits a copy under test-results/, never the checkout. A
-copy holds the work tree's tracked and untracked files, or a git ref's files,
-with managed_components and build/ linked to the checkout's own.
+check_test_mutants.py and compare_test_coverage.py edit or instrument a copy
+under test-results/, never the checkout. A copy holds the work tree's tracked
+and untracked files, or a git ref's files, with managed_components and build/
+linked to the checkout's own.
 
 The Python tests compile C++ themselves, so the copy's tests run with cc and
 c++ wrappers in front of PATH and in CC and CXX. A wrapper runs the real
-compiler and records each failed compilation. Run as a script, this module is
-that wrapper: host_test_tree.py <compiler> <args>.
+compiler and, as the environment asks, records failed compilations or adds
+clang coverage flags and keeps each generated source and linked binary. Run as
+a script, this module is that wrapper: host_test_tree.py <compiler> <args>.
 """
 import json
 import os
@@ -19,8 +21,19 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
+CODE_SUFFIXES = {'.c', '.cc', '.cpp', '.cxx', '.h', '.hh', '.hpp', '.inc', '.ipp'}
+SOURCE_SUFFIXES = {'.c', '.cc', '.cpp', '.cxx'}
+COVERAGE_FLAGS = ['-fprofile-instr-generate', '-fcoverage-mapping', '-Wno-unused-command-line-argument']
+# Compiler options whose value is the next argument.
+VALUE_OPTIONS = {'-o', '-I', '-D', '-U', '-include', '-imacros', '-isystem', '-iquote', '-idirafter', '-isysroot',
+                 '-MF', '-MT', '-MQ', '-x', '-arch', '-target', '-Xlinker', '-Xclang', '-Xpreprocessor', '-L',
+                 '-framework', '-u', '-e'}
+# A generated source's directory is kept whole unless it holds more files than this.
+SNAPSHOT_LIMIT = 400
 
 
 class Failure(Exception):
@@ -176,10 +189,94 @@ def find_compiler(name, environment_variable=None):
     return found
 
 
+def compile_records(keep):
+    """Return the coverage wrapper's records, oldest first."""
+    log = Path(keep) / 'compiles.jsonl'
+    if not log.exists():
+        return []
+    records = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
+    return sorted(records, key=lambda record: record['time'])
+
+
+def _arguments(args):
+    """Split compiler arguments into (positional inputs, output or None, mode)."""
+    inputs, output, mode, skip = [], None, 'link', False
+    for index, argument in enumerate(args):
+        if skip:
+            skip = False
+            continue
+        if argument in VALUE_OPTIONS:
+            skip = True
+            if argument == '-o' and index + 1 < len(args):
+                output = args[index + 1]
+        elif argument.startswith('-o') and len(argument) > 2:
+            output = argument[2:]
+        elif argument == '-c':
+            mode = 'compile'
+        elif argument in ('-E', '-S', '-fsyntax-only', '-M', '-MM') and mode != 'compile':
+            mode = 'other'
+        elif not argument.startswith('-'):
+            inputs.append(argument)
+    return inputs, output, mode
+
+
+def _snapshot(directory):
+    """Return the code files under directory, or None when there are more than SNAPSHOT_LIMIT."""
+    found = []
+    for parent, directories, files in os.walk(directory):
+        directories[:] = [name for name in directories if name not in ('CMakeFiles', '.git')]
+        for name in files:
+            if Path(name).suffix in CODE_SUFFIXES:
+                found.append(Path(parent) / name)
+                if len(found) > SNAPSHOT_LIMIT:
+                    return None
+    return found
+
+
+def _keep(keep, args):
+    """Keep the generated sources and linked binary of a successful coverage compilation."""
+    cwd = Path.cwd()
+    tree = Path(os.environ['AMITY_WRAPPER_TREE'])
+    stamp = f'{time.time_ns()}-{os.getpid()}'
+    inputs, output, mode = _arguments(args)
+    if mode == 'other':
+        return
+    temporary = Path(tempfile.gettempdir()).resolve()
+    snapshot = {}
+    for source in (cwd / name for name in inputs if Path(name).suffix in SOURCE_SUFFIXES):
+        source = source.resolve()
+        # Python tests write their sources to a temporary directory or under test-results/.
+        generated = source.is_relative_to(tree / 'test-results') or (
+            source.is_relative_to(temporary) and not source.is_relative_to(ROOT))
+        if not generated or source.is_relative_to(keep) or str(source) in snapshot:
+            continue
+        files = _snapshot(source.parent) or [source]
+        for path in files:
+            copy = keep / 'sources' / stamp / path.relative_to(path.anchor)
+            copy.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, copy)
+            snapshot[str(path)] = str(copy)
+    record = {'time': time.time_ns(), 'mode': mode, 'snapshot': snapshot,
+              'objects': [str((cwd / name).resolve()) for name in inputs if Path(name).suffix in ('.o', '.obj')]}
+    if mode == 'compile':
+        sources = [name for name in inputs if Path(name).suffix in SOURCE_SUFFIXES]
+        if output or len(sources) == 1:
+            record['output'] = str((cwd / (output or Path(sources[0]).with_suffix('.o').name)).resolve())
+    elif mode == 'link':
+        binary = (cwd / (output or 'a.out')).resolve()
+        copy = keep / 'binaries' / f'{stamp}-{binary.name}'
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(binary, copy)
+        record.update(output=str(binary), binary=str(copy))
+    with open(keep / 'compiles.jsonl', 'a') as log:
+        log.write(json.dumps(record) + '\n')
+
+
 def compile_main(real, args):
-    """Run the real compiler, record a failure where the environment asks, and return its status."""
+    """Run the real compiler as the wrapper's environment asks and return its status."""
+    coverage = os.environ.get('AMITY_WRAPPER_COVERAGE')
     failures = os.environ.get('AMITY_WRAPPER_FAILURES')
-    command = shlex.split(real) + args
+    command = shlex.split(real) + (COVERAGE_FLAGS if coverage else []) + args
     result = subprocess.run(command, stderr=subprocess.PIPE if failures else None)
     status = result.returncode
     if failures:
@@ -191,6 +288,12 @@ def compile_main(real, args):
                        if re.search(r'(^|[\s:])error:', line)]
         with open(failures, 'a') as log:
             log.write(json.dumps({'cwd': os.getcwd(), 'command': command, 'errors': diagnostics[:3]}) + '\n')
+    if not status and coverage:
+        try:
+            _keep(Path(coverage), args)
+        except OSError as error:  # Reported by the coverage tool; the compilation itself succeeded.
+            with open(Path(coverage) / 'wrapper-errors.log', 'a') as log:
+                log.write(f'{shlex.join(command)}: {error}\n')
     return status
 
 
