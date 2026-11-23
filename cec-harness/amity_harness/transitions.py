@@ -9,7 +9,7 @@ import math
 import threading
 import time
 
-from .components import TvComponent
+from .components import AvrComponent, PlaybackComponent, TvComponent
 
 
 class _WireObservation:
@@ -246,3 +246,79 @@ class _NoStandby(_WireObservation):
 def observe_no_standby(*components):
     """Observe selected equipment before a repair or source announcement."""
     return _NoStandby(components)
+
+
+class _NoWake(_WireObservation):
+    @classmethod
+    def _wakes(cls, component, frame):
+        """Whether ``frame`` would bring ``component`` out of Standby.
+
+        Image/Text View On and the Power, Power Toggle and Power On Function
+        keys count for all equipment, and a toggle counts whatever the current
+        state. The equipment models also wake a player on Play, a Play key or
+        a Set Stream Path to its address, and an AVR on System Audio Mode Request.
+        """
+        if cls._power(component, frame) in ("on", "toggle"):
+            return True
+        opcode, operands = frame.opcode, frame.operands
+        if isinstance(component, PlaybackComponent):
+            if frame.destination == 15:
+                return opcode == 0x86 and operands == component.address.physical.to_bytes(2, "big")
+            return frame.destination == component.address.logical and (
+                opcode == 0x41 and len(operands) == 1 or opcode == 0x44 and operands in (b"\x44", b"\x60"))
+        return (isinstance(component, AvrComponent) and frame.destination == component.address.logical
+                and opcode == 0x70 and len(operands) == 2)
+
+    def assert_no_wake_after(self, announcement, *, standby, hold):
+        """Reject wake-ups from a source's announcement through a Standby hold.
+
+        ``standby`` is the source's wait_for_power proof of the Standby frame
+        that answered the announcement. The hold lasts ``hold`` seconds from
+        that frame's wire timestamp, and every observed wire is drained
+        through its end. Any frame that ``_wakes`` observed equipment fails;
+        Standby, directed or broadcast, is allowed.
+        """
+        if (isinstance(hold, bool) or not isinstance(hold, (int, float))
+                or not math.isfinite(hold) or hold <= 0):
+            raise ValueError("A Standby hold needs a positive finite duration")
+        source = trigger = None
+        for component in self.components:
+            try:
+                trigger = component._activation_timestamp(announcement, exact_component=True)
+            except AssertionError:
+                continue
+            source = component
+            break
+        if source is None:
+            raise AssertionError("No-wake observation needs a physical Active Source from observed equipment")
+        standby_ns = standby.get("wire_timestamp_ns") if isinstance(standby, dict) else None
+        if (type(standby_ns) is not int or standby_ns < trigger or standby.get("kind") != "wire_command"
+                or standby.get("command") != "standby" or standby.get("power") != "standby"):
+            raise AssertionError("The Standby hold needs the source's fresh physical Standby proof")
+        hold_ns = int(hold * 1_000_000_000)
+        session, started, ended, wires, frames = self._complete(trigger, through=standby_ns + hold_ns)
+        if not any(component is source and frame.timestamp_ns == standby_ns
+                   and frame.raw.hex(":") == standby.get("frame") and self._power(component, frame) == "standby"
+                   for component, frame in frames):
+            raise AssertionError("The source's Standby proof does not match an observed physical frame")
+        for component, frame in frames:
+            if self._wakes(component, frame):
+                raise AssertionError(f"{component.name} received waking command {frame.raw.hex(':')} "
+                                     "while equipment should remain in Standby")
+        proof = {"kind": "wire_no_wake", "power": "standby", "timestamp_ns": time.monotonic_ns(),
+                 "since_monotonic_ns": started, "trigger_wire_timestamp_ns": trigger,
+                 "trigger_frame": announcement.frame.raw.hex(":"),
+                 "standby_wire_timestamp_ns": standby_ns, "hold_ns": hold_ns,
+                 "observation_end_monotonic_ns": ended, "observed_wires": sorted(wires),
+                 "idle_receive_since_ns": {str(gpio): session._wire_idle_since_ns[gpio] for gpio in wires}}
+        for component in self.components:
+            with component._power_condition:
+                component._power_checks.append(dict(proof))
+            component._trace("component.no_wake.assert_passed", **proof)
+        self._checked = True
+        return self
+
+
+def observe_no_wake(*components):
+    """Observe equipment in Standby before a source announces during standby."""
+    return _NoWake(components)

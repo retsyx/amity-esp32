@@ -82,7 +82,9 @@ explicitly; see [Run functional tests](#run-functional-tests) and
   repairs the same activity after a power/input disturbance, then verifies
   standby using physical component power commands. It checks that the selected
   source's Active Source announcement causes no Standby, and that an announcement
-  during global standby receives broadcast Standby without changing selection.
+  during global standby receives broadcast Standby, with no command from Amity
+  that would wake any equipment from the announcement until three seconds after
+  that Standby.
   Its separate cases cover passive discovery of never-selected equipment during
   standby, switch input and local/member key routing.
   Starts and repairs also require a fresh front-wire Active Source from Amity

@@ -58,6 +58,7 @@ _POWER_FIELDS = frozenset(("command", "requested_power", "frame", "source", "des
 _POWER_ASSERTION_FIELDS = frozenset(("kind", "power", "timestamp_ns", "since_monotonic_ns", "frame",
                                      "source", "destination", "wire_timestamp_ns", "command",
                                      "trigger_wire_timestamp_ns", "trigger_frame", "max_elapsed_ns", "response_latency_ns",
+                                     "standby_wire_timestamp_ns", "hold_ns",
                                      "observation_end_monotonic_ns", "observed_wires", "idle_receive_since_ns"))
 _ROUTING_FIELDS = frozenset(("opcode", "physical_address", "input", "command", "frame", "source", "destination", "transport",
                             "wire_timestamp_ns", "processed_monotonic_ns", "state_revision",

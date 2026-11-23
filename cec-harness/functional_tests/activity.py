@@ -10,8 +10,11 @@ from functional_tests.hdmi_scan import scanned_devices
 from functional_tests.qualified_names import same_name_equipment, exercise_qualified_activities
 from amity_harness.recovery import LookupScans, assert_returned
 from amity_harness.activity_edits import ActiveActivityEdits, ActivityEditObservation
-from amity_harness.transitions import ActivityDisplayStandby, observe_no_standby
+from amity_harness.transitions import ActivityDisplayStandby, observe_no_standby, observe_no_wake
 from amity_harness.qualified_names import observe_no_control
+
+# Equipment must stay in Standby this long after a thief's Standby.
+STANDBY_HOLD_SECONDS = 3
 
 
 def setup_step_gap(records, initiators, wires, *, since, through):
@@ -136,20 +139,16 @@ def test_activity():
 
             # The former source is now a thief: global standby broadcasts
             # Standby rather than selecting an activity or a directed response.
-            announcement = player.activate()
-            assert announcement.ok
-            player.wait_for_power(PowerState.STANDBY, since=announcement.timestamp_ns,
-                                  command="standby", broadcast=True)
+            # Amity must then send nothing that would wake any equipment for the hold.
+            with observe_no_wake(*components) as asleep:
+                announcement = player.activate()
+                assert announcement.ok
+                player.wait_for_power(PowerState.STANDBY, since=announcement.timestamp_ns,
+                                      command="standby", broadcast=True)
+                asleep.assert_no_wake_after(announcement, standby=player.power_assertions[-1],
+                                            hold=STANDBY_HOLD_SECONDS)
             for component in components:
                 component.assert_power(PowerState.STANDBY)
-            def standby_preserved(state):
-                # The received frame can precede TX-completion publication.
-                # Suppression must retain Standby throughout that completion,
-                # which finishes within the CEC budget of the received frame.
-                assert state["current_activity"] == -1
-                return state["activity_settling"] is False
-
-            dut.wait_for(standby_preserved, timeout=dut._runtime.cec_timeout)
 
 
 def test_activity_no_display():

@@ -11,8 +11,9 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from amity_harness import AvrComponent, CecSession, DUT, Frame, Hooks, PlaybackComponent, TestBed, TvComponent, TxResult
-from amity_harness.transitions import ActivityDisplayStandby, ActivityHandoff, observe_no_standby
+from amity_harness import (AvrComponent, CecSession, DUT, Frame, Hooks, PlaybackComponent, PowerState, TestBed,
+                           TvComponent, TxResult)
+from amity_harness.transitions import ActivityDisplayStandby, ActivityHandoff, observe_no_standby, observe_no_wake
 from unit_tests.virtual_time import use_virtual_time
 
 
@@ -395,6 +396,295 @@ class ActivityDisplayStandbyTests(unittest.TestCase):
                           TvComponent(dut.tentacle(0).back, "Back TV"), None, ()):
             with self.subTest(component=component), self.assertRaises(ValueError):
                 ActivityDisplayStandby(component)
+
+
+class NoWakeTests(unittest.TestCase):
+    """A thief during global standby: its Standby, then no wake-up for the hold."""
+
+    hold = 3
+    hold_ns = 3_000_000_000
+    # Image/Text View On and the power keys, which count for all equipment.
+    power_on = ((0x04, b""), (0x0d, b""), (0x44, b"\x40"), (0x44, b"\x6b"), (0x44, b"\x6d"))
+    # What the equipment models also obey as a wake-up: (component, opcode,
+    # operands, broadcast), where None operands are the player's physical address.
+    model_wakes = (("avr", 0x70, None, False), ("player", 0x41, b"\x24", False), ("player", 0x44, b"\x44", False),
+                   ("player", 0x44, b"\x60", False), ("player", 0x86, None, True))
+
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
+    @contextmanager
+    def fixture(self, observed=("tv", "avr", "player")):
+        dut = DUT("amity-dut-4")
+        tv = TvComponent(dut.tentacle(0).front, "Sleeping TV")
+        avr = AvrComponent(dut.tentacle(0).back, "Sleeping AVR")
+        player = PlaybackComponent(avr, "Former Source", port=1)
+        other = TvComponent(dut.tentacle(1).front, "Unobserved TV")
+        with CecSession((tv, avr, player, other), backend_factory=IdleWire) as session:
+            initiators = {tv.gpio: 4, avr.gpio: 0, other.gpio: 4}
+            dut.last_scan = SimpleNamespace(initiators=initiators, _session=session)
+            f = SimpleNamespace(tv=tv, avr=avr, player=player, other=other, session=session, initiators=initiators)
+            f.observation = observe_no_wake(*(getattr(f, name) for name in observed))
+            with f.observation:
+                yield f
+
+    def wire(self, f, component, opcode, operands=b"", *, destination=None, source=None, timestamp=None):
+        """Deliver one received frame to every component on a wire, as the session worker does."""
+        frame = Frame(f.initiators[component.gpio] if source is None else source,
+                      component.address.logical if destination is None else destination, opcode, operands,
+                      timestamp_ns=time.monotonic_ns() if timestamp is None else timestamp)
+        with f.session._lock:
+            for peer in f.session.components:
+                if peer.gpio == component.gpio:
+                    peer.receive(frame)
+        return frame
+
+    def thief(self, f, *before):
+        """The former source announces; Amity broadcasts Standby on both wires.
+
+        ``before`` callables deliver frames right after the announcement. As
+        on the bench, the front Standby follows about 60 ms later and the
+        source's Standby about 120 ms after the announcement.
+        """
+        announcement = f.player.activate()
+        self.assertTrue(announcement.ok)
+        for deliver in before:
+            deliver()
+        time.sleep(0.06)
+        self.wire(f, f.tv, 0x36, destination=15)
+        time.sleep(0.06)
+        standby = self.wire(f, f.player, 0x36, destination=15)
+        f.player.wait_for_power(PowerState.STANDBY, since=announcement.timestamp_ns, command="standby", broadcast=True)
+        return announcement, standby, f.player.power_assertions[-1]
+
+    def check(self, f, announcement, proof, *, at=None, deliver=None):
+        """Run the hold check while another thread calls ``deliver`` at ``at``."""
+        delivered = []
+        timer = None
+        if at is not None:
+            timer = threading.Timer(max(0, at - time.monotonic_ns()) / 1e9, lambda: delivered.append(deliver()))
+            timer.start()
+        try:
+            f.observation.assert_no_wake_after(announcement, standby=proof, hold=self.hold)
+        finally:
+            if timer is not None:
+                timer.join()
+        return delivered
+
+    def wakes(self):
+        """Every waking command as (component, opcode, operands, broadcast)."""
+        return [(name, opcode, operands, False) for name in ("tv", "avr", "player")
+                for opcode, operands in self.power_on] + list(self.model_wakes)
+
+    def test_standby_alone_passes_after_the_hold_and_retains_drain_proof(self):
+        with self.fixture() as f:
+            announcement, standby, proof = self.thief(f)
+            # wait_for_power leaves the proof of the Standby that answered the thief last.
+            self.assertEqual({key: proof[key] for key in ("kind", "command", "frame", "destination", "wire_timestamp_ns")},
+                             {"kind": "wire_command", "command": "standby", "frame": "0f:36", "destination": 15,
+                              "wire_timestamp_ns": standby.timestamp_ns})
+            self.assertGreaterEqual(standby.timestamp_ns - announcement.timestamp_ns, 120_000_000)
+            for component in (f.tv, f.avr, f.player):
+                self.wire(f, component, 0x36)
+                self.wire(f, component, 0x8f)
+            self.wire(f, f.avr, 0x36, destination=15)
+            self.assertIs(f.observation.assert_no_wake_after(announcement, standby=proof, hold=self.hold), f.observation)
+            end = standby.timestamp_ns + self.hold_ns
+            self.assertGreaterEqual(time.monotonic_ns(), end)
+            for component in (f.tv, f.avr, f.player):
+                row = component.power_assertions[-1]
+                self.assertEqual(row["kind"], "wire_no_wake")
+                self.assertEqual((row["since_monotonic_ns"], row["trigger_wire_timestamp_ns"]),
+                                 (announcement.timestamp_ns, announcement.timestamp_ns))
+                self.assertEqual(row["trigger_frame"], announcement.frame.raw.hex(":"))
+                self.assertEqual((row["standby_wire_timestamp_ns"], row["hold_ns"]), (standby.timestamp_ns, self.hold_ns))
+                self.assertGreaterEqual(row["observation_end_monotonic_ns"], end)
+                self.assertEqual(row["observed_wires"], sorted({f.tv.gpio, f.avr.gpio}))
+                for gpio in row["observed_wires"]:
+                    self.assertGreaterEqual(row["idle_receive_since_ns"][str(gpio)], row["observation_end_monotonic_ns"])
+            report = TestBed(f.tv, f.avr, f.player).report
+            for row in report["components"]:
+                reported = row["power_assertions"][-1]
+                self.assertEqual(reported["kind"], "wire_no_wake")
+                self.assertEqual((reported["standby_wire_timestamp_ns"], reported["hold_ns"]),
+                                 (standby.timestamp_ns, self.hold_ns))
+                self.assertGreaterEqual(reported["observation_end_monotonic_ns"], end)
+            for component in (f.tv, f.avr, f.player):
+                component.assert_power(PowerState.STANDBY)
+        self.assertFalse(any(component._wire_observers for component in (f.tv, f.avr, f.player)))
+
+    def test_each_wake_fails_before_the_sources_standby_and_inside_the_hold(self):
+        for name, opcode, operands, broadcast in self.wakes():
+            for phase in ("before", "hold"):
+                with self.subTest(component=name, opcode=opcode, operands=operands, phase=phase):
+                    with self.assertRaises(AssertionError) as raised:
+                        with self.fixture() as f:
+                            target = getattr(f, name)
+                            payload = f.player.address.physical.to_bytes(2, "big") if operands is None else operands
+                            frame = Frame(f.initiators[target.gpio], 15 if broadcast else target.address.logical,
+                                          opcode, payload)
+                            expected = f"{target.name} received waking command {frame.raw.hex(':')} "
+
+                            def deliver():
+                                return self.wire(f, target, opcode, payload, destination=frame.destination)
+
+                            if phase == "before":
+                                announcement, standby, proof = self.thief(f, deliver)
+                                self.check(f, announcement, proof)
+                            else:
+                                announcement, standby, proof = self.thief(f)
+                                self.check(f, announcement, proof, at=standby.timestamp_ns + self.hold_ns - 100_000_000,
+                                           deliver=deliver)
+                    self.assertIn(expected, str(raised.exception))
+                    self.assertFalse(any(component._wire_observers for component in (f.tv, f.avr, f.player)))
+
+    def test_wake_that_a_later_standby_reverses_fails_even_when_hidden(self):
+        # The final state alone cannot show a wake-up that a later Standby
+        # undoes, such as a player re-routed after its Standby.
+        for name, opcode, operands, broadcast in (("player", 0x44, b"\x6d", False), ("player", 0x86, None, True)):
+            for hidden in (False, True):
+                with self.subTest(component=name, opcode=opcode, hidden=hidden):
+                    with self.assertRaisesRegex(AssertionError, "received waking command"):
+                        with self.fixture() as f:
+                            target = getattr(f, name)
+                            payload = f.player.address.physical.to_bytes(2, "big") if operands is None else operands
+                            announcement, standby, proof = self.thief(f)
+                            target.hooks = Hooks(before_rx=(lambda component, frame: None) if hidden else None)
+                            self.wire(f, target, opcode, payload, destination=15 if broadcast else None)
+                            self.assertEqual(target.power, PowerState.STANDBY if hidden else PowerState.ON)
+                            target.hooks = Hooks()
+                            self.wire(f, target, 0x36, destination=15)
+                            target.assert_power(PowerState.STANDBY)
+                            self.check(f, announcement, proof)
+
+    def test_other_initiators_unobserved_wires_virtual_and_late_frames_are_ignored(self):
+        with self.fixture() as f:
+            announcement, standby, proof = self.thief(f)
+            self.wire(f, f.tv, 0x04, source=8)
+            self.wire(f, f.other, 0x04)
+            f.player.receive(Frame(0, f.player.address.logical, 0x44, b"\x6d", timestamp_ns=time.monotonic_ns()),
+                             transport="virtual")
+            late, = self.check(f, announcement, proof, at=standby.timestamp_ns + self.hold_ns + 10_000_000,
+                               deliver=lambda: self.wire(f, f.avr, 0x44, b"\x6d"))
+            row = f.avr.power_assertions[-1]
+            self.assertEqual(row["kind"], "wire_no_wake")
+            # Observed after the window but before the verdict, and still ignored.
+            self.assertLess(row["observation_end_monotonic_ns"], late.timestamp_ns)
+            self.assertLess(late.timestamp_ns, row["timestamp_ns"])
+            self.assertEqual((f.tv.power, f.other.power, f.avr.power), (PowerState.ON,) * 3)
+
+    def test_hold_counts_from_the_sources_standby_not_the_announcement(self):
+        # The source's Standby follows its announcement by about 120 ms, so
+        # this frame lies past a hold counted from the announcement.
+        with self.assertRaisesRegex(AssertionError, "Sleeping AVR received waking command 05:44:6d"):
+            with self.fixture() as f:
+                announcement, standby, proof = self.thief(f)
+                at = announcement.timestamp_ns + self.hold_ns + 60_000_000
+                self.assertLess(at, standby.timestamp_ns + self.hold_ns)
+                self.check(f, announcement, proof, at=at, deliver=lambda: self.wire(f, f.avr, 0x44, b"\x6d"))
+
+    def test_hold_runs_to_its_end_and_drains_every_observed_wire(self):
+        with self.assertRaisesRegex(AssertionError, "Sleeping TV received waking command 40:04"):
+            with self.fixture() as f:
+                announcement, standby, proof = self.thief(f)
+                self.check(f, announcement, proof, at=standby.timestamp_ns + self.hold_ns - 1_000_000,
+                           deliver=lambda: self.wire(f, f.tv, 0x04))
+        waited = []
+        with self.assertRaisesRegex(TimeoutError, "did not drain"):
+            with self.fixture() as f:
+                announcement, standby, proof = self.thief(f)
+                blocked = f.avr.gpio
+
+                class Undrained(dict):
+                    def __setitem__(self, gpio, polled_ns):
+                        if gpio != blocked:
+                            super().__setitem__(gpio, polled_ns)
+
+                with f.session._lock:
+                    f.session._wire_idle_since_ns = Undrained(f.session._wire_idle_since_ns)
+                try:
+                    self.check(f, announcement, proof)
+                finally:
+                    waited.append(time.monotonic_ns() - standby.timestamp_ns)
+        self.assertGreater(waited[0], self.hold_ns)
+
+    def test_hold_starts_at_the_sources_observed_physical_standby(self):
+        relabelled = {"kind": "state", "command": "power_off_function", "power": "on"}
+        for fault in ("stale", "state", "missing", *relabelled, "other_component"):
+            expected = "does not match an observed" if fault == "other_component" else "fresh physical Standby proof"
+            with self.subTest(fault=fault), self.assertRaisesRegex(AssertionError, expected):
+                with self.fixture() as f:
+                    announcement, standby, proof = self.thief(f)
+                    if fault == "stale":
+                        proof = {**proof, "wire_timestamp_ns": announcement.timestamp_ns - 1}
+                    elif fault == "state":
+                        proof = f.player.assert_power(PowerState.STANDBY).power_assertions[-1]
+                    elif fault == "missing":
+                        proof = None
+                    elif fault in relabelled:
+                        proof = {**proof, fault: relabelled[fault]}
+                    else:
+                        f.tv.wait_for_power(PowerState.STANDBY, since=announcement.timestamp_ns, command="standby",
+                                            broadcast=True)
+                        proof = f.tv.power_assertions[-1]
+                    self.check(f, announcement, proof)
+        for hold in (0, -1, float("nan"), float("inf"), True, "3", None):
+            with self.subTest(hold=hold), self.assertRaises(ValueError):
+                with self.fixture() as f:
+                    f.observation.assert_no_wake_after(None, standby=None, hold=hold)
+        for wrong in ("unobserved", "failed", "virtual"):
+            with self.subTest(wrong=wrong), self.assertRaisesRegex(AssertionError, "physical Active Source"):
+                with self.fixture(("tv", "avr") if wrong == "unobserved" else ("tv", "avr", "player")) as f:
+                    announcement, standby, proof = self.thief(f)
+                    if wrong != "unobserved":
+                        announcement = TxResult(announcement.frame, 0 if wrong == "failed" else 1, announcement.timestamp_ns,
+                                                "virtual" if wrong == "virtual" else "wire")
+                    self.check(f, announcement, proof)
+
+
+class SleepingModelTests(unittest.TestCase):
+    """The no-wake check rejects every frame that wakes a sleeping equipment model.
+
+    It runs in real time, because the sweep reads the clock more often between
+    waits than the virtual clock permits.
+    """
+
+    def test_every_frame_that_wakes_a_sleeping_model_is_rejected(self):
+        dut = DUT("amity-dut-4")
+        tv = TvComponent(dut.tentacle(0).front, "Sleeping TV")
+        avr = AvrComponent(dut.tentacle(0).back, "Sleeping AVR")
+        player = PlaybackComponent(avr, "Former Source", port=1)
+        classify = observe_no_wake(tv, avr, player)._wakes
+        waking, rejected = set(), set()
+        with CecSession((tv, avr, player), backend_factory=IdleWire) as session:
+            initiators = {tv.gpio: 4, avr.gpio: 0}
+            addresses = sorted({component.address.physical for component in (tv, avr, player)} | {0x2000, 0xffff})
+            payloads = ([b""] + [address.to_bytes(2, "big") for address in addresses]
+                        + [b"\x11\x00\x04", b"\x00\x00\x01\x00"])
+            # Every opcode from Amity's initiator, also with each one-byte
+            # operand when directed: no model handles a one-byte broadcast.
+            for component in (tv, avr, player):
+                # Only the resulting power state matters, so replies are dropped.
+                component.hooks = Hooks(before_tx=lambda component, frame: None)
+                for destination, extra in ((component.address.logical, [bytes([value]) for value in range(256)]),
+                                           (15, [])):
+                    for opcode in range(256):
+                        for operands in payloads + extra:
+                            frame = Frame(initiators[component.gpio], destination, opcode, operands,
+                                          timestamp_ns=time.monotonic_ns())
+                            with session._lock:
+                                component.standby()
+                                component.receive(frame)
+                                if component.power == PowerState.ON:
+                                    waking.add((component.name, frame.raw.hex(":")))
+                            if classify(component, frame):
+                                rejected.add((component.name, frame.raw.hex(":")))
+                with session._lock:
+                    component.standby()
+        self.assertEqual(waking - rejected, set())
+        # Image and Text View On ask any equipment to turn on, though only the TV model obeys them.
+        self.assertEqual(rejected - waking, {(avr.name, "05:04"), (avr.name, "05:0d"),
+                                             (player.name, "04:04"), (player.name, "04:0d")})
 
 
 if __name__ == "__main__":
