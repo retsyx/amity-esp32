@@ -1,0 +1,1076 @@
+{
+  "ctest": "^consortium_tls_link_test\\.",
+  "targets": [
+    "consortium_tls_link_test"
+  ],
+  "baseline": {
+    "ctest": "^consortium_tls_(receive|rejection)_test\\.py$",
+    "targets": []
+  },
+  "mutants": [
+    {
+      "id": "stub-send_socket-empty",
+      "check": "stub: early return from send_socket()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "int send_socket(void *ctx,const uint8_t *data,size_t size){",
+      "replace": "int send_socket(void *ctx,const uint8_t *data,size_t size){ return {};"
+    },
+    {
+      "id": "stub-receive_socket-empty",
+      "check": "stub: early return from receive_socket()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "int receive_socket(void *ctx,uint8_t *data,size_t size){",
+      "replace": "int receive_socket(void *ctx,uint8_t *data,size_t size){ return {};"
+    },
+    {
+      "id": "stub-reject_handshake-return",
+      "check": "stub: early return from reject_handshake()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "void reject_handshake(mbedtls_ssl_context &ssl,int socket,bool server,int reason){",
+      "replace": "void reject_handshake(mbedtls_ssl_context &ssl,int socket,bool server,int reason){ return;"
+    },
+    {
+      "id": "stub-handshake-false",
+      "check": "stub: early return from handshake()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "bool TlsLink::handshake(){",
+      "replace": "bool TlsLink::handshake(){ return false;"
+    },
+    {
+      "id": "stub-handshake-true",
+      "check": "stub: early return from handshake()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "bool TlsLink::handshake(){",
+      "replace": "bool TlsLink::handshake(){ return true;"
+    },
+    {
+      "id": "stub-send-false",
+      "check": "stub: early return from send()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "bool TlsLink::send(std::string_view body,bool bulk){",
+      "replace": "bool TlsLink::send(std::string_view body,bool bulk){ return false;"
+    },
+    {
+      "id": "stub-send-true",
+      "check": "stub: early return from send()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "bool TlsLink::send(std::string_view body,bool bulk){",
+      "replace": "bool TlsLink::send(std::string_view body,bool bulk){ return true;"
+    },
+    {
+      "id": "stub-receive_failed-empty",
+      "check": "stub: early return from receive_failed()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "TlsLink::ReceiveResult TlsLink::receive_failed(TlsReceiveDiagnostic::Cause cause,int code,uint64_t now){",
+      "replace": "TlsLink::ReceiveResult TlsLink::receive_failed(TlsReceiveDiagnostic::Cause cause,int code,uint64_t now){ return {};"
+    },
+    {
+      "id": "stub-receive_expired-empty",
+      "check": "stub: early return from receive_expired()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "TlsLink::ReceiveResult TlsLink::receive_expired(TlsReceiveDiagnostic::Cause cause,int code,uint64_t now){",
+      "replace": "TlsLink::ReceiveResult TlsLink::receive_expired(TlsReceiveDiagnostic::Cause cause,int code,uint64_t now){ return {};"
+    },
+    {
+      "id": "stub-expire_receive-empty",
+      "check": "stub: early return from expire_receive()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "TlsLink::ReceiveResult TlsLink::expire_receive(){",
+      "replace": "TlsLink::ReceiveResult TlsLink::expire_receive(){ return {};"
+    },
+    {
+      "id": "stub-poll_receive-empty",
+      "check": "stub: early return from poll_receive()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "TlsLink::ReceiveResult TlsLink::poll_receive(std::string &out){",
+      "replace": "TlsLink::ReceiveResult TlsLink::poll_receive(std::string &out){ return {};"
+    },
+    {
+      "id": "stub-receive-false",
+      "check": "stub: early return from receive()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "bool TlsLink::receive(std::string &out,uint32_t duration){",
+      "replace": "bool TlsLink::receive(std::string &out,uint32_t duration){ return false;"
+    },
+    {
+      "id": "stub-receive-true",
+      "check": "stub: early return from receive()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "bool TlsLink::receive(std::string &out,uint32_t duration){",
+      "replace": "bool TlsLink::receive(std::string &out,uint32_t duration){ return true;"
+    },
+    {
+      "id": "stub-wait_socket-return",
+      "check": "stub: early return from wait_socket()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "void wait_socket(int socket,bool writable,uint64_t deadline){",
+      "replace": "void wait_socket(int socket,bool writable,uint64_t deadline){ return;"
+    },
+    {
+      "id": "stub-verify-zero",
+      "check": "stub: early return from verify()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "int TlsLink::verify(void *ctx,mbedtls_x509_crt *crt,int depth,uint32_t *flags){",
+      "replace": "int TlsLink::verify(void *ctx,mbedtls_x509_crt *crt,int depth,uint32_t *flags){ return 0;"
+    },
+    {
+      "id": "stub-setup-false",
+      "check": "stub: early return from setup()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "model::OctopusId expected){\n    if(configured||socket>=0)return false;",
+      "replace": "model::OctopusId expected){ return false;\n    if(configured||socket>=0)return false;"
+    },
+    {
+      "id": "send-socket-blocking",
+      "check": "the send callback does not block",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "int n=::send(fd,data,size,MSG_DONTWAIT);",
+      "replace": "int n=::send(fd,data,size,0);"
+    },
+    {
+      "id": "receive-socket-blocking",
+      "check": "the receive callback does not block",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "int n=::recv(fd,data,size,MSG_DONTWAIT);",
+      "replace": "int n=::recv(fd,data,size,0);"
+    },
+    {
+      "id": "send-socket-want-read",
+      "check": "a full send buffer asks to retry the write",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "return MBEDTLS_ERR_SSL_WANT_WRITE;return n<0?MBEDTLS_ERR_NET_SEND_FAILED:n;",
+      "replace": "return MBEDTLS_ERR_SSL_WANT_READ;return n<0?MBEDTLS_ERR_NET_SEND_FAILED:n;"
+    },
+    {
+      "id": "receive-socket-want-write",
+      "check": "an empty socket asks to retry the read",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "return MBEDTLS_ERR_SSL_WANT_READ;return n<0?MBEDTLS_ERR_NET_RECV_FAILED:n;",
+      "replace": "return MBEDTLS_ERR_SSL_WANT_WRITE;return n<0?MBEDTLS_ERR_NET_RECV_FAILED:n;"
+    },
+    {
+      "id": "send-socket-error-passed",
+      "check": "a failed send fails the transport",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "return n<0?MBEDTLS_ERR_NET_SEND_FAILED:n;",
+      "replace": "return n<0?(void(MBEDTLS_ERR_NET_SEND_FAILED),n):n;"
+    },
+    {
+      "id": "receive-socket-error-passed",
+      "check": "a failed recv fails the transport",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "return n<0?MBEDTLS_ERR_NET_RECV_FAILED:n;",
+      "replace": "return n<0?(void(MBEDTLS_ERR_NET_RECV_FAILED),n):n;"
+    },
+    {
+      "id": "receive-socket-eintr-fatal",
+      "check": "an interrupted recv is retried",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "int n=::recv(fd,data,size,MSG_DONTWAIT);if(n<0&&(errno==EWOULDBLOCK||errno==EAGAIN||errno==EINTR))",
+      "replace": "int n=::recv(fd,data,size,MSG_DONTWAIT);if(n<0&&(errno==EWOULDBLOCK||errno==EAGAIN))"
+    },
+    {
+      "id": "send-socket-eintr-fatal",
+      "check": "an interrupted send is retried",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "int n=::send(fd,data,size,MSG_DONTWAIT);if(n<0&&(errno==EWOULDBLOCK||errno==EAGAIN||errno==EINTR))",
+      "replace": "int n=::send(fd,data,size,MSG_DONTWAIT);if(n<0&&(errno==EWOULDBLOCK||errno==EAGAIN))"
+    },
+    {
+      "id": "wait-uncapped",
+      "check": "a wait lasts at most 100 ms",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "std::min<uint64_t>(deadline-now,100);",
+      "replace": "std::min<uint64_t>(deadline-now,1000);"
+    },
+    {
+      "id": "wait-direction-swapped",
+      "check": "a wait watches the direction asked for",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "::select(socket+1,writable?nullptr:&set,writable?&set:nullptr,nullptr,&timeout);",
+      "replace": "::select(socket+1,writable?&set:nullptr,writable?nullptr:&set,nullptr,&timeout);"
+    },
+    {
+      "id": "wait-milliseconds",
+      "check": "a wait times out in milliseconds",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "static_cast<suseconds_t>(remaining*1000)",
+      "replace": "static_cast<suseconds_t>(remaining*100)"
+    },
+    {
+      "id": "reject-on-client",
+      "check": "there is no reject path on the client",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(!server||socket<0)return;",
+      "replace": "(void)server;if(socket<0)return;"
+    },
+    {
+      "id": "reject-ignores-get-flags",
+      "check": "no rejection when the socket flags cannot be read",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(flags<0||::fcntl(socket,F_SETFL,flags|O_NONBLOCK)<0)return;",
+      "replace": "if(::fcntl(socket,F_SETFL,flags|O_NONBLOCK)<0)return;"
+    },
+    {
+      "id": "reject-ignores-set-flags",
+      "check": "no rejection on a socket that cannot be made nonblocking",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "::fcntl(socket,F_SETFL,flags|O_NONBLOCK)<0)return;",
+      "replace": "::fcntl(socket,F_SETFL,flags|O_NONBLOCK)<-1)return;"
+    },
+    {
+      "id": "reject-drops-flags",
+      "check": "the socket keeps its other flags",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "F_SETFL,flags|O_NONBLOCK)",
+      "replace": "F_SETFL,O_NONBLOCK)"
+    },
+    {
+      "id": "reject-deadline-251",
+      "check": "the rejection ends within 250 ms",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "const auto deadline=now_ms()+250;",
+      "replace": "const auto deadline=now_ms()+251;"
+    },
+    {
+      "id": "reject-alert-inverted",
+      "check": "exactly one alert for a missing certificate, none replacing a queued one",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(reason==MBEDTLS_ERR_SSL_NO_CLIENT_CERTIFICATE){",
+      "replace": "if(reason!=MBEDTLS_ERR_SSL_NO_CLIENT_CERTIFICATE){"
+    },
+    {
+      "id": "reject-alert-message",
+      "check": "the alert is a fatal handshake_failure",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "MBEDTLS_SSL_ALERT_MSG_HANDSHAKE_FAILURE);\n    }",
+      "replace": "42);\n    }"
+    },
+    {
+      "id": "reject-no-flush",
+      "check": "a queued alert is flushed",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "while(ssl.MBEDTLS_PRIVATE(out_left)&&now_ms()<deadline)",
+      "replace": "while(false&&ssl.MBEDTLS_PRIVATE(out_left)&&now_ms()<deadline)"
+    },
+    {
+      "id": "reject-flush-stops-early",
+      "check": "a blocked alert keeps waiting for the socket within the deadline",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(result!=MBEDTLS_ERR_SSL_WANT_WRITE)break;",
+      "replace": "if(result==MBEDTLS_ERR_SSL_WANT_WRITE)break;"
+    },
+    {
+      "id": "reject-flush-waits-to-read",
+      "check": "a blocked alert waits for a writable socket",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "wait_socket(socket,true,deadline);}",
+      "replace": "wait_socket(socket,false,deadline);}"
+    },
+    {
+      "id": "reject-closes-input",
+      "check": "only output is half-closed",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "::shutdown(socket,SHUT_WR);",
+      "replace": "::shutdown(socket,SHUT_WR+1);"
+    },
+    {
+      "id": "reject-no-half-close",
+      "check": "output is half-closed",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "::shutdown(socket,SHUT_WR);",
+      "replace": ";"
+    },
+    {
+      "id": "reject-drain-8k",
+      "check": "at most 4 KiB is drained",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "while(drained<4096&&now_ms()<deadline){",
+      "replace": "while(drained<8192&&now_ms()<deadline){"
+    },
+    {
+      "id": "reject-drain-uncounted",
+      "check": "drained bytes are counted",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(count>0){drained+=static_cast<size_t>(count);continue;}",
+      "replace": "if(count>0){continue;}"
+    },
+    {
+      "id": "reject-drain-blocking",
+      "check": "the drain does not block",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "std::min(sizeof(bytes),4096-drained),MSG_DONTWAIT);",
+      "replace": "std::min(sizeof(bytes),4096-drained),0);"
+    },
+    {
+      "id": "reject-drain-past-eof",
+      "check": "the drain stops at the end of the stream",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(!count)break;",
+      "replace": ";"
+    },
+    {
+      "id": "reject-drain-past-error",
+      "check": "the drain stops on a socket error",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(errno!=EWOULDBLOCK&&errno!=EAGAIN&&errno!=EINTR)break;",
+      "replace": ";"
+    },
+    {
+      "id": "reject-drain-eintr-fatal",
+      "check": "an interrupted drain waits and retries",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(errno!=EWOULDBLOCK&&errno!=EAGAIN&&errno!=EINTR)break;",
+      "replace": "if(errno!=EWOULDBLOCK&&errno!=EAGAIN)break;"
+    },
+    {
+      "id": "reject-drain-waits-to-write",
+      "check": "the drain waits for input",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "wait_socket(socket,false,deadline);\n    }\n}",
+      "replace": "wait_socket(socket,true,deadline);\n    }\n}"
+    },
+    {
+      "id": "setup-reuses-socket",
+      "check": "a link refuses a second setup once it owns a socket",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(configured||socket>=0)return false;",
+      "replace": "if(configured)return false;"
+    },
+    {
+      "id": "setup-socket-late",
+      "check": "a link owns its socket from the start of setup",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "socket=fd;server=is_server;if(peers.empty()||peers.size()>maximum_roster_peers)return false;",
+      "replace": "if(peers.empty()||peers.size()>maximum_roster_peers)return false;\n    socket=fd;server=is_server;"
+    },
+    {
+      "id": "setup-empty-roster",
+      "check": "an empty roster is refused",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(peers.empty()||peers.size()>maximum_roster_peers)",
+      "replace": "if(peers.size()>maximum_roster_peers)"
+    },
+    {
+      "id": "setup-roster-full-refused",
+      "check": "a full roster is accepted",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "peers.size()>maximum_roster_peers)",
+      "replace": "peers.size()>=maximum_roster_peers)"
+    },
+    {
+      "id": "setup-roster-oversized",
+      "check": "a roster above the maximum is refused",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "peers.size()>maximum_roster_peers)",
+      "replace": "peers.size()>maximum_roster_peers+1)"
+    },
+    {
+      "id": "setup-ignores-admission",
+      "check": "a pool with a pending handshake admits no other link",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "admission=admission_pool.reserve();if(!admission)return false;",
+      "replace": "admission=admission_pool.reserve();"
+    },
+    {
+      "id": "setup-forgets-expected",
+      "check": "a client authenticates only the peer it expects",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "allowed=peers;authenticated=expected;",
+      "replace": "allowed=peers;"
+    },
+    {
+      "id": "setup-ignores-key",
+      "check": "the private key must parse",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "&&!mbedtls_pk_parse_key(&key,reinterpret_cast<const uint8_t*>(identity.key_der.data()),identity.key_der.size(),nullptr,0);}",
+      "replace": "&&(mbedtls_pk_parse_key(&key,reinterpret_cast<const uint8_t*>(identity.key_der.data()),identity.key_der.size(),nullptr,0),true);}"
+    },
+    {
+      "id": "setup-ignores-anchor-parse",
+      "check": "roster certificates must parse",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(parsed){timing.sum",
+      "replace": "if(parsed&&false){timing.sum"
+    },
+    {
+      "id": "setup-anchor-first",
+      "check": "each roster certificate binds as parsed",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "while(anchor->next)anchor=anchor->next;",
+      "replace": ";"
+    },
+    {
+      "id": "setup-der-limit-1023",
+      "check": "a roster certificate of 1 KiB is accepted",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "peer.der.size()<=1024&&",
+      "replace": "peer.der.size()<1024&&"
+    },
+    {
+      "id": "setup-der-limit-1025",
+      "check": "a roster certificate above 1 KiB is refused",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "peer.der.size()<=1024&&",
+      "replace": "peer.der.size()<=1025&&"
+    },
+    {
+      "id": "setup-ignores-binding",
+      "check": "roster certificates must bind to their Amity",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "&&certificate_binding(*anchor,peer.id,pin)&&pin==peer.pin;",
+      "replace": "&&(certificate_binding(*anchor,peer.id,pin),true)&&pin==peer.pin;"
+    },
+    {
+      "id": "setup-ignores-pin",
+      "check": "roster certificates must match their pin",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "&&pin==peer.pin;",
+      "replace": ";"
+    },
+    {
+      "id": "setup-endpoint-swapped",
+      "check": "a server configures the server endpoint",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "is_server?MBEDTLS_SSL_IS_SERVER:MBEDTLS_SSL_IS_CLIENT",
+      "replace": "is_server?MBEDTLS_SSL_IS_CLIENT:MBEDTLS_SSL_IS_SERVER"
+    },
+    {
+      "id": "setup-ignores-defaults",
+      "check": "a configuration Mbed TLS refuses fails setup",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "MBEDTLS_SSL_TRANSPORT_STREAM,MBEDTLS_SSL_PRESET_DEFAULT))return false;",
+      "replace": "MBEDTLS_SSL_TRANSPORT_STREAM,MBEDTLS_SSL_PRESET_DEFAULT),false)return false;"
+    },
+    {
+      "id": "setup-tls13",
+      "check": "only TLS 1.2 is offered",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "mbedtls_ssl_conf_max_tls_version(&config,MBEDTLS_SSL_VERSION_TLS1_2);",
+      "replace": "mbedtls_ssl_conf_max_tls_version(&config,MBEDTLS_SSL_VERSION_TLS1_3);"
+    },
+    {
+      "id": "setup-optional-certificate",
+      "check": "a peer certificate is required",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "MBEDTLS_SSL_VERIFY_REQUIRED",
+      "replace": "MBEDTLS_SSL_VERIFY_OPTIONAL"
+    },
+    {
+      "id": "setup-anchors-own",
+      "check": "the roster certificates are the trust anchors",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "mbedtls_ssl_conf_ca_chain(&config,&anchors,nullptr);",
+      "replace": "mbedtls_ssl_conf_ca_chain(&config,&own,nullptr);"
+    },
+    {
+      "id": "setup-no-verify-callback",
+      "check": "the link verifies peers itself",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "mbedtls_ssl_conf_verify(&config,verify,this);",
+      "replace": ";"
+    },
+    {
+      "id": "setup-session-tickets",
+      "check": "session tickets are disabled",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "MBEDTLS_SSL_SESSION_TICKETS_DISABLED",
+      "replace": "MBEDTLS_SSL_SESSION_TICKETS_ENABLED"
+    },
+    {
+      "id": "setup-ignores-own-cert",
+      "check": "an own certificate Mbed TLS refuses fails setup",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(mbedtls_ssl_conf_own_cert(&config,&own,&key)||",
+      "replace": "if((mbedtls_ssl_conf_own_cert(&config,&own,&key),0)||"
+    },
+    {
+      "id": "setup-ignores-ssl-setup",
+      "check": "a session Mbed TLS cannot set up fails setup",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "||mbedtls_ssl_setup(&ssl,&config))return false;",
+      "replace": "||(mbedtls_ssl_setup(&ssl,&config),0))return false;"
+    },
+    {
+      "id": "setup-client-without-expected",
+      "check": "a client must expect a server",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(!expected)return false;",
+      "replace": ";"
+    },
+    {
+      "id": "setup-hostname",
+      "check": "a client names the server it expects",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "\".amity.invalid\"",
+      "replace": "\".amity.local\""
+    },
+    {
+      "id": "setup-ignores-hostname",
+      "check": "a host name Mbed TLS refuses fails setup",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(mbedtls_ssl_set_hostname(&ssl,dns.c_str()))return false;",
+      "replace": "mbedtls_ssl_set_hostname(&ssl,dns.c_str());"
+    },
+    {
+      "id": "setup-delay",
+      "check": "records go out without delay",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "const int no_delay=1;",
+      "replace": "const int no_delay=0;"
+    },
+    {
+      "id": "setup-ignores-no-delay",
+      "check": "a socket that keeps delaying records fails setup",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(setsockopt(socket,IPPROTO_TCP,TCP_NODELAY,&no_delay,sizeof(no_delay)))return timing.done(false);",
+      "replace": "setsockopt(socket,IPPROTO_TCP,TCP_NODELAY,&no_delay,sizeof(no_delay));"
+    },
+    {
+      "id": "setup-keep-idle",
+      "check": "keepalive probes start after 10 s idle",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "keep_idle=10,",
+      "replace": "keep_idle=11,"
+    },
+    {
+      "id": "setup-keep-interval",
+      "check": "keepalive probes repeat every 3 s",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "keep_interval=3,",
+      "replace": "keep_interval=4,"
+    },
+    {
+      "id": "setup-keep-count",
+      "check": "three unanswered probes end the connection",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "keep_count=3;",
+      "replace": "keep_count=4;"
+    },
+    {
+      "id": "setup-ignores-keep-count",
+      "check": "a socket without keepalive probes fails setup",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "||\n       setsockopt(socket,IPPROTO_TCP,TCP_KEEPCNT,&keep_count,sizeof(keep_count)))return timing.done(false);",
+      "replace": "||\n       (setsockopt(socket,IPPROTO_TCP,TCP_KEEPCNT,&keep_count,sizeof(keep_count)),0))return timing.done(false);"
+    },
+    {
+      "id": "setup-timeouts",
+      "check": "blocking socket calls time out after 100 ms",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "struct timeval timeout{0,100000};",
+      "replace": "struct timeval timeout{0,200000};"
+    },
+    {
+      "id": "setup-unconfigured",
+      "check": "a link set up is usable",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "this->configured=true;",
+      "replace": ";"
+    },
+    {
+      "id": "teardown-keeps-socket",
+      "check": "a link shuts down and closes the socket it owns",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "TlsLink::~TlsLink(){if(socket>=0){::shutdown(socket,SHUT_RDWR);::close(socket);}",
+      "replace": "TlsLink::~TlsLink(){if(socket>=0){}"
+    },
+    {
+      "id": "teardown-leaks-anchors",
+      "check": "a link frees its trust anchors",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "mbedtls_x509_crt_free(&anchors);",
+      "replace": ";"
+    },
+    {
+      "id": "verify-any-depth",
+      "check": "only the leaf can authenticate",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(depth!=0||crt->next)",
+      "replace": "if((depth!=0&&false)||crt->next)"
+    },
+    {
+      "id": "verify-with-chain",
+      "check": "the leaf must come alone",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(depth!=0||crt->next)",
+      "replace": "if(depth!=0)"
+    },
+    {
+      "id": "verify-other-peer",
+      "check": "a client accepts only the peer it expects",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(self.authenticated&&self.authenticated!=peer.id)",
+      "replace": "if(false)"
+    },
+    {
+      "id": "verify-no-binding",
+      "check": "a server learns which roster peer it authenticated",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "self.authenticated=peer.id;",
+      "replace": ";"
+    },
+    {
+      "id": "verify-strict-dates",
+      "check": "a roster peer is not refused for its dates",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "*flags&=~uint32_t(MBEDTLS_X509_BADCERT_EXPIRED|MBEDTLS_X509_BADCERT_FUTURE);",
+      "replace": ";"
+    },
+    {
+      "id": "verify-excuses-trust",
+      "check": "only dates are excused",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "~uint32_t(MBEDTLS_X509_BADCERT_EXPIRED|MBEDTLS_X509_BADCERT_FUTURE)",
+      "replace": "~uint32_t(MBEDTLS_X509_BADCERT_EXPIRED|MBEDTLS_X509_BADCERT_FUTURE|MBEDTLS_X509_BADCERT_NOT_TRUSTED)"
+    },
+    {
+      "id": "verify-unknown-accepted",
+      "check": "an unknown leaf is flagged",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "*flags|=MBEDTLS_X509_BADCERT_OTHER;return 0;\n}",
+      "replace": "return 0;\n}"
+    },
+    {
+      "id": "verify-uncounted",
+      "check": "verify calls are counted",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "++link.timing_verify_calls;",
+      "replace": ";"
+    },
+    {
+      "id": "handshake-when-unusable",
+      "check": "a failed or refused link does not handshake",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(!usable())return false;\n    if(handshaken)return true;",
+      "replace": "if(handshaken)return true;"
+    },
+    {
+      "id": "handshake-repeated",
+      "check": "a healthy handshake is not repeated",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(handshaken)return true;",
+      "replace": ";"
+    },
+    {
+      "id": "handshake-unauthenticated",
+      "check": "a handshake that authenticated no peer fails",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "return finished(authenticated&&mbedtls_ssl_get_verify_result(&ssl)==0,r);",
+      "replace": "return finished(mbedtls_ssl_get_verify_result(&ssl)==0,r);"
+    },
+    {
+      "id": "handshake-ignores-verify",
+      "check": "bad verification flags fail the handshake",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "return finished(authenticated&&mbedtls_ssl_get_verify_result(&ssl)==0,r);",
+      "replace": "return finished(bool(authenticated),r);"
+    },
+    {
+      "id": "handshake-failure-reusable",
+      "check": "a failed handshake breaks the transport",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "handshaken=good;transport_failed=!good;",
+      "replace": "handshaken=good;"
+    },
+    {
+      "id": "handshake-keeps-slot",
+      "check": "authentication frees the pending admission slot",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(good)admission.authenticated();",
+      "replace": ";"
+    },
+    {
+      "id": "handshake-deadline-9999",
+      "check": "the handshake fails at 10 s",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "const auto deadline=now_ms()+10000;",
+      "replace": "const auto deadline=now_ms()+9999;"
+    },
+    {
+      "id": "handshake-no-rejection",
+      "check": "a fatal handshake error runs the rejection",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "reject_handshake(ssl,socket,server,r);",
+      "replace": "if(false)reject_handshake(ssl,socket,server,r);"
+    },
+    {
+      "id": "handshake-wait-direction",
+      "check": "the handshake waits in the direction Mbed TLS asks for",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "wait_socket(socket,r==MBEDTLS_ERR_SSL_WANT_WRITE,deadline);",
+      "replace": "wait_socket(socket,r!=MBEDTLS_ERR_SSL_WANT_WRITE,deadline);"
+    },
+    {
+      "id": "handshake-timeout-code",
+      "check": "a timed-out handshake reports the timeout",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "return finished(false,MBEDTLS_ERR_SSL_TIMEOUT);",
+      "replace": "return finished(false,MBEDTLS_ERR_SSL_TIMEOUT*0);"
+    },
+    {
+      "id": "handshake-wait-uncounted",
+      "check": "the handshake timing reports its socket waits",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "wait_ms+=now_ms()-began;",
+      "replace": ";"
+    },
+    {
+      "id": "send-empty-frame",
+      "check": "a payload no frame can carry is refused before TLS",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "auto bytes=frame(body,bulk);if(bytes.empty())return false;",
+      "replace": "auto bytes=frame(body,bulk);"
+    },
+    {
+      "id": "send-before-handshake",
+      "check": "a send handshakes first",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(!handshake())return false;\n    size_t offset=0;",
+      "replace": "handshake();\n    size_t offset=0;"
+    },
+    {
+      "id": "send-budget-3001",
+      "check": "ordinary sends have three seconds",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "(bulk?30000:3000)",
+      "replace": "(bulk?30000:3001)"
+    },
+    {
+      "id": "send-bulk-budget-29999",
+      "check": "bulk sends have thirty seconds",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "(bulk?30000:3000)",
+      "replace": "(bulk?29999:3000)"
+    },
+    {
+      "id": "send-record-513",
+      "check": "ordinary records hold at most 512 bytes",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "bulk?size_t{2048}:size_t{512}",
+      "replace": "bulk?size_t{2048}:size_t{513}"
+    },
+    {
+      "id": "send-record-2049",
+      "check": "bulk records hold at most 2048 bytes",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "bulk?size_t{2048}:size_t{512}",
+      "replace": "bulk?size_t{2049}:size_t{512}"
+    },
+    {
+      "id": "send-zero-write-progress",
+      "check": "a zero-byte write is fatal",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(n>0)offset+=n;",
+      "replace": "if(n>=0)offset+=n;"
+    },
+    {
+      "id": "send-fatal-reusable",
+      "check": "a fatal write breaks the transport",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "{transport_failed=true;return false;}\n        else wait_socket",
+      "replace": "{return false;}\n        else wait_socket"
+    },
+    {
+      "id": "send-wait-direction",
+      "check": "a waiting write watches the direction Mbed TLS asks for",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "else wait_socket(socket,n==MBEDTLS_ERR_SSL_WANT_WRITE,deadline);",
+      "replace": "else wait_socket(socket,n!=MBEDTLS_ERR_SSL_WANT_WRITE,deadline);"
+    },
+    {
+      "id": "send-timeout-reusable",
+      "check": "a write still pending at the deadline breaks the transport",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(offset!=bytes.size()){transport_failed=true;return false;}",
+      "replace": "if(offset!=bytes.size()){return false;}"
+    },
+    {
+      "id": "failed-reusable",
+      "check": "a fatal receive breaks the transport",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "incoming_failed=true;\n    if(!incoming_diagnostic.fatal()){",
+      "replace": "if(!incoming_diagnostic.fatal()){"
+    },
+    {
+      "id": "failed-bytes-expected-swapped",
+      "check": "a fatal receive records the bytes received and expected",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "{cause,code,static_cast<uint32_t>(incoming_size),static_cast<uint32_t>(incoming_expected),\n            progress.idle_ms,progress.total_ms,incoming_max_poll_gap,incoming_max_read_ms};\n    }\n    return ReceiveResult::failed;",
+      "replace": "{cause,code,static_cast<uint32_t>(incoming_expected),static_cast<uint32_t>(incoming_size),\n            progress.idle_ms,progress.total_ms,incoming_max_poll_gap,incoming_max_read_ms};\n    }\n    return ReceiveResult::failed;"
+    },
+    {
+      "id": "failed-code-dropped",
+      "check": "a fatal receive records the SDK code",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "{cause,code,static_cast<uint32_t>(incoming_size),static_cast<uint32_t>(incoming_expected),\n            progress.idle_ms,progress.total_ms,incoming_max_poll_gap,incoming_max_read_ms};\n    }",
+      "replace": "{cause,code*0,static_cast<uint32_t>(incoming_size),static_cast<uint32_t>(incoming_expected),\n            progress.idle_ms,progress.total_ms,incoming_max_poll_gap,incoming_max_read_ms};\n    }"
+    },
+    {
+      "id": "expired-twice",
+      "check": "an expiry is reported once",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(incoming_expired)return ReceiveResult::pending;\n    incoming_expired=true;",
+      "replace": "incoming_expired=true;"
+    },
+    {
+      "id": "expired-progress-total-swapped",
+      "check": "an expiry records progress and total time",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "progress.idle_ms,progress.total_ms,incoming_max_poll_gap,incoming_max_read_ms};\n    return ReceiveResult::expired;",
+      "replace": "progress.total_ms,progress.idle_ms,incoming_max_poll_gap,incoming_max_read_ms};\n    return ReceiveResult::expired;"
+    },
+    {
+      "id": "expired-gap-read-swapped",
+      "check": "an expiry records the poll gap and the read time",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "incoming_max_poll_gap,incoming_max_read_ms};\n    return ReceiveResult::expired;",
+      "replace": "incoming_max_read_ms,incoming_max_poll_gap};\n    return ReceiveResult::expired;"
+    },
+    {
+      "id": "expire-unestablished",
+      "check": "an unestablished link has nothing to expire",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(!established())return ReceiveResult::failed;\n    return receive_expired(",
+      "replace": "return receive_expired("
+    },
+    {
+      "id": "expire-cause",
+      "check": "an outer expiry is an operation timeout",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "receive_expired(TlsReceiveDiagnostic::Cause::operation_timeout,0,now_ms());",
+      "replace": "receive_expired(TlsReceiveDiagnostic::Cause::progress_timeout,0,now_ms());"
+    },
+    {
+      "id": "poll-unestablished",
+      "check": "a poll never starts the handshake",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(!established())return ReceiveResult::failed;\n    out.clear();",
+      "replace": "out.clear();"
+    },
+    {
+      "id": "poll-gap-when-idle",
+      "check": "idle polls before a frame are no gap",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(incoming_size&&began>=incoming_last_poll_end)",
+      "replace": "if(began>=incoming_last_poll_end)"
+    },
+    {
+      "id": "poll-end-unrecorded",
+      "check": "each poll records when it ended",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "~PollFinished(){link.incoming_last_poll_end=now_ms();}",
+      "replace": "~PollFinished(){}"
+    },
+    {
+      "id": "poll-17-reads",
+      "check": "a poll reads at most 16 times",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "for(unsigned turn=0;turn<16;++turn)",
+      "replace": "for(unsigned turn=0;turn<17;++turn)"
+    },
+    {
+      "id": "drain-stays-expired",
+      "check": "the frame after a drained one is accepted",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "incoming_reader.reset();incoming_size=0;incoming_expected=4;incoming_expired=false;",
+      "replace": "incoming_reader.reset();incoming_size=0;incoming_expected=4;"
+    },
+    {
+      "id": "drain-repeats-expiry",
+      "check": "a draining frame does not expire again",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(!incoming_expired&&incoming_reader.check_deadline(now)",
+      "replace": "if(incoming_reader.check_deadline(now)"
+    },
+    {
+      "id": "deadline-cause-swapped",
+      "check": "an expiry names the deadline that passed",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "progress.total_ms>=incoming_reader.frame_timeout()?TlsReceiveDiagnostic::Cause::frame_timeout:TlsReceiveDiagnostic::Cause::progress_timeout,0,now);",
+      "replace": "progress.total_ms>=incoming_reader.frame_timeout()?TlsReceiveDiagnostic::Cause::progress_timeout:TlsReceiveDiagnostic::Cause::frame_timeout,0,now);"
+    },
+    {
+      "id": "deadline-clock-reversal-hidden",
+      "check": "a reversed clock is named",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "return receive_expired(progress.clock_reversed?TlsReceiveDiagnostic::Cause::clock_reversed:\n                progress.total_ms>=incoming_reader.frame_timeout()?TlsReceiveDiagnostic::Cause::frame_timeout:TlsReceiveDiagnostic::Cause::progress_timeout,0,now);",
+      "replace": "return receive_expired(false?TlsReceiveDiagnostic::Cause::clock_reversed:\n                progress.total_ms>=incoming_reader.frame_timeout()?TlsReceiveDiagnostic::Cause::frame_timeout:TlsReceiveDiagnostic::Cause::progress_timeout,0,now);"
+    },
+    {
+      "id": "read-crosses-frames",
+      "check": "a poll never consumes the next frame",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "const auto request=std::min(incoming_expected-incoming_size,sizeof(bytes));",
+      "replace": "const auto request=sizeof(bytes);"
+    },
+    {
+      "id": "read-time-unrecorded",
+      "check": "the slowest SDK read is recorded",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(now>=read_at)incoming_max_read_ms=std::max(incoming_max_read_ms,now-read_at);",
+      "replace": "(void)read_at;"
+    },
+    {
+      "id": "read-want-write-fatal",
+      "check": "WANT_WRITE on a read only defers it",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(count==MBEDTLS_ERR_SSL_WANT_READ||count==MBEDTLS_ERR_SSL_WANT_WRITE)return ReceiveResult::pending;",
+      "replace": "if(count==MBEDTLS_ERR_SSL_WANT_READ)return ReceiveResult::pending;"
+    },
+    {
+      "id": "read-eof-accepted",
+      "check": "the end of the stream is fatal",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(count<=0||static_cast<size_t>(count)>request)",
+      "replace": "if(count<0||static_cast<size_t>(count)>request)"
+    },
+    {
+      "id": "read-eof-cause",
+      "check": "the end of the stream is named",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "count==0?TlsReceiveDiagnostic::Cause::tls_eof:TlsReceiveDiagnostic::Cause::tls_error",
+      "replace": "count==0?TlsReceiveDiagnostic::Cause::tls_error:TlsReceiveDiagnostic::Cause::tls_eof"
+    },
+    {
+      "id": "length-keeps-bulk-flag",
+      "check": "the bulk flag is not part of the length",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "incoming_prefix[3])&~bulk_frame_flag;",
+      "replace": "incoming_prefix[3]);"
+    },
+    {
+      "id": "length-zero-accepted",
+      "check": "an empty frame is invalid",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(!length||length>max_frame_bytes)",
+      "replace": "if(length>max_frame_bytes)"
+    },
+    {
+      "id": "length-limit-plus-one",
+      "check": "a frame above the maximum is invalid",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(!length||length>max_frame_bytes)",
+      "replace": "if(!length||length>max_frame_bytes+1)"
+    },
+    {
+      "id": "drain-feeds-parser",
+      "check": "an expired frame's bytes are drained, not parsed",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(incoming_expired)continue;",
+      "replace": ";"
+    },
+    {
+      "id": "feed-timeout-fatal",
+      "check": "a frame that stalls while being fed expires",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(result==FrameReader::Result::timed_out)return receive_expired(",
+      "replace": "if(false)return receive_expired("
+    },
+    {
+      "id": "frame-class-lost",
+      "check": "a frame reports its class",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "completed_bulk=incoming_reader.bulk();",
+      "replace": "completed_bulk=false;"
+    },
+    {
+      "id": "frame-keeps-diagnostic",
+      "check": "a frame clears the last diagnostic",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "incoming_diagnostic={};\n            return ReceiveResult::frame;",
+      "replace": "return ReceiveResult::frame;"
+    },
+    {
+      "id": "frame-keeps-gap-and-read",
+      "check": "each frame's diagnostics start afresh",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "incoming_reader.reset();incoming_size=0;incoming_expected=4;\n            incoming_max_poll_gap=incoming_max_read_ms=0;",
+      "replace": "incoming_reader.reset();incoming_size=0;incoming_expected=4;"
+    },
+    {
+      "id": "receive-no-handshake",
+      "check": "a receive can open the transport",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(!handshake())return false;\n    const auto deadline=now_ms()+duration;",
+      "replace": "const auto deadline=now_ms()+duration;"
+    },
+    {
+      "id": "receive-deadline-plus-one",
+      "check": "a receive waits exactly its budget",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "const auto deadline=now_ms()+duration;",
+      "replace": "const auto deadline=now_ms()+duration+1;"
+    },
+    {
+      "id": "receive-waits-past-expiry",
+      "check": "a receive returns at the frame's expiry",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(result==ReceiveResult::failed||result==ReceiveResult::expired)return false;",
+      "replace": "if(result==ReceiveResult::failed)return false;"
+    },
+    {
+      "id": "receive-waits-with-pending",
+      "check": "buffered bytes need no wait",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(!mbedtls_ssl_check_pending(&ssl))wait_socket(socket,false,deadline);",
+      "replace": "wait_socket(socket,false,deadline);"
+    },
+    {
+      "id": "receive-hides-expiry",
+      "check": "a wrapper timeout keeps an expiry's evidence",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(!incoming_diagnostic.expired()){",
+      "replace": "if(true){"
+    },
+    {
+      "id": "receive-timeout-bytes",
+      "check": "a wrapper timeout records the partial frame",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "TlsReceiveDiagnostic::Cause::wrapper_timeout,0,static_cast<uint32_t>(incoming_size),",
+      "replace": "TlsReceiveDiagnostic::Cause::wrapper_timeout,0,0,"
+    },
+    {
+      "id": "progress-timeout-1999",
+      "check": "ordinary frames progress within 2 s",
+      "file": "components/consortium/include/amity/consortium/json.hpp",
+      "find": "progress_timeout_ms = 2000;",
+      "replace": "progress_timeout_ms = 1999;"
+    },
+    {
+      "id": "frame-timeout-9999",
+      "check": "ordinary frames complete within 10 s",
+      "file": "components/consortium/include/amity/consortium/json.hpp",
+      "find": "frame_timeout_ms = 10000;",
+      "replace": "frame_timeout_ms = 9999;"
+    },
+    {
+      "id": "bulk-progress-timeout-29999",
+      "check": "bulk frames progress within 30 s",
+      "file": "components/consortium/include/amity/consortium/json.hpp",
+      "find": "bulk_progress_timeout_ms = 30000;",
+      "replace": "bulk_progress_timeout_ms = 29999;"
+    },
+    {
+      "id": "bulk-frame-timeout-59999",
+      "check": "bulk frames complete within 60 s",
+      "file": "components/consortium/include/amity/consortium/json.hpp",
+      "find": "bulk_frame_timeout_ms = 60000;",
+      "replace": "bulk_frame_timeout_ms = 59999;"
+    },
+    {
+      "id": "diagnostic-progress-not-expired",
+      "check": "a progress timeout is an expiry",
+      "file": "components/consortium/tls_receive_trace.hpp",
+      "find": "bool expired()const{return cause==Cause::progress_timeout||",
+      "replace": "bool expired()const{return "
+    },
+    {
+      "id": "diagnostic-eof-not-fatal",
+      "check": "the end of the stream is fatal",
+      "file": "components/consortium/tls_receive_trace.hpp",
+      "find": "bool fatal()const{return cause==Cause::tls_eof||",
+      "replace": "bool fatal()const{return "
+    }
+  ]
+}

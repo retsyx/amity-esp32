@@ -17,8 +17,6 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         SCENARIOS deferred-emission unfinished-stage line-formats worst-case-line capacity finish-once done-and-step)
     amity_python_tests(
         consortium_group_storage_test.py
-        consortium_tls_receive_test.py
-        consortium_tls_rejection_test.py
     )
 elseif(AMITY_TEST_TIER STREQUAL sdk)
     amity_python_tests(
@@ -29,3 +27,4 @@ elseif(AMITY_TEST_TIER STREQUAL sdk)
     set_tests_properties(consortium_tls_credentials_test.py consortium_tls_tcp_test.py PROPERTIES
         RESOURCE_LOCK host_mbedtls)
 endif()
+include("${T}/cmake/consortium_tls_link.cmake")

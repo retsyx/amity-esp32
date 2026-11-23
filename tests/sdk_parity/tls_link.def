@@ -1,0 +1,110 @@
+// Copyright 2026.
+// This file is part of Amity-esp32.
+// Amity-esp32 is free software: you can redistribute it and/or modify it under the terms of the
+// GNU General Public License as published by the Free Software Foundation, either version 3 of the
+// License, or (at your option) any later version.
+
+// Mbed TLS constants, members and signatures the TLS link fakes reproduce
+// from the pinned Mbed TLS and the Amity build's configuration. A signature
+// entry is 1 when the function has exactly the type the TLS link calls it with.
+// fakes: tests/tls_link_fakes
+// headers: mbedtls/ssl.h mbedtls/net_sockets.h mbedtls/ssl_ciphersuites.h mbedtls/x509_crt.h mbedtls/pk.h
+// target: components/consortium/tls_link.cpp
+#include <stddef.h>
+#include <stdint.h>
+#include <type_traits>
+// 1 when function has exactly the type given.
+#define AMITY_TLS_SIGNATURE(function, ...) (std::is_same<decltype(&function), __VA_ARGS__>::value)
+#if defined(MBEDTLS_SSL_SESSION_TICKETS)
+#define AMITY_TLS_SESSION_TICKETS 1
+#else
+#define AMITY_TLS_SESSION_TICKETS 0
+#endif
+AMITY_PARITY(err_no_client_certificate, MBEDTLS_ERR_SSL_NO_CLIENT_CERTIFICATE)
+AMITY_PARITY(err_fatal_alert_message, MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE)
+AMITY_PARITY(err_want_read, MBEDTLS_ERR_SSL_WANT_READ)
+AMITY_PARITY(err_want_write, MBEDTLS_ERR_SSL_WANT_WRITE)
+AMITY_PARITY(err_timeout, MBEDTLS_ERR_SSL_TIMEOUT)
+AMITY_PARITY(err_bad_input_data, MBEDTLS_ERR_SSL_BAD_INPUT_DATA)
+AMITY_PARITY(err_net_recv_failed, MBEDTLS_ERR_NET_RECV_FAILED)
+AMITY_PARITY(err_net_send_failed, MBEDTLS_ERR_NET_SEND_FAILED)
+AMITY_PARITY(err_x509_invalid_format, MBEDTLS_ERR_X509_INVALID_FORMAT)
+AMITY_PARITY(err_x509_cert_verify_failed, MBEDTLS_ERR_X509_CERT_VERIFY_FAILED)
+AMITY_PARITY(err_pk_key_invalid_format, MBEDTLS_ERR_PK_KEY_INVALID_FORMAT)
+AMITY_PARITY(transport_stream, MBEDTLS_SSL_TRANSPORT_STREAM)
+AMITY_PARITY(is_client, MBEDTLS_SSL_IS_CLIENT)
+AMITY_PARITY(is_server, MBEDTLS_SSL_IS_SERVER)
+AMITY_PARITY(verify_none, MBEDTLS_SSL_VERIFY_NONE)
+AMITY_PARITY(verify_optional, MBEDTLS_SSL_VERIFY_OPTIONAL)
+AMITY_PARITY(verify_required, MBEDTLS_SSL_VERIFY_REQUIRED)
+AMITY_PARITY(session_tickets_disabled, MBEDTLS_SSL_SESSION_TICKETS_DISABLED)
+AMITY_PARITY(session_tickets_enabled, MBEDTLS_SSL_SESSION_TICKETS_ENABLED)
+AMITY_PARITY(session_tickets, AMITY_TLS_SESSION_TICKETS)
+AMITY_PARITY(preset_default, MBEDTLS_SSL_PRESET_DEFAULT)
+AMITY_PARITY(alert_level_fatal, MBEDTLS_SSL_ALERT_LEVEL_FATAL)
+AMITY_PARITY(alert_handshake_failure, MBEDTLS_SSL_ALERT_MSG_HANDSHAKE_FAILURE)
+AMITY_PARITY(version_tls1_2, MBEDTLS_SSL_VERSION_TLS1_2)
+AMITY_PARITY(version_tls1_3, MBEDTLS_SSL_VERSION_TLS1_3)
+AMITY_PARITY(suite_ecdhe_ecdsa_aes_128_gcm_sha256, MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256)
+AMITY_PARITY(badcert_expired, MBEDTLS_X509_BADCERT_EXPIRED)
+AMITY_PARITY(badcert_not_trusted, MBEDTLS_X509_BADCERT_NOT_TRUSTED)
+AMITY_PARITY(badcert_other, MBEDTLS_X509_BADCERT_OTHER)
+AMITY_PARITY(badcert_future, MBEDTLS_X509_BADCERT_FUTURE)
+AMITY_PARITY(out_left_member, (std::is_same<decltype(mbedtls_ssl_context::MBEDTLS_PRIVATE(out_left)), size_t>::value))
+AMITY_PARITY(crt_raw_member, (std::is_same<decltype(mbedtls_x509_crt::raw), mbedtls_x509_buf>::value))
+AMITY_PARITY(crt_next_member, (std::is_same<decltype(mbedtls_x509_crt::next), mbedtls_x509_crt *>::value))
+AMITY_PARITY(buf_p_member, (std::is_same<decltype(mbedtls_x509_buf::p), unsigned char *>::value))
+AMITY_PARITY(buf_len_member, (std::is_same<decltype(mbedtls_x509_buf::len), size_t>::value))
+AMITY_PARITY(send_callback, (std::is_same<mbedtls_ssl_send_t, int(void *, const unsigned char *, size_t)>::value))
+AMITY_PARITY(recv_callback, (std::is_same<mbedtls_ssl_recv_t, int(void *, unsigned char *, size_t)>::value))
+AMITY_PARITY(recv_timeout_callback,
+             (std::is_same<mbedtls_ssl_recv_timeout_t, int(void *, unsigned char *, size_t, uint32_t)>::value))
+AMITY_PARITY(ssl_init, AMITY_TLS_SIGNATURE(mbedtls_ssl_init, void (*)(mbedtls_ssl_context *)))
+AMITY_PARITY(ssl_free, AMITY_TLS_SIGNATURE(mbedtls_ssl_free, void (*)(mbedtls_ssl_context *)))
+AMITY_PARITY(config_init, AMITY_TLS_SIGNATURE(mbedtls_ssl_config_init, void (*)(mbedtls_ssl_config *)))
+AMITY_PARITY(config_free, AMITY_TLS_SIGNATURE(mbedtls_ssl_config_free, void (*)(mbedtls_ssl_config *)))
+AMITY_PARITY(config_defaults,
+             AMITY_TLS_SIGNATURE(mbedtls_ssl_config_defaults, int (*)(mbedtls_ssl_config *, int, int, int)))
+AMITY_PARITY(conf_min_tls_version, AMITY_TLS_SIGNATURE(mbedtls_ssl_conf_min_tls_version,
+                                                       void (*)(mbedtls_ssl_config *, mbedtls_ssl_protocol_version)))
+AMITY_PARITY(conf_max_tls_version, AMITY_TLS_SIGNATURE(mbedtls_ssl_conf_max_tls_version,
+                                                       void (*)(mbedtls_ssl_config *, mbedtls_ssl_protocol_version)))
+AMITY_PARITY(conf_ciphersuites,
+             AMITY_TLS_SIGNATURE(mbedtls_ssl_conf_ciphersuites, void (*)(mbedtls_ssl_config *, const int *)))
+AMITY_PARITY(conf_authmode, AMITY_TLS_SIGNATURE(mbedtls_ssl_conf_authmode, void (*)(mbedtls_ssl_config *, int)))
+AMITY_PARITY(conf_ca_chain, AMITY_TLS_SIGNATURE(mbedtls_ssl_conf_ca_chain,
+                                                void (*)(mbedtls_ssl_config *, mbedtls_x509_crt *, mbedtls_x509_crl *)))
+AMITY_PARITY(conf_verify,
+             AMITY_TLS_SIGNATURE(mbedtls_ssl_conf_verify,
+                                 void (*)(mbedtls_ssl_config *, int (*)(void *, mbedtls_x509_crt *, int, uint32_t *),
+                                          void *)))
+AMITY_PARITY(conf_session_tickets,
+             AMITY_TLS_SIGNATURE(mbedtls_ssl_conf_session_tickets, void (*)(mbedtls_ssl_config *, int)))
+AMITY_PARITY(conf_own_cert,
+             AMITY_TLS_SIGNATURE(mbedtls_ssl_conf_own_cert,
+                                 int (*)(mbedtls_ssl_config *, mbedtls_x509_crt *, mbedtls_pk_context *)))
+AMITY_PARITY(ssl_setup,
+             AMITY_TLS_SIGNATURE(mbedtls_ssl_setup, int (*)(mbedtls_ssl_context *, const mbedtls_ssl_config *)))
+AMITY_PARITY(set_hostname,
+             AMITY_TLS_SIGNATURE(mbedtls_ssl_set_hostname, int (*)(mbedtls_ssl_context *, const char *)))
+AMITY_PARITY(set_bio, AMITY_TLS_SIGNATURE(mbedtls_ssl_set_bio,
+                                          void (*)(mbedtls_ssl_context *, void *, mbedtls_ssl_send_t *,
+                                                   mbedtls_ssl_recv_t *, mbedtls_ssl_recv_timeout_t *)))
+AMITY_PARITY(handshake, AMITY_TLS_SIGNATURE(mbedtls_ssl_handshake, int (*)(mbedtls_ssl_context *)))
+AMITY_PARITY(get_verify_result,
+             AMITY_TLS_SIGNATURE(mbedtls_ssl_get_verify_result, uint32_t (*)(const mbedtls_ssl_context *)))
+AMITY_PARITY(ssl_read, AMITY_TLS_SIGNATURE(mbedtls_ssl_read, int (*)(mbedtls_ssl_context *, unsigned char *, size_t)))
+AMITY_PARITY(ssl_write,
+             AMITY_TLS_SIGNATURE(mbedtls_ssl_write, int (*)(mbedtls_ssl_context *, const unsigned char *, size_t)))
+AMITY_PARITY(check_pending, AMITY_TLS_SIGNATURE(mbedtls_ssl_check_pending, int (*)(const mbedtls_ssl_context *)))
+AMITY_PARITY(send_alert_message, AMITY_TLS_SIGNATURE(mbedtls_ssl_send_alert_message,
+                                                     int (*)(mbedtls_ssl_context *, unsigned char, unsigned char)))
+AMITY_PARITY(crt_init, AMITY_TLS_SIGNATURE(mbedtls_x509_crt_init, void (*)(mbedtls_x509_crt *)))
+AMITY_PARITY(crt_free, AMITY_TLS_SIGNATURE(mbedtls_x509_crt_free, void (*)(mbedtls_x509_crt *)))
+AMITY_PARITY(crt_parse_der, AMITY_TLS_SIGNATURE(mbedtls_x509_crt_parse_der,
+                                                int (*)(mbedtls_x509_crt *, const unsigned char *, size_t)))
+AMITY_PARITY(pk_init, AMITY_TLS_SIGNATURE(mbedtls_pk_init, void (*)(mbedtls_pk_context *)))
+AMITY_PARITY(pk_free, AMITY_TLS_SIGNATURE(mbedtls_pk_free, void (*)(mbedtls_pk_context *)))
+AMITY_PARITY(pk_parse_key, AMITY_TLS_SIGNATURE(mbedtls_pk_parse_key,
+                                               int (*)(mbedtls_pk_context *, const unsigned char *, size_t,
+                                                       const unsigned char *, size_t)))
