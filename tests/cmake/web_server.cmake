@@ -42,6 +42,15 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         REGISTRY
         SCENARIOS location start-once task-failure head-in-pieces oversized-head unread-body drained-body
             stalled-client replacement stop-and-restart)
+    amity_host_compile(web_server
+        SOURCES "${C}/web/web.cpp"
+        INCLUDES "${T}/core_fakes" "${T}/web_server_fakes" "${T}/web_request_fakes" "${C}/web" "${C}/web/include")
+    amity_test(web_server_test
+        SOURCES "${T}/web_server_test.cpp"
+        INCLUDES "${T}/core_fakes" "${T}/web_server_fakes" "${T}/web_request_fakes" "${C}/web" "${C}/web/include"
+        LIBS core_fakes httpd_fake web_credentials_seams
+        REGISTRY
+        SCENARIOS start-order start-configuration start-failures handshake handshake-option-failure stop route)
     amity_python_tests(
         web_redirect_test.py
         web_session_tcp_test.py

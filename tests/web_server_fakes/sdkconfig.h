@@ -10,3 +10,5 @@
 // The Amity build's configuration values that the web server code reads
 // (sdk_parity/web_server.def).
 #define CONFIG_LWIP_IPV6 1
+#define CONFIG_HTTPD_MAX_REQ_HDR_LEN 1024
+#define CONFIG_HTTPD_MAX_URI_LEN 256

@@ -4,11 +4,12 @@
 // GNU General Public License as published by the Free Software Foundation, either version 3 of the
 // License, or (at your option) any later version.
 
-// HTTPD's private state and the Amity build's configuration, which the web
-// server fakes reproduce from the pinned ESP-IDF. Layouts with pointers
-// differ in size on the host, so for those only the field order is compared.
+// HTTPD's private state, esp-tls and the HTTPS server configuration, which
+// the web server fakes reproduce from the pinned ESP-IDF and the Amity
+// build's configuration. Layouts with pointers differ in size on the host,
+// so for those only the field order is compared.
 // fakes: tests/core_fakes tests/web_server_fakes tests/web_request_fakes
-// headers: sdkconfig.h esp_httpd_priv.h
+// headers: sdkconfig.h esp_httpd_priv.h esp_https_server.h esp_tls.h
 // target: components/web/stall.cpp
 AMITY_PARITY(parser_block_size, PARSER_BLOCK_SIZE)
 AMITY_PARITY(session_fd_first, offsetof(struct sock_db, fd))
@@ -36,3 +37,35 @@ AMITY_PARITY(data_aux_after_request, offsetof(struct httpd_data, hd_req_aux) > o
 AMITY_PARITY(data_state_after_aux,
              offsetof(struct httpd_data, http_server_state) > offsetof(struct httpd_data, hd_req_aux))
 AMITY_PARITY(lwip_ipv6, CONFIG_LWIP_IPV6)
+AMITY_PARITY(max_req_hdr_len, CONFIG_HTTPD_MAX_REQ_HDR_LEN)
+AMITY_PARITY(max_uri_len, CONFIG_HTTPD_MAX_URI_LEN)
+AMITY_PARITY(tls_any_version, ESP_TLS_VER_ANY)
+AMITY_PARITY(tls_curve_p256, ESP_TLS_ECDSA_CURVE_SECP256R1)
+AMITY_PARITY(ssl_transport_secure, HTTPD_SSL_TRANSPORT_SECURE)
+AMITY_PARITY(ssl_key_after_cacert, offsetof(httpd_ssl_config_t, prvtkey_pem) > offsetof(httpd_ssl_config_t, cacert_len))
+AMITY_PARITY(ssl_transport_after_curve,
+             offsetof(httpd_ssl_config_t, transport_mode) > offsetof(httpd_ssl_config_t, ecdsa_curve))
+AMITY_PARITY(ssl_tickets_after_ports,
+             offsetof(httpd_ssl_config_t, session_tickets) > offsetof(httpd_ssl_config_t, port_insecure))
+AMITY_PARITY(ssl_ciphersuites_last,
+             offsetof(httpd_ssl_config_t, ciphersuites_list) + sizeof(const int *) == sizeof(httpd_ssl_config_t))
+AMITY_PARITY(ssl_default_transport, [] {
+    httpd_ssl_config_t config = HTTPD_SSL_CONFIG_DEFAULT();
+    return config.transport_mode;
+}())
+AMITY_PARITY(ssl_default_port, [] {
+    httpd_ssl_config_t config = HTTPD_SSL_CONFIG_DEFAULT();
+    return config.port_secure;
+}())
+AMITY_PARITY(ssl_default_tickets, [] {
+    httpd_ssl_config_t config = HTTPD_SSL_CONFIG_DEFAULT();
+    return config.session_tickets;
+}())
+AMITY_PARITY(ssl_default_open, [] {
+    httpd_ssl_config_t config = HTTPD_SSL_CONFIG_DEFAULT();
+    return config.httpd.open_fn == nullptr;
+}())
+AMITY_PARITY(ssl_default_response_headers, [] {
+    httpd_ssl_config_t config = HTTPD_SSL_CONFIG_DEFAULT();
+    return config.httpd.max_resp_headers;
+}())

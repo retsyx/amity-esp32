@@ -1,0 +1,264 @@
+{
+  "ctest": "^(web_server_test\\.|web_session_tcp_test\\.py$)",
+  "targets": [
+    "web_server_test"
+  ],
+  "baseline": {
+    "ctest": "^web_session_tcp_test\\.py$",
+    "targets": []
+  },
+  "mutants": [
+    {
+      "id": "stub-configure_tcp_socket-return",
+      "check": "stub: early return from configure_tcp_socket()",
+      "file": "components/web/web.cpp",
+      "find": "void configure_tcp_socket(int socket) {",
+      "replace": "void configure_tcp_socket(int socket) {return;"
+    },
+    {
+      "id": "nodelay-off",
+      "check": "the accepted socket gets TCP_NODELAY",
+      "file": "components/web/web.cpp",
+      "find": "const int no_delay=1;",
+      "replace": "const int no_delay=0;"
+    },
+    {
+      "id": "option-failure-silent",
+      "check": "an option failure is reported",
+      "file": "components/web/web.cpp",
+      "find": "ESP_LOGW(\"web\",\"Could not enable TCP_NODELAY on HTTPS socket: errno %d\",errno);",
+      "replace": "(void)errno;"
+    },
+    {
+      "id": "option-failure-without-errno",
+      "check": "an option failure reports errno",
+      "file": "components/web/web.cpp",
+      "find": "HTTPS socket: errno %d\",errno);",
+      "replace": "HTTPS socket: errno %d\",0);"
+    },
+    {
+      "id": "stub-start-error",
+      "check": "stub: early return from start()",
+      "file": "components/web/web.cpp",
+      "find": "esp_err_t start(httpd_handle_t &handle,const std::string &hostname,const std::string &initial_auth) {",
+      "replace": "esp_err_t start(httpd_handle_t &handle,const std::string &hostname,const std::string &initial_auth) {return -1;"
+    },
+    {
+      "id": "start-credentials-ignored",
+      "check": "a credentials failure stops startup",
+      "file": "components/web/web.cpp",
+      "find": "auto e=credentials_init(initial_auth);if(e!=ESP_OK)return e;",
+      "replace": "auto e=credentials_init(initial_auth);"
+    },
+    {
+      "id": "start-identity-ignored",
+      "check": "an identity failure stops startup",
+      "file": "components/web/web.cpp",
+      "find": "e=tls_identity(hostname,certificate,private_key);if(e!=ESP_OK)return e;",
+      "replace": "e=tls_identity(hostname,certificate,private_key);"
+    },
+    {
+      "id": "start-prepare-ignored",
+      "check": "without the deadline timer the server does not start",
+      "file": "components/web/web.cpp",
+      "find": "e=stall::prepare();if(e!=ESP_OK)return e;",
+      "replace": "e=stall::prepare();"
+    },
+    {
+      "id": "handlers-fewer",
+      "check": "the server holds 32 handlers",
+      "file": "components/web/web.cpp",
+      "find": "cfg.httpd.max_uri_handlers=32;",
+      "replace": "cfg.httpd.max_uri_handlers=31;"
+    },
+    {
+      "id": "stack-smaller",
+      "check": "the server task has a 12288-byte stack",
+      "file": "components/web/web.cpp",
+      "find": "cfg.httpd.stack_size=12288;",
+      "replace": "cfg.httpd.stack_size=12287;"
+    },
+    {
+      "id": "sockets-fewer",
+      "check": "the server holds 8 sockets",
+      "file": "components/web/web.cpp",
+      "find": "cfg.httpd.max_open_sockets=8;",
+      "replace": "cfg.httpd.max_open_sockets=7;"
+    },
+    {
+      "id": "lru-off",
+      "check": "the server purges the least recently used socket",
+      "file": "components/web/web.cpp",
+      "find": "cfg.httpd.lru_purge_enable=true;",
+      "replace": "cfg.httpd.lru_purge_enable=false;"
+    },
+    {
+      "id": "receive-timeout-shorter",
+      "check": "socket receives time out after 15 s",
+      "file": "components/web/web.cpp",
+      "find": "cfg.httpd.recv_wait_timeout=15;",
+      "replace": "cfg.httpd.recv_wait_timeout=14;"
+    },
+    {
+      "id": "send-timeout-shorter",
+      "check": "socket sends time out after 15 s",
+      "file": "components/web/web.cpp",
+      "find": "cfg.httpd.send_wait_timeout=15;",
+      "replace": "cfg.httpd.send_wait_timeout=14;"
+    },
+    {
+      "id": "exact-uri-matching",
+      "check": "URIs match with wildcards",
+      "file": "components/web/web.cpp",
+      "find": "cfg.httpd.uri_match_fn=httpd_uri_match_wildcard;",
+      "replace": "cfg.httpd.uri_match_fn=nullptr;"
+    },
+    {
+      "id": "certificate-pointer",
+      "check": "the server presents the identity certificate",
+      "file": "components/web/web.cpp",
+      "find": "cfg.servercert=reinterpret_cast<const uint8_t *>(certificate.c_str());",
+      "replace": "cfg.servercert=reinterpret_cast<const uint8_t *>(private_key.c_str());"
+    },
+    {
+      "id": "certificate-without-nul",
+      "check": "the certificate length includes its NUL",
+      "file": "components/web/web.cpp",
+      "find": "cfg.servercert_len=certificate.size()+1;",
+      "replace": "cfg.servercert_len=certificate.size();"
+    },
+    {
+      "id": "key-pointer",
+      "check": "the server uses the identity key",
+      "file": "components/web/web.cpp",
+      "find": "cfg.prvtkey_pem=reinterpret_cast<const uint8_t *>(private_key.c_str());",
+      "replace": "cfg.prvtkey_pem=reinterpret_cast<const uint8_t *>(certificate.c_str());"
+    },
+    {
+      "id": "key-without-nul",
+      "check": "the key length includes its NUL",
+      "file": "components/web/web.cpp",
+      "find": "cfg.prvtkey_len=private_key.size()+1;",
+      "replace": "cfg.prvtkey_len=private_key.size();"
+    },
+    {
+      "id": "serve-after-failure",
+      "check": "a server that did not start is not guarded",
+      "file": "components/web/web.cpp",
+      "find": "if(e==ESP_OK)stall::serve(handle);",
+      "replace": "stall::serve(handle);"
+    },
+    {
+      "id": "serve-never",
+      "check": "a started server is guarded",
+      "file": "components/web/web.cpp",
+      "find": "if(e==ESP_OK)stall::serve(handle);",
+      "replace": "if(e!=ESP_OK)stall::serve(handle);"
+    },
+    {
+      "id": "stub-stop-error",
+      "check": "stub: early return from stop()",
+      "file": "components/web/web.cpp",
+      "find": "esp_err_t stop(httpd_handle_t handle) {",
+      "replace": "esp_err_t stop(httpd_handle_t handle) {return -1;"
+    },
+    {
+      "id": "release-before-stopped",
+      "check": "the guard is released only once the server stopped",
+      "file": "components/web/web.cpp",
+      "find": "if(e==ESP_OK)stall::release(handle);",
+      "replace": "stall::release(handle);"
+    },
+    {
+      "id": "stop-hides-failure",
+      "check": "a stop failure is returned",
+      "file": "components/web/web.cpp",
+      "find": "if(e==ESP_OK)stall::release(handle); return e;",
+      "replace": "if(e==ESP_OK)stall::release(handle); return ESP_OK;"
+    },
+    {
+      "id": "stub-route-error",
+      "check": "stub: early return from route()",
+      "file": "components/web/web.cpp",
+      "find": "esp_err_t route(httpd_handle_t handle,const char *path,httpd_method_t method,Handler handler,void *context) {",
+      "replace": "esp_err_t route(httpd_handle_t handle,const char *path,httpd_method_t method,Handler handler,void *context) {return -1;"
+    },
+    {
+      "id": "route-without-context",
+      "check": "a route keeps its context",
+      "file": "components/web/web.cpp",
+      "find": "uri.user_ctx=context;",
+      "replace": "uri.user_ctx=nullptr;(void)context;"
+    },
+    {
+      "id": "stub-__wrap_esp_tls_server_session_create-empty",
+      "check": "stub: early return from __wrap_esp_tls_server_session_create()",
+      "file": "components/web/web.cpp",
+      "find": "extern \"C\" int __wrap_esp_tls_server_session_create(esp_tls_cfg_server_t *cfg, int socket, esp_tls_t *tls) {",
+      "replace": "extern \"C\" int __wrap_esp_tls_server_session_create(esp_tls_cfg_server_t *cfg, int socket, esp_tls_t *tls) { return {};"
+    },
+    {
+      "id": "handshake-without-nodelay",
+      "check": "the handshake socket gets TCP_NODELAY first",
+      "file": "components/web/web.cpp",
+      "find": "web::configure_tcp_socket(socket); web::stall::arm(",
+      "replace": "if(false)web::configure_tcp_socket(socket); web::stall::arm("
+    },
+    {
+      "id": "nodelay-after-handshake",
+      "check": "TCP_NODELAY is set before the SDK handshake",
+      "file": "components/web/web.cpp",
+      "find": "web::configure_tcp_socket(socket); web::stall::arm(socket,web::stall::handshake_us); const int result=__real_esp_tls_server_session_create(cfg,socket,tls);",
+      "replace": "web::stall::arm(socket,web::stall::handshake_us); const int result=__real_esp_tls_server_session_create(cfg,socket,tls); web::configure_tcp_socket(socket);"
+    },
+    {
+      "id": "handshake-unbounded",
+      "check": "the handshake runs under its deadline",
+      "file": "components/web/web.cpp",
+      "find": "web::stall::arm(socket,web::stall::handshake_us); const int",
+      "replace": "const int"
+    },
+    {
+      "id": "handshake-deadline-longer",
+      "check": "the handshake deadline is handshake_us",
+      "file": "components/web/web.cpp",
+      "find": "web::stall::arm(socket,web::stall::handshake_us);",
+      "replace": "web::stall::arm(socket,web::stall::handshake_us+1);"
+    },
+    {
+      "id": "handshake-deadline-after",
+      "check": "the deadline is armed before the SDK handshake",
+      "file": "components/web/web.cpp",
+      "find": "web::stall::arm(socket,web::stall::handshake_us); const int result=__real_esp_tls_server_session_create(cfg,socket,tls);",
+      "replace": "const int result=__real_esp_tls_server_session_create(cfg,socket,tls); web::stall::arm(socket,web::stall::handshake_us);"
+    },
+    {
+      "id": "handshake-not-disarmed",
+      "check": "every handshake result ends its deadline",
+      "file": "components/web/web.cpp",
+      "find": "web::stall::disarm(); return result;",
+      "replace": "return result;"
+    },
+    {
+      "id": "handshake-result-hidden",
+      "check": "the SDK result is returned unchanged",
+      "file": "components/web/web.cpp",
+      "find": "web::stall::disarm(); return result;",
+      "replace": "web::stall::disarm(); return result?-1:0;"
+    },
+    {
+      "id": "handshake-other-socket",
+      "check": "the SDK receives the accepted socket",
+      "file": "components/web/web.cpp",
+      "find": "const int result=__real_esp_tls_server_session_create(cfg,socket,tls);",
+      "replace": "const int result=__real_esp_tls_server_session_create(cfg,socket+1,tls);"
+    },
+    {
+      "id": "cmake-handshake-unwrapped",
+      "check": "CMake wraps esp_tls_server_session_create",
+      "file": "components/web/CMakeLists.txt",
+      "find": "target_link_libraries(${COMPONENT_LIB} INTERFACE \"-Wl,--wrap=esp_tls_server_session_create\")",
+      "replace": "target_link_libraries(${COMPONENT_LIB} INTERFACE)"
+    }
+  ]
+}
