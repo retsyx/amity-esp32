@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 from legacy_fixtures.admission_workflow import PREFIX, RESET
 from setup_timing_support import timing_support
-from slice_support import function
+from slice_support import AMITY_CONSORTIUM_SOURCES, function
 
 ROOT = Path(__file__).resolve().parents[1]
 SUITE = '\n' + RESET + r'''void run(){auto* arg=task_argument;task_argument=nullptr;invite_worker_work(arg);invitation_running=false;}
@@ -150,7 +150,7 @@ def main():
         cpp.write_text(timing_support() + PREFIX + actual + SUITE)
         include = ['tests/reset_fakes', 'components/consortium', 'components/consortium/include',
                    'components/amity_system/include', 'components/device_settings/include']
-        sources = sorted((ROOT / 'components/consortium').glob('*.cpp')) + [ROOT / 'components/amity_system/model.cpp']
+        sources = AMITY_CONSORTIUM_SOURCES + [ROOT / 'components/amity_system/model.cpp']
         subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) +
                        ['-std=c++17', '-pthread', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined'] +
                        ['-I' + str(ROOT / path) for path in include] +

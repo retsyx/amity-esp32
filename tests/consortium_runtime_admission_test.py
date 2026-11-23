@@ -5,7 +5,7 @@ from pathlib import Path
 import shlex
 import subprocess
 import tempfile
-from slice_support import function
+from slice_support import AMITY_CONSORTIUM_SOURCES, function
 
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = r'''
@@ -114,7 +114,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='amity-runtime-admission-') as directory:
         cpp = Path(directory) / 'test.cpp'; binary = Path(directory) / 'test'
         cpp.write_text(PREFIX.replace('// REMOVAL_OPERATION', operation) + trace + actual + SUITE)
-        sources = sorted((ROOT / 'components/consortium').glob('*.cpp')) + [ROOT / 'components/amity_system/model.cpp']
+        sources = AMITY_CONSORTIUM_SOURCES + [ROOT / 'components/amity_system/model.cpp']
         subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) +
                        ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined',
                         '-I' + str(ROOT / 'components/consortium'), '-I' + str(ROOT / 'components/consortium/include'), '-I' + str(ROOT / 'components/amity_system/include')] +

@@ -5,7 +5,7 @@ import os
 import shlex
 import subprocess
 import tempfile
-from slice_support import function
+from slice_support import AMITY_CONSORTIUM_SOURCES, function
 
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = r'''
@@ -77,7 +77,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='amity-group-storage-') as directory:
         cpp, binary = Path(directory) / 'test.cpp', Path(directory) / 'test'
         cpp.write_text(PREFIX + actual + MIDDLE + startup + SUITE)
-        sources = sorted((ROOT / 'components/consortium').glob('*.cpp')) + [ROOT / 'components/amity_system/model.cpp']
+        sources = AMITY_CONSORTIUM_SOURCES + [ROOT / 'components/amity_system/model.cpp']
         subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) + ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined'] +
                        ['-I' + str(ROOT / p) for p in ('components/consortium', 'components/consortium/include', 'components/amity_system/include')] +
                        [str(cpp)] + [str(p) for p in sources] + ['-o', str(binary)], check=True)

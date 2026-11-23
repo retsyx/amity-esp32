@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 
 from setup_timing_support import timing_support
-from slice_support import function
+from slice_support import AMITY_CONSORTIUM_SOURCES, function
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -114,7 +114,7 @@ def main():
         cpp = directory / 'test.cpp'
         binary = directory / 'test'
         cpp.write_text(timing_support() + PREFIX + encoder + actual + SUITE)
-        sources = sorted((ROOT / 'components/consortium').glob('*.cpp')) + [ROOT / 'components/amity_system/model.cpp']
+        sources = AMITY_CONSORTIUM_SOURCES + [ROOT / 'components/amity_system/model.cpp']
         subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) +
                        ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined',
                         '-I' + str(directory), '-I' + str(ROOT / 'components/consortium'), '-I' + str(ROOT / 'components/consortium/include'),

@@ -1,5 +1,4 @@
 #pragma once
-#ifdef ESP_PLATFORM
 #include "amity/consortium/runtime.hpp"
 #include "amity/consortium/credential_types.hpp"
 #include "setup_timing.hpp"
@@ -74,8 +73,6 @@ private:
 };
 std::string envelope_json(const Envelope &,std::string_view payload);
 } // namespace
-#endif
-#ifdef ESP_PLATFORM
 namespace amity::consortium::platform {
 using BootstrapHandler=std::function<esp_err_t(std::string_view,std::string&)>;
 esp_err_t gatt_register();
@@ -91,4 +88,3 @@ void gatt_client_disconnect();
 bool gatt_quiescent();
 bool gatt_candidate_transport_idle();
 }
-#endif

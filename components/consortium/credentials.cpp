@@ -1,5 +1,4 @@
 // Copyright 2026. SPDX-License-Identifier: GPL-3.0-or-later
-#ifdef ESP_PLATFORM
 #include "platform.hpp"
 #include "amity/consortium/hostname.hpp"
 #include "nvs.h"
@@ -105,4 +104,3 @@ esp_err_t load_group(Group &out){
 esp_err_t save_group(const Group &g){if(g.role==Group::unclaimed||g.peers.size()>maximum_roster_peers||!g.consortium||!g.authority||(!g.join_hostname.empty()&&(!g.join_id||!valid_hostname(g.join_hostname))))return ESP_ERR_INVALID_ARG;std::string json="{\"version\":1,\"role\":"+std::to_string(g.role)+",\"consortium\":\""+g.consortium.str()+"\",\"authority\":\""+g.authority.str()+"\",\"revision\":\""+std::to_string(g.revision)+"\",\"host\":\""+g.authority_host+"\",\"join_id\":\""+(g.join_id?g.join_id.str():"")+"\",\"joining_id\":\""+(g.joining_id?g.joining_id.str():"")+"\",\"join_digest\":\""+g.join_digest+"\",\"join_revision\":\""+std::to_string(g.join_revision)+"\",\"peers\":[";for(size_t i=0;i<g.peers.size();++i){const auto &p=g.peers[i];if(i)json+=",";json+="{\"id\":\""+p.id.str()+"\",\"leaf\":\""+hex(p.der)+"\",\"pin\":\""+p.pin+"\",\"active\":"+(p.active?"true":"false")+"}";}json+="]";if(!g.join_hostname.empty())json+=",\"join_hostname\":\""+g.join_hostname+"\"";json+="}";if(json.size()>8192)return ESP_ERR_INVALID_SIZE;
     return write_record("amity_group","state",json);}
 } // namespace
-#endif

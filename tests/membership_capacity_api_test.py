@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 from legacy_fixtures.admission_workflow import PREFIX, RESET
 from setup_timing_support import timing_support
-from slice_support import block, function
+from slice_support import AMITY_CONSORTIUM_SOURCES, block, function
 
 ROOT = Path(__file__).resolve().parents[1]
 SUITE = r'''
@@ -84,7 +84,7 @@ def main():
         (temp / 'test.cpp').write_text(timing_support() + PREFIX + actual + RESET + SUITE + helpers + CHECKS + handler.replace('return true;', 'return;') + TAIL)
         include = ['tests/reset_fakes', 'components/consortium', 'components/consortium/include',
                    'components/amity_system/include', 'components/device_settings/include']
-        sources = sorted((ROOT / 'components/consortium').glob('*.cpp')) + [ROOT / 'components/amity_system/model.cpp']
+        sources = AMITY_CONSORTIUM_SOURCES + [ROOT / 'components/amity_system/model.cpp']
         subprocess.run(['cc', '-g', '-Wno-deprecated-declarations', '-fsanitize=address,undefined', '-I' + str(json_dir),
                         '-c', str(json_dir / 'cJSON.c'), '-o', str(temp / 'json.o')], check=True)
         subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) +

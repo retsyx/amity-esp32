@@ -1,5 +1,4 @@
 // Copyright 2026. SPDX-License-Identifier: GPL-3.0-or-later
-#ifdef ESP_PLATFORM
 #include "admission_crypto.hpp"
 #include "psa/crypto.h"
 #include "mbedtls/platform_util.h"
@@ -112,4 +111,3 @@ failed:
 bool AdmissionServer::encrypt(std::string_view value,std::string& out){return authenticated()&&state_->channel.seal(value,out);}
 bool AdmissionServer::decrypt(std::string_view value,std::string& out){return authenticated()&&state_->channel.open(value,out);}
 } // namespace amity::consortium::platform
-#endif

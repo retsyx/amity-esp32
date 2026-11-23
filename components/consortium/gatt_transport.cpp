@@ -1,5 +1,4 @@
 // Copyright 2026. SPDX-License-Identifier: GPL-3.0-or-later
-#ifdef ESP_PLATFORM
 #include "platform.hpp"
 #include "amity/consortium/bootstrap.hpp"
 #include "admission_crypto.hpp"
@@ -379,4 +378,3 @@ bool gatt_quiescent(){
     return true;
 }
 } // namespace
-#endif

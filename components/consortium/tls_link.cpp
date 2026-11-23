@@ -1,5 +1,4 @@
 // Copyright 2026. SPDX-License-Identifier: GPL-3.0-or-later
-#ifdef ESP_PLATFORM
 #include "platform.hpp"
 #include "mbedtls/ssl_ciphersuites.h"
 #include "mbedtls/net_sockets.h"
@@ -241,4 +240,3 @@ bool TlsLink::receive(std::string &out,uint32_t duration){
 }
 std::string envelope_json(const Envelope &e,std::string_view payload){return "{\"config_revision\":\""+std::to_string(e.config_revision)+"\",\"kind\":\""+kind_name(e.kind)+"\",\"ttl_ms\":"+std::to_string(e.ttl_ms)+",\"payload\":"+std::string(payload)+"}";}
 } // namespace
-#endif

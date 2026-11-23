@@ -1,5 +1,4 @@
 // Copyright 2026. SPDX-License-Identifier: GPL-3.0-or-later
-#ifdef ESP_PLATFORM
 #include "platform.hpp"
 #include "admission_crypto.hpp"
 #include "config_store.hpp"
@@ -1853,4 +1852,3 @@ std::vector<std::pair<model::OctopusId,std::string>> runtime_known_hostnames(){
     return out;
 }
 } // namespace
-#endif
