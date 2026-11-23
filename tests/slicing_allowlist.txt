@@ -32,7 +32,6 @@ hardware_capacity_test.py lint
 homekit_crypto_test.py whole-file
 homekit_http_test.py sdk-slice
 homekit_notifications_test.py pending:Z
-homekit_refresh_test.py pending:H1
 homekit_worker_test.py lint
 hostname_services_test.py pending:Z
 https_response_write_test.py lint

@@ -71,10 +71,19 @@ if(AMITY_TEST_TIER STREQUAL standalone)
     endforeach()
     amity_python_tests(
         homekit_http_test.py
-        homekit_refresh_test.py
         homekit_worker_test.py
     )
 elseif(AMITY_TEST_TIER STREQUAL sdk)
+    amity_test(homekit_refresh_test
+        SOURCES "${T}/homekit_refresh_test.cpp" "${C}/amity_hub/system_control.cpp" "${C}/amity_hub/remote_control.cpp"
+            "${C}/config_store/system_configuration.cpp" "${C}/config_store/configuration_journal.cpp"
+        INCLUDES ${homekit_includes} "${json}"
+        LIBS homekit_harness core_fakes hub_service_seams device_settings_seams ble_remote_seams amity_model cjson
+            OpenSSL::Crypto
+        REGISTRY
+        SCENARIOS saved-names cheap-refresh presentation-edits replacement-and-tombstone display-order home-app-edits
+            edits-refused rejected-save no-request-id input-selection)
+
     amity_python_tests(
         homekit_crypto_test.py
         homekit_notifications_test.py

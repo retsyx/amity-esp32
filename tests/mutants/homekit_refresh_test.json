@@ -1,0 +1,396 @@
+{
+  "ctest": "^homekit_refresh_test\\.",
+  "targets": [
+    "homekit_refresh_test"
+  ],
+  "baseline": {
+    "ctest": "^homekit_refresh_test\\.py$"
+  },
+  "mutants": [
+    {
+      "id": "stub-save_input-fail",
+      "check": "stub: early return from save_input()",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "esp_err_t save_input(unsigned slot,const char *name,int hidden){",
+      "replace": "esp_err_t save_input(unsigned slot,const char *name,int hidden){ return ESP_FAIL;"
+    },
+    {
+      "id": "stub-refresh_display_order-return",
+      "check": "stub: early return from refresh_display_order()",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "void refresh_display_order(const std::array<size_t,inputs.size()> &rank){",
+      "replace": "void refresh_display_order(const std::array<size_t,inputs.size()> &rank){ return;"
+    },
+    {
+      "id": "stub-refresh_inputs-return",
+      "check": "stub: early return from refresh_inputs()",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "void refresh_inputs(){",
+      "replace": "void refresh_inputs(){ return;"
+    },
+    {
+      "id": "stub-refresh_values-return",
+      "check": "stub: early return from refresh_values()",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "void refresh_values(){",
+      "replace": "void refresh_values(){ return;"
+    },
+    {
+      "id": "stub-write-empty",
+      "check": "stub: early return from write()",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "int write(hap_write_data_t data[],int count,void *,void *){",
+      "replace": "int write(hap_write_data_t data[],int count,void *,void *){ return {};"
+    },
+    {
+      "id": "stub-activity_for_slot-empty",
+      "check": "stub: early return from activity_for_slot()",
+      "file": "components/config_store/system_configuration.cpp",
+      "find": "const ConfiguredActivity* activity_for_slot(const Configuration& c, unsigned slot) {",
+      "replace": "const ConfiguredActivity* activity_for_slot(const Configuration& c, unsigned slot) { return {};"
+    },
+    {
+      "id": "stub-external_inputs-empty",
+      "check": "stub: early return from external_inputs()",
+      "file": "components/config_store/system_configuration.cpp",
+      "find": "std::vector<ExternalInput> external_inputs(const Configuration& c) {",
+      "replace": "std::vector<ExternalInput> external_inputs(const Configuration& c) { return {};"
+    },
+    {
+      "id": "stub-ordered_activities-empty",
+      "check": "stub: early return from ordered_activities()",
+      "file": "components/config_store/system_configuration.cpp",
+      "find": "std::vector<model::ActivityId> ordered_activities(const Configuration& c) {",
+      "replace": "std::vector<model::ActivityId> ordered_activities(const Configuration& c) { return {};"
+    },
+    {
+      "id": "save-unused-slot",
+      "check": "an edit of an unused input is refused",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(!activity||entry==candidate.external_slots.end())return ESP_ERR_INVALID_ARG;",
+      "replace": "if(entry==candidate.external_slots.end())return ESP_ERR_INVALID_ARG;"
+    },
+    {
+      "id": "save-alias-equal-to-label-kept",
+      "check": "a name equal to the activity name clears the alias",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(name)entry->alias=activity->label==name?std::string{}:std::string(name);",
+      "replace": "if(name)entry->alias=std::string(name);"
+    },
+    {
+      "id": "save-name-ignored",
+      "check": "a Home app rename is saved",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(name)entry->alias=activity->label==name?std::string{}:std::string(name);",
+      "replace": "if(false)entry->alias=std::string(name);"
+    },
+    {
+      "id": "save-shown-ignored",
+      "check": "showing an input is saved",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(hidden>=0)entry->hidden=hidden!=0;",
+      "replace": "if(hidden>0)entry->hidden=hidden!=0;"
+    },
+    {
+      "id": "save-visibility-inverted",
+      "check": "hiding an input is saved as hidden",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(hidden>=0)entry->hidden=hidden!=0;",
+      "replace": "if(hidden>=0)entry->hidden=hidden==0;"
+    },
+    {
+      "id": "save-unchanged-saved",
+      "check": "an unchanged edit saves nothing",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(entry->alias==previous.alias&&entry->hidden==previous.hidden)return ESP_OK;",
+      "replace": "(void)previous;"
+    },
+    {
+      "id": "save-visibility-unsaved",
+      "check": "a visibility-only edit is saved",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(entry->alias==previous.alias&&entry->hidden==previous.hidden)return ESP_OK;",
+      "replace": "if(entry->alias==previous.alias)return ESP_OK;"
+    },
+    {
+      "id": "save-without-request-id",
+      "check": "a save needs a request ID",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(!request)return ESP_ERR_NO_MEM;",
+      "replace": ""
+    },
+    {
+      "id": "save-expected-revisions",
+      "check": "a save expects the revisions it edited",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "amity::activate_distributed_configuration(std::move(candidate),configuration->revisions(),*request);",
+      "replace": "amity::activate_distributed_configuration(std::move(candidate),{},*request);"
+    },
+    {
+      "id": "order-unsorted",
+      "check": "the display order follows the activity order",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "std::sort(slots.begin(),slots.end(),[&](unsigned a,unsigned b){return rank[a]<rank[b];});",
+      "replace": "(void)rank;"
+    },
+    {
+      "id": "order-reversed",
+      "check": "the display order follows the activity order",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "return rank[a]<rank[b];",
+      "replace": "return rank[a]>rank[b];"
+    },
+    {
+      "id": "order-identifier",
+      "check": "the display order lists input identifiers",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "value[length++]=static_cast<uint8_t>(slot+1);",
+      "replace": "value[length++]=static_cast<uint8_t>(slot);"
+    },
+    {
+      "id": "order-no-separator",
+      "check": "identifiers are separated by empty items",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(length){value[length++]=0;value[length++]=0;}",
+      "replace": "if(false){value[length++]=0;value[length++]=0;}"
+    },
+    {
+      "id": "order-item-type",
+      "check": "identifiers are type-1 items",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "value[length++]=1;value[length++]=1;",
+      "replace": "value[length++]=2;value[length++]=1;"
+    },
+    {
+      "id": "order-always-notifies",
+      "check": "an unchanged order notifies nobody",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(value==display_order_value)return;",
+      "replace": ""
+    },
+    {
+      "id": "order-not-kept",
+      "check": "HomeKit keeps the published order",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "display_order_value=value;\n",
+      "replace": ""
+    },
+    {
+      "id": "inputs-always-rendered",
+      "check": "inputs are rendered only when a revision changes",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(!inputs_dirty&&revision==input_config_revision&&presentation==input_presentation_revision)return;",
+      "replace": ""
+    },
+    {
+      "id": "inputs-presentation-ignored",
+      "check": "a presentation revision renders the inputs",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "revision==input_config_revision&&presentation==input_presentation_revision)return;",
+      "replace": "revision==input_config_revision)return;"
+    },
+    {
+      "id": "inputs-configuration-ignored",
+      "check": "a configuration revision renders the inputs",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(!inputs_dirty&&revision==input_config_revision&&",
+      "replace": "if(!inputs_dirty&&"
+    },
+    {
+      "id": "inputs-revisions-forgotten",
+      "check": "rendered revisions are remembered",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "input_config_revision=revision;input_presentation_revision=presentation;inputs_dirty=false;",
+      "replace": "inputs_dirty=false;"
+    },
+    {
+      "id": "inputs-unused-number",
+      "check": "an unused input is named after its identifier",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "\"Unused \"+std::to_string(i+1)",
+      "replace": "\"Unused \"+std::to_string(i)"
+    },
+    {
+      "id": "inputs-hidden-shown",
+      "check": "a hidden input is hidden",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "hidden=!exists||input->hidden;",
+      "replace": "hidden=!exists;"
+    },
+    {
+      "id": "inputs-unused-shown",
+      "check": "an unused input is hidden",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "hidden=!exists||input->hidden;",
+      "replace": "hidden=exists&&input->hidden;"
+    },
+    {
+      "id": "inputs-configured-inverted",
+      "check": "an activity's input is configured",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "update(in.configured,exists?1:0);",
+      "replace": "update(in.configured,exists?0:1);"
+    },
+    {
+      "id": "inputs-target-unrendered",
+      "check": "the target visibility follows the saved visibility",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "update(in.target_visible,hidden?1:0);",
+      "replace": ""
+    },
+    {
+      "id": "inputs-label-unrendered",
+      "check": "the input label shows the name",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "update_string(in.name,name);update_string(in.label,name);",
+      "replace": "update_string(in.name,name);"
+    },
+    {
+      "id": "inputs-string-always-updated",
+      "check": "unchanged text is not written again",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(value==hap_char_get_val(hc)->s)return;",
+      "replace": "if(value==hap_char_get_val(hc)->s&&false)return;"
+    },
+    {
+      "id": "values-active-zero",
+      "check": "activity 0 is on",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "update(active,s.current_activity>=0);",
+      "replace": "update(active,s.current_activity>0);"
+    },
+    {
+      "id": "values-input-offset",
+      "check": "the selected input is the slot plus one",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "update(active_input,selected?*selected+1:0);",
+      "replace": "update(active_input,selected?*selected:0);"
+    },
+    {
+      "id": "values-audio-unknown",
+      "check": "mute is read while the audio status is known",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "audio_known=s.audio_status_known;",
+      "replace": "audio_known=false;"
+    },
+    {
+      "id": "values-no-inputs",
+      "check": "reads refresh the inputs",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "refresh_inputs();\n    refresh_remote_battery();",
+      "replace": "if(false)refresh_inputs();\n    refresh_remote_battery();"
+    },
+    {
+      "id": "values-no-battery",
+      "check": "reads refresh the remote battery",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "refresh_inputs();\n    refresh_remote_battery();",
+      "replace": "refresh_inputs();\n    if(false)refresh_remote_battery();"
+    },
+    {
+      "id": "write-input-name-64",
+      "check": "an input name is at most 63 bytes",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(d.val.s&&strlen(d.val.s)>0&&strlen(d.val.s)<=63)result=save_input(n,d.val.s,-1);",
+      "replace": "if(d.val.s&&strlen(d.val.s)>0&&strlen(d.val.s)<=64)result=save_input(n,d.val.s,-1);"
+    },
+    {
+      "id": "write-input-name-empty",
+      "check": "an empty input name is refused",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(d.val.s&&strlen(d.val.s)>0&&strlen(d.val.s)<=63)result=save_input(n,d.val.s,-1);",
+      "replace": "if(d.val.s&&strlen(d.val.s)<=63)result=save_input(n,d.val.s,-1);"
+    },
+    {
+      "id": "write-name-hides",
+      "check": "a rename keeps the visibility",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "result=save_input(n,d.val.s,-1);",
+      "replace": "result=save_input(n,d.val.s,1);"
+    },
+    {
+      "id": "write-visibility-range",
+      "check": "the target visibility takes only 0 or 1",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(d.val.i==0||d.val.i==1)result=save_input(n,nullptr,d.val.i);",
+      "replace": "if(d.val.i>=0)result=save_input(n,nullptr,d.val.i);"
+    },
+    {
+      "id": "write-invalid-as-communication",
+      "check": "a refused value is invalid",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "result==ESP_ERR_INVALID_ARG?HAP_STATUS_VAL_INVALID:HAP_STATUS_COMM_ERR;",
+      "replace": "result==ESP_ERR_INVALID_ARG?HAP_STATUS_COMM_ERR:HAP_STATUS_COMM_ERR;"
+    },
+    {
+      "id": "write-failure-as-invalid",
+      "check": "a failed save is a communication error",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "result==ESP_ERR_INVALID_ARG?HAP_STATUS_VAL_INVALID:HAP_STATUS_COMM_ERR;",
+      "replace": "result==ESP_ERR_INVALID_ARG?HAP_STATUS_VAL_INVALID:HAP_STATUS_VAL_INVALID;"
+    },
+    {
+      "id": "write-success-as-failure",
+      "check": "an accepted edit succeeds",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "*d.status=result==ESP_OK?HAP_STATUS_SUCCESS:",
+      "replace": "*d.status=result==ESP_OK?HAP_STATUS_COMM_ERR:"
+    },
+    {
+      "id": "write-no-refresh",
+      "check": "a write refreshes the published values",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "refresh_values();return HAP_SUCCESS;",
+      "replace": "return HAP_SUCCESS;"
+    },
+    {
+      "id": "write-input-any-slot",
+      "check": "only a live slot can be selected",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "(configuration?hub->external_activity(d.val.i-1).has_value():",
+      "replace": "(configuration?true:"
+    },
+    {
+      "id": "slot-tombstone-selected",
+      "check": "a retired slot has no activity",
+      "file": "components/config_store/system_configuration.cpp",
+      "find": "if (s.slot == slot && !s.tombstone) for",
+      "replace": "if (s.slot == slot) for"
+    },
+    {
+      "id": "slot-mismatch",
+      "check": "a slot finds its own activity",
+      "file": "components/config_store/system_configuration.cpp",
+      "find": "if (s.slot == slot && !s.tombstone) for",
+      "replace": "if (s.slot != slot && !s.tombstone) for"
+    },
+    {
+      "id": "external-tombstone-listed",
+      "check": "a retired slot is not an input",
+      "file": "components/config_store/system_configuration.cpp",
+      "find": "if (s.tombstone) continue;",
+      "replace": ""
+    },
+    {
+      "id": "external-alias-ignored",
+      "check": "an alias names the input",
+      "file": "components/config_store/system_configuration.cpp",
+      "find": "s.alias.empty() ? a->label : s.alias, s.hidden}",
+      "replace": "a->label, s.hidden}"
+    },
+    {
+      "id": "external-hidden-dropped",
+      "check": "a hidden slot is a hidden input",
+      "file": "components/config_store/system_configuration.cpp",
+      "find": "s.alias.empty() ? a->label : s.alias, s.hidden}",
+      "replace": "s.alias.empty() ? a->label : s.alias, false}"
+    },
+    {
+      "id": "ordered-saved-order-ignored",
+      "check": "the saved activity order comes first",
+      "file": "components/config_store/system_configuration.cpp",
+      "find": "for(const auto& id:c.activity_order)add(id);",
+      "replace": ""
+    }
+  ]
+}
