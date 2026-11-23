@@ -39,6 +39,15 @@ if(AMITY_TEST_TIER STREQUAL standalone)
             reader-unavailable downgrade upload-rejections python-bundle confirm-pending-image
             confirm-confirmed-image reboot-later log-ring)
     set_tests_properties(system_services_test.python-bundle PROPERTIES FIXTURES_REQUIRED python_update_bundle)
+    amity_test(log_download_test PTHREAD RACE
+        SOURCES "${T}/log_download_test.cpp"
+        INCLUDES ${system_services_includes}
+        LIBS system_services_cpp system_services_fakes core_fakes httpd_fake consortium_runtime_seams
+            device_settings_seams web_request_seams network_diagnostics_seams firmware_update_seams
+            peer_firmware_update_seams group_firmware_update_seams amity_model
+        REGISTRY
+        SCENARIOS setup-failures snapshot main-download http-failure member-send-failure member-download
+            local-memory slow-member stop-during-refusal)
     amity_test(firmware_version_test
         SOURCES "${T}/firmware_version_test.cpp"
         INCLUDES "${C}/system_services/include"
@@ -66,7 +75,6 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         INCLUDES "${T}/firmware_maintenance_fakes" "${C}/system_services/include" "${C}/config_store/include"
             "${C}/amity_system/include")
     amity_python_tests(
-        log_download_test.py
         partition_staging_test.py
         update_bundle_test.py
     )

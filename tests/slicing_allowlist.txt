@@ -38,7 +38,6 @@ hostname_services_test.py pending:Z
 https_response_write_test.py lint
 json_memory_test.py whole-file
 key_release_timing_test.py pending:I
-log_download_test.py pending:F
 matter_auto_commissioning_test.py pending:I
 matter_input_names_test.py pending:Z
 matter_state_publication_test.py pending:Z

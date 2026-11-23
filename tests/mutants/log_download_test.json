@@ -1,0 +1,411 @@
+{
+  "ctest": "^log_download_test\\.",
+  "targets": [
+    "log_download_test"
+  ],
+  "baseline": {
+    "ctest": "^log_download_test\\.py$",
+    "targets": []
+  },
+  "mutants": [
+    {
+      "id": "stub-log_snapshot-empty",
+      "check": "stub: early return from log_snapshot()",
+      "file": "components/system_services/system_services.cpp",
+      "find": "amity::consortium::LogSnapshot log_snapshot() {",
+      "replace": "amity::consortium::LogSnapshot log_snapshot() { return {};"
+    },
+    {
+      "id": "stub-section-empty",
+      "check": "stub: early return from section()",
+      "file": "components/system_services/log_download.cpp",
+      "find": "std::string section(std::string_view role,std::string_view hostname,amity::system::OctopusId id,std::string_view boot){",
+      "replace": "std::string section(std::string_view role,std::string_view hostname,amity::system::OctopusId id,std::string_view boot){return {};"
+    },
+    {
+      "id": "stub-stream_logs-fail",
+      "check": "stub: early return from stream_logs()",
+      "file": "components/system_services/log_download.cpp",
+      "find": "esp_err_t stream_logs(httpd_req_t* req,amity::system::OctopusId local){",
+      "replace": "esp_err_t stream_logs(httpd_req_t* req,amity::system::OctopusId local){return ESP_FAIL;"
+    },
+    {
+      "id": "stub-download_worker-return",
+      "check": "stub: early return from download_worker()",
+      "file": "components/system_services/log_download.cpp",
+      "find": "void download_worker(void*){",
+      "replace": "void download_worker(void*){return;"
+    },
+    {
+      "id": "stub-download_logs-fail",
+      "check": "stub: early return from download_logs()",
+      "file": "components/system_services/log_download.cpp",
+      "find": "esp_err_t download_logs(httpd_req_t* req,amity::system::OctopusId local){",
+      "replace": "esp_err_t download_logs(httpd_req_t* req,amity::system::OctopusId local){return ESP_FAIL;"
+    },
+    {
+      "id": "stub-stop_log_downloads-return",
+      "check": "stub: early return from stop_log_downloads()",
+      "file": "components/system_services/log_download.cpp",
+      "find": "void stop_log_downloads(){",
+      "replace": "void stop_log_downloads(){return;"
+    },
+    {
+      "id": "queue-failure-ignored",
+      "check": "a download without a queue is refused",
+      "file": "components/system_services/log_download.cpp",
+      "find": "if(!download_queue)return web::error(req,\"Cannot start log download.\",\"503 Service Unavailable\");",
+      "replace": ""
+    },
+    {
+      "id": "task-failure-keeps-queue",
+      "check": "a download without a worker deletes its queue",
+      "file": "components/system_services/log_download.cpp",
+      "find": "vQueueDelete(download_queue);download_queue=nullptr;\n            return web::error",
+      "replace": "download_queue=nullptr;\n            return web::error"
+    },
+    {
+      "id": "task-failure-ignored",
+      "check": "a download without a worker is refused",
+      "file": "components/system_services/log_download.cpp",
+      "find": "if(xTaskCreateWithCaps(download_worker,\"log_download\",8192,nullptr,2,&download_task,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS){",
+      "replace": "if(xTaskCreateWithCaps(download_worker,\"log_download\",8192,nullptr,2,&download_task,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS&&false){"
+    },
+    {
+      "id": "worker-without-psram",
+      "check": "the worker's stack is in PSRAM",
+      "file": "components/system_services/log_download.cpp",
+      "find": "&download_task,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)",
+      "replace": "&download_task,MALLOC_CAP_8BIT)"
+    },
+    {
+      "id": "worker-on-every-download",
+      "check": "one lazy worker serves every download",
+      "file": "components/system_services/log_download.cpp",
+      "find": "if(!download_task){",
+      "replace": "if(true){"
+    },
+    {
+      "id": "begin-failure-ignored",
+      "check": "a download without an asynchronous request is refused",
+      "file": "components/system_services/log_download.cpp",
+      "find": "if(httpd_req_async_handler_begin(req,&async)!=ESP_OK)\n        return web::error(req,\"Cannot start log download.\",\"503 Service Unavailable\");",
+      "replace": "httpd_req_async_handler_begin(req,&async);"
+    },
+    {
+      "id": "send-failure-keeps-request",
+      "check": "a download the queue cannot take releases its request",
+      "file": "components/system_services/log_download.cpp",
+      "find": "guard.lock();active_request=nullptr;guard.unlock();download_finished.notify_all();",
+      "replace": "download_finished.notify_all();"
+    },
+    {
+      "id": "send-failure-not-completed",
+      "check": "a download the queue cannot take completes its asynchronous request",
+      "file": "components/system_services/log_download.cpp",
+      "find": "active_socket=-1;guard.unlock();\n        httpd_req_async_handler_complete(async);",
+      "replace": "active_socket=-1;guard.unlock();"
+    },
+    {
+      "id": "send-failure-completes-locked",
+      "check": "a refused download completes its request without the download lock",
+      "file": "components/system_services/log_download.cpp",
+      "find": "active_socket=-1;guard.unlock();\n        httpd_req_async_handler_complete(async);\n        guard.lock();active_request=nullptr;guard.unlock();",
+      "replace": "active_socket=-1;\n        httpd_req_async_handler_complete(async);\n        active_request=nullptr;guard.unlock();"
+    },
+    {
+      "id": "snapshot-allocated-locked",
+      "check": "a snapshot is allocated outside the ring lock",
+      "file": "components/system_services/system_services.cpp",
+      "find": "auto* bytes=static_cast<char*>(heap_caps_malloc(ring.size(),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));\n    if(!bytes)return {};\n    std::shared_ptr<const char> snapshot(bytes,[](const char* data){heap_caps_free(const_cast<char*>(data));});\n    xSemaphoreTake(lock,portMAX_DELAY);",
+      "replace": "xSemaphoreTake(lock,portMAX_DELAY);\n    auto* bytes=static_cast<char*>(heap_caps_malloc(ring.size(),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));\n    if(!bytes){xSemaphoreGive(lock);return {};}\n    std::shared_ptr<const char> snapshot(bytes,[](const char* data){heap_caps_free(const_cast<char*>(data));});"
+    },
+    {
+      "id": "snapshot-without-psram",
+      "check": "a snapshot is in PSRAM",
+      "file": "components/system_services/system_services.cpp",
+      "find": "heap_caps_malloc(ring.size(),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)",
+      "replace": "heap_caps_malloc(ring.size(),MALLOC_CAP_8BIT)"
+    },
+    {
+      "id": "snapshot-half-size",
+      "check": "a snapshot holds the whole ring",
+      "file": "components/system_services/system_services.cpp",
+      "find": "heap_caps_malloc(ring.size(),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)",
+      "replace": "heap_caps_malloc(ring.size()/2,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)"
+    },
+    {
+      "id": "snapshot-never-freed",
+      "check": "a snapshot is freed with its last owner",
+      "file": "components/system_services/system_services.cpp",
+      "find": "std::shared_ptr<const char> snapshot(bytes,[](const char* data){heap_caps_free(const_cast<char*>(data));});",
+      "replace": "std::shared_ptr<const char> snapshot(bytes,[](const char*){});"
+    },
+    {
+      "id": "snapshot-from-ring-start",
+      "check": "a snapshot starts at the oldest byte",
+      "file": "components/system_services/system_services.cpp",
+      "find": "const size_t size=used,start=(cursor+ring.size()-size)%ring.size();",
+      "replace": "const size_t size=used,start=0;"
+    },
+    {
+      "id": "snapshot-failure-unchecked",
+      "check": "a failed snapshot allocation gives no snapshot",
+      "file": "components/system_services/system_services.cpp",
+      "find": "if(!bytes)return {};",
+      "replace": ""
+    },
+    {
+      "id": "snapshot-short",
+      "check": "a snapshot holds every captured byte",
+      "file": "components/system_services/system_services.cpp",
+      "find": "for(size_t i=0;i<size;++i)bytes[i]=ring[(start+i)%ring.size()];\n    xSemaphoreGive(lock);\n    return {std::move(snapshot),size};",
+      "replace": "for(size_t i=0;i<size;++i)bytes[i]=ring[(start+i)%ring.size()];\n    xSemaphoreGive(lock);\n    return {std::move(snapshot),size?size-1:0};"
+    },
+    {
+      "id": "filename-extension",
+      "check": "the file is named after the hostname",
+      "file": "components/system_services/log_download.cpp",
+      "find": "\"attachment; filename=\"+hostname+\".log\"",
+      "replace": "\"attachment; filename=\"+hostname+\".txt\""
+    },
+    {
+      "id": "disposition-temporary",
+      "check": "the file name outlives the response head",
+      "file": "components/system_services/log_download.cpp",
+      "find": "httpd_resp_set_hdr(req,\"Content-Disposition\",disposition.c_str());",
+      "replace": "httpd_resp_set_hdr(req,\"Content-Disposition\",(\"attachment; filename=\"+hostname+\".log\").c_str());"
+    },
+    {
+      "id": "cache-allowed",
+      "check": "the download is not cached",
+      "file": "components/system_services/log_download.cpp",
+      "find": "httpd_resp_set_hdr(req,\"Cache-Control\",\"no-store\");",
+      "replace": ""
+    },
+    {
+      "id": "content-type",
+      "check": "the download is UTF-8 text",
+      "file": "components/system_services/log_download.cpp",
+      "find": "httpd_resp_set_type(req,\"text/plain; charset=utf-8\");",
+      "replace": "httpd_resp_set_type(req,\"text/plain\");"
+    },
+    {
+      "id": "main-not-named",
+      "check": "the main's section says so",
+      "file": "components/system_services/log_download.cpp",
+      "find": "main?\"Main Amity\":\"Amity\"",
+      "replace": "\"Amity\""
+    },
+    {
+      "id": "local-boot-unknown",
+      "check": "the local section names this boot",
+      "file": "components/system_services/log_download.cpp",
+      "find": "section(main?\"Main Amity\":\"Amity\",hostname,local,boot_id())",
+      "replace": "section(main?\"Main Amity\":\"Amity\",hostname,local,\"\")"
+    },
+    {
+      "id": "local-chunks-double",
+      "check": "the local log goes out in log chunks",
+      "file": "components/system_services/log_download.cpp",
+      "find": "{snapshot.bytes.get()+offset,std::min(c::log_chunk_bytes,snapshot.size-offset)}",
+      "replace": "{snapshot.bytes.get()+offset,std::min(2*c::log_chunk_bytes,snapshot.size-offset)}"
+    },
+    {
+      "id": "snapshot-per-chunk",
+      "check": "the local log streams from one snapshot",
+      "file": "components/system_services/log_download.cpp",
+      "find": "{snapshot.bytes.get()+offset,std::min(c::log_chunk_bytes,snapshot.size-offset)}",
+      "replace": "{log_snapshot().bytes.get()+offset,std::min(c::log_chunk_bytes,snapshot.size-offset)}"
+    },
+    {
+      "id": "snapshot-held-for-members",
+      "check": "the local snapshot is freed before member logs are pulled",
+      "file": "components/system_services/log_download.cpp",
+      "find": "{\n        // Free the local snapshot before fetching any secondary. The main\n        // retains only the current transport chunk while members are read.\n        const auto snapshot=log_snapshot();",
+      "replace": "const auto snapshot=log_snapshot();{"
+    },
+    {
+      "id": "no-local-logs-message",
+      "check": "an empty local log says so",
+      "file": "components/system_services/log_download.cpp",
+      "find": "else if(!snapshot.size){if(!stream(\"[No logs captured.]\\n\"))return ESP_FAIL;}",
+      "replace": "else if(!snapshot.size){if(!stream(\"\\n\"))return ESP_FAIL;}"
+    },
+    {
+      "id": "local-memory-message",
+      "check": "a missing local snapshot says why",
+      "file": "components/system_services/log_download.cpp",
+      "find": "\"[Local logs unavailable: insufficient memory.]\\n\"",
+      "replace": "\"[Local logs unavailable.]\\n\""
+    },
+    {
+      "id": "unenrolled-pulled",
+      "check": "unenrolled members are skipped",
+      "file": "components/system_services/log_download.cpp",
+      "find": "if(!peer.enrolled||peer.provisional||peer.id==local)continue;",
+      "replace": "if(peer.provisional||peer.id==local)continue;"
+    },
+    {
+      "id": "provisional-pulled",
+      "check": "provisional members are skipped",
+      "file": "components/system_services/log_download.cpp",
+      "find": "if(!peer.enrolled||peer.provisional||peer.id==local)continue;",
+      "replace": "if(!peer.enrolled||peer.id==local)continue;"
+    },
+    {
+      "id": "self-pulled",
+      "check": "this device is not pulled as a member",
+      "file": "components/system_services/log_download.cpp",
+      "find": "if(!peer.enrolled||peer.provisional||peer.id==local)continue;",
+      "replace": "if(!peer.enrolled||peer.provisional)continue;"
+    },
+    {
+      "id": "member-boot-zero",
+      "check": "a member without a boot id has an unknown boot",
+      "file": "components/system_services/log_download.cpp",
+      "find": "const auto peer_boot=peer.boot_id?peer.boot_id.str():std::string{};",
+      "replace": "const auto peer_boot=peer.boot_id.str();"
+    },
+    {
+      "id": "member-hostname-dropped",
+      "check": "member sections name the member",
+      "file": "components/system_services/log_download.cpp",
+      "find": "if(!stream(section(\"Amity\",peer.hostname,peer.id,peer_boot)))return ESP_FAIL;",
+      "replace": "if(!stream(section(\"Amity\",\"\",peer.id,peer_boot)))return ESP_FAIL;"
+    },
+    {
+      "id": "partial-not-reported",
+      "check": "a member log cut short says some logs may be missing",
+      "file": "components/system_services/log_download.cpp",
+      "find": "unavailable(result,received!=0)",
+      "replace": "unavailable(result,false)"
+    },
+    {
+      "id": "timeout-message",
+      "check": "a member that does not answer in time says so",
+      "file": "components/system_services/log_download.cpp",
+      "find": "if(error==ESP_ERR_TIMEOUT)return \"[Logs unavailable: the device did not respond in time.]\\n\";",
+      "replace": ""
+    },
+    {
+      "id": "busy-message",
+      "check": "a busy member says so",
+      "file": "components/system_services/log_download.cpp",
+      "find": "if(error==ESP_ERR_NO_MEM)return \"[Logs unavailable: insufficient memory or the device is busy.]\\n\";",
+      "replace": ""
+    },
+    {
+      "id": "unreachable-message",
+      "check": "an unreachable member says so",
+      "file": "components/system_services/log_download.cpp",
+      "find": "return \"[Logs unavailable: the device could not be reached or is not ready.]\\n\";",
+      "replace": "return \"[Logs unavailable.]\\n\";"
+    },
+    {
+      "id": "empty-member-silent",
+      "check": "a member without logs says so",
+      "file": "components/system_services/log_download.cpp",
+      "find": "else if(!received&&!stream(\"[No logs captured.]\\n\"))return ESP_FAIL;",
+      "replace": "else if(false)return ESP_FAIL;"
+    },
+    {
+      "id": "response-not-ended",
+      "check": "a download ends with the final chunk",
+      "file": "components/system_services/log_download.cpp",
+      "find": "return httpd_resp_send_chunk(req,nullptr,0);",
+      "replace": "return ESP_OK;"
+    },
+    {
+      "id": "stopping-keeps-streaming",
+      "check": "stopping ends a download that is streaming",
+      "file": "components/system_services/log_download.cpp",
+      "find": "if(stopping.load())return connected=false;",
+      "replace": "if(false)return connected=false;"
+    },
+    {
+      "id": "member-device-pulls",
+      "check": "a member downloads only its own log",
+      "file": "components/system_services/log_download.cpp",
+      "find": "if(main)for(const auto& peer:c::runtime_peers()){",
+      "replace": "for(const auto& peer:c::runtime_peers()){"
+    },
+    {
+      "id": "failure-not-shut",
+      "check": "a failed download shuts its connection",
+      "file": "components/system_services/log_download.cpp",
+      "find": "if(result!=ESP_OK&&active_socket>=0)shutdown(active_socket,SHUT_RDWR);",
+      "replace": "(void)result;"
+    },
+    {
+      "id": "success-shut",
+      "check": "a finished download keeps its connection",
+      "file": "components/system_services/log_download.cpp",
+      "find": "if(result!=ESP_OK&&active_socket>=0)shutdown(active_socket,SHUT_RDWR);",
+      "replace": "(void)result;if(active_socket>=0)shutdown(active_socket,SHUT_RDWR);"
+    },
+    {
+      "id": "socket-kept",
+      "check": "a finished download forgets its connection",
+      "file": "components/system_services/log_download.cpp",
+      "find": "if(result!=ESP_OK&&active_socket>=0)shutdown(active_socket,SHUT_RDWR);\n            active_socket=-1;",
+      "replace": "if(result!=ESP_OK&&active_socket>=0)shutdown(active_socket,SHUT_RDWR);"
+    },
+    {
+      "id": "request-released-before-completion",
+      "check": "a download stays admitted until its request completes",
+      "file": "components/system_services/log_download.cpp",
+      "find": "if(result!=ESP_OK&&active_socket>=0)shutdown(active_socket,SHUT_RDWR);\n            active_socket=-1;",
+      "replace": "if(result!=ESP_OK&&active_socket>=0)shutdown(active_socket,SHUT_RDWR);\n            active_socket=-1;active_request=nullptr;"
+    },
+    {
+      "id": "completion-locked",
+      "check": "a download completes its request without the download lock",
+      "file": "components/system_services/log_download.cpp",
+      "find": "active_socket=-1;\n        }\n        // Completion can wait for HTTPD's control mailbox. Do not hold a mutex\n        // that an HTTP handler needs while that task drains its mailbox.\n        const auto completed=httpd_req_async_handler_complete(job.request);\n        if(completed!=ESP_OK)ESP_LOGW(\"logs\",\"Could not wake HTTP server after log download: %d\",int(completed));\n        {",
+      "replace": "active_socket=-1;\n        const auto completed=httpd_req_async_handler_complete(job.request);\n        if(completed!=ESP_OK)ESP_LOGW(\"logs\",\"Could not wake HTTP server after log download: %d\",int(completed));\n        }\n        {"
+    },
+    {
+      "id": "request-never-released",
+      "check": "a finished download releases its request",
+      "file": "components/system_services/log_download.cpp",
+      "find": "std::lock_guard<std::mutex> guard(download_mutex);\n            active_request=nullptr;",
+      "replace": "std::lock_guard<std::mutex> guard(download_mutex);"
+    },
+    {
+      "id": "concurrent-admitted",
+      "check": "a download is refused while another one runs",
+      "file": "components/system_services/log_download.cpp",
+      "find": "if(active_request)return web::error(req,\"A log download is already in progress.\",\"503 Service Unavailable\");",
+      "replace": ""
+    },
+    {
+      "id": "stopping-admits",
+      "check": "downloads are refused once stopping",
+      "file": "components/system_services/log_download.cpp",
+      "find": "std::unique_lock<std::mutex> guard(download_mutex);\n    stopping.store(true);",
+      "replace": "std::unique_lock<std::mutex> guard(download_mutex);"
+    },
+    {
+      "id": "stop-not-shut",
+      "check": "stopping shuts the running download's connection",
+      "file": "components/system_services/log_download.cpp",
+      "find": "if(active_socket>=0)shutdown(active_socket,SHUT_RDWR);\n    download_finished.wait(guard,[]{return !active_request;});",
+      "replace": "download_finished.wait(guard,[]{return !active_request;});"
+    },
+    {
+      "id": "stop-not-waiting",
+      "check": "stopping waits for the running download",
+      "file": "components/system_services/log_download.cpp",
+      "find": "if(active_socket>=0)shutdown(active_socket,SHUT_RDWR);\n    download_finished.wait(guard,[]{return !active_request;});",
+      "replace": "if(active_socket>=0)shutdown(active_socket,SHUT_RDWR);"
+    },
+    {
+      "id": "stop-keeps-queue",
+      "check": "stopping deletes the queue",
+      "file": "components/system_services/log_download.cpp",
+      "find": "download_finished.wait(guard,[]{return !download_task;});\n        vQueueDelete(download_queue);download_queue=nullptr;",
+      "replace": "download_finished.wait(guard,[]{return !download_task;});\n        download_queue=nullptr;"
+    }
+  ]
+}
