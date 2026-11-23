@@ -133,8 +133,22 @@ struct Bench {
     }
     // The main stops: its task, wires and every bit of its state end.
     void stop_main(){link_up=false;latest_task=main_task;main.reset();main_task=nullptr;latest_task=member_task;}
+    // After the lost link the member enumerates no bus: not for the bind, not
+    // for adoption and not for a later selection, whose devices stay cached.
+    unsigned lost_generation=~0u;
+    ~Bench(){
+        if(lost_generation==~0u)return;
+        const auto state=member.snapshot();
+        CHECK(state.discovery_generation==lost_generation&&!state.discovering,"the member enumerates no bus after the lost link (generation %u -> %u, discovering=%d)",
+            lost_generation,state.discovery_generation,state.discovering);
+    }
     // The member's link task detects the lost connection (system_sync disconnected).
-    void link_lost(){latest_task=member_task;assert(member.fence_owned(controller,link));pump(6);}
+    // The main comes back long after the member's last scan, outside its 120 s
+    // lookup cooldown, so any scan the bind or adoption asked for would run.
+    void link_lost(){
+        latest_task=member_task;assert(member.fence_owned(controller,link));pump(6);
+        lost_generation=member.snapshot().discovery_generation;fixture_time+=121000000;
+    }
     // The main boots with a new boot ID, its saved configuration and no selection.
     void boot_main(){main_boot=second_boot;start_main();}
     m::OwnedContextResult reboot_main(){stop_main();link_lost();boot_main();return reconnect();}
