@@ -61,12 +61,14 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         battery-task battery-update-fails)
     # app_main has two #if blocks. main_test builds with both settings off and
     # main_production_test with both on, so a step inside an #if block fails
-    # one of them.
+    # one of them. Retirement races a publication on two threads, so the
+    # thread build runs both.
     amity_test(main_test
         SOURCES "${T}/main_test.cpp"
         INCLUDES ${main_includes}
         LIBS ${main_libs} main_system_configuration_seams
         PTHREAD
+        RACE
         REGISTRY
         SCENARIOS ${main_scenarios})
     amity_test(main_production_test
@@ -75,6 +77,7 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         DEFINES CONFIG_SPIRAM_USE_MALLOC=1 CONFIG_AMITY_PRODUCTION_UPDATES=1
         LIBS ${main_libs} main_system_configuration_seams
         PTHREAD
+        RACE
         REGISTRY
         SCENARIOS ${main_scenarios})
     # As in the firmware build, an unused function is only a warning, so a
