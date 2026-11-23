@@ -7,7 +7,6 @@
 admin_rejection_test.py pending:E1
 admission_workflow_test.py pending:A2
 allocation_failure_diagnostics_test.py pending:F
-apple_fabric_lifecycle_test.py pending:G1
 board_profile_config_test.py whole-file
 configuration_snapshot_web_test.py pending:E1
 console_latency_observer_test.py pending:F

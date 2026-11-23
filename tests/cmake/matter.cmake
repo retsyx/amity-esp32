@@ -19,8 +19,18 @@ if(AMITY_TEST_TIER STREQUAL standalone)
     target_link_libraries(amity_matter_fakes PRIVATE strict)
     set(matter_includes "${T}/core_fakes" "${T}/amity_matter_fakes")
 
+    amity_host_compile(apple_fabrics
+        SOURCES "${C}/amity_matter/apple_fabrics.cpp"
+        INCLUDES ${matter_includes} "${C}/amity_matter/include")
+    amity_test(apple_fabrics_test
+        SOURCES "${T}/apple_fabrics_test.cpp"
+        INCLUDES ${matter_includes} "${C}/amity_matter/include"
+        LIBS amity_matter_fakes core_fakes
+        REGISTRY
+        SCENARIOS stop-fences-queued-work fail-safe-retry cleanup public-functions storage-errors delegate-refused
+            scheduling-retry deletion-retry last-home-removed home-committed commit-reschedules pending-fabric-ignored)
+
     amity_python_tests(
-        apple_fabric_lifecycle_test.py
         consortium_network_connect_test.py
         radio_matter_handoff_test.py
     )

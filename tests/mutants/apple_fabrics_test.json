@@ -1,0 +1,315 @@
+{
+  "ctest": "^apple_fabrics_test\\.",
+  "targets": [
+    "apple_fabrics_test"
+  ],
+  "baseline": {
+    "ctest": "^apple_fabric_lifecycle_test\\.py$",
+    "targets": []
+  },
+  "mutants": [
+    {
+      "id": "stub-start",
+      "check": "stub: early return from start()",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "esp_err_t start()\n    {",
+      "replace": "esp_err_t start()\n    {return ESP_FAIL;"
+    },
+    {
+      "id": "stub-stop",
+      "check": "stub: early return from stop()",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "void stop()\n    {",
+      "replace": "void stop()\n    {return;"
+    },
+    {
+      "id": "stub-FabricWillBeRemoved",
+      "check": "stub: early return from FabricWillBeRemoved()",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "void FabricWillBeRemoved(const chip::FabricTable &, chip::FabricIndex index) override\n    {",
+      "replace": "void FabricWillBeRemoved(const chip::FabricTable &, chip::FabricIndex index) override\n    {return;"
+    },
+    {
+      "id": "stub-OnFabricRemoved",
+      "check": "stub: early return from OnFabricRemoved()",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "void OnFabricRemoved(const chip::FabricTable &, chip::FabricIndex index) override\n    {",
+      "replace": "void OnFabricRemoved(const chip::FabricTable &, chip::FabricIndex index) override\n    {return;"
+    },
+    {
+      "id": "stub-OnFabricCommitted",
+      "check": "stub: early return from OnFabricCommitted()",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "void OnFabricCommitted(const chip::FabricTable &table, chip::FabricIndex index) override\n    {",
+      "replace": "void OnFabricCommitted(const chip::FabricTable &table, chip::FabricIndex index) override\n    {return;"
+    },
+    {
+      "id": "stub-save_pending",
+      "check": "stub: early return from save_pending()",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "void save_pending(bool pending)\n    {",
+      "replace": "void save_pending(bool pending)\n    {return;"
+    },
+    {
+      "id": "stub-schedule",
+      "check": "stub: early return from schedule()",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "void schedule()\n    {",
+      "replace": "void schedule()\n    {return;"
+    },
+    {
+      "id": "stub-retry",
+      "check": "stub: early return from retry()",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "void retry()\n    {",
+      "replace": "void retry()\n    {return;"
+    },
+    {
+      "id": "stub-retry_callback",
+      "check": "stub: early return from retry_callback()",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "static void retry_callback(chip::System::Layer *, void *context)\n    {",
+      "replace": "static void retry_callback(chip::System::Layer *, void *context)\n    {return;"
+    },
+    {
+      "id": "stub-cleanup",
+      "check": "stub: early return from cleanup()",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "void cleanup()\n    {",
+      "replace": "void cleanup()\n    {return;"
+    },
+    {
+      "id": "stub-start_apple_fabric_cleanup",
+      "check": "stub: early return from start_apple_fabric_cleanup()",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "esp_err_t start_apple_fabric_cleanup() {",
+      "replace": "esp_err_t start_apple_fabric_cleanup() { return ESP_FAIL;"
+    },
+    {
+      "id": "stub-stop_apple_fabric_cleanup",
+      "check": "stub: early return from stop_apple_fabric_cleanup()",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "void stop_apple_fabric_cleanup() {",
+      "replace": "void stop_apple_fabric_cleanup() { return;"
+    },
+    {
+      "id": "stop-keeps-delegate",
+      "check": "stop() removes the fabric delegate",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "chip::Server::GetInstance().GetFabricTable().RemoveFabricDelegate(this);",
+      "replace": ""
+    },
+    {
+      "id": "stop-keeps-timer",
+      "check": "stop() cancels the retry timer",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "chip::DeviceLayer::SystemLayer().CancelTimer(retry_callback, this);",
+      "replace": ""
+    },
+    {
+      "id": "stop-cancels-other-timer",
+      "check": "stop() cancels the timer of this callback and object",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "CancelTimer(retry_callback, this);",
+      "replace": "CancelTimer(retry_callback, nullptr);"
+    },
+    {
+      "id": "stop-stays-active",
+      "check": "stop() fences CHIP work queued before it",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "if (!active_) return;\n        active_ = false;",
+      "replace": "if (!active_) return;"
+    },
+    {
+      "id": "stop-repeats",
+      "check": "a second stop() does nothing",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "if (!active_) return;\n        active_ = false;",
+      "replace": "active_ = false;"
+    },
+    {
+      "id": "cleanup-ignores-stop",
+      "check": "queued cleanup does nothing after stop()",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "if (!active_ || !policy_.pending()) return;",
+      "replace": "if (!policy_.pending()) return;"
+    },
+    {
+      "id": "schedule-ignores-stop",
+      "check": "nothing is scheduled after stop()",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "if (!active_ || scheduled_) return;",
+      "replace": "if (scheduled_) return;",
+      "survives": "schedule() runs only from start() after it sets active_, from delegate callbacks the table no longer makes after stop(), and from the retry timer, which stop() cancels"
+    },
+    {
+      "id": "retry-ignores-stop",
+      "check": "no retry timer starts after stop()",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "if (!active_) return;\n        const CHIP_ERROR err",
+      "replace": "const CHIP_ERROR err",
+      "survives": "retry() runs from cleanup() and schedule(), which return before it once stop() has run"
+    },
+    {
+      "id": "fail-safe-ignored",
+      "check": "an armed fail-safe defers cleanup",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "if (!server.GetFailSafeContext().IsFailSafeFullyDisarmed()) { retry(); return; }",
+      "replace": ""
+    },
+    {
+      "id": "fail-safe-no-retry",
+      "check": "an armed fail-safe retries cleanup later",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "IsFailSafeFullyDisarmed()) { retry(); return; }",
+      "replace": "IsFailSafeFullyDisarmed()) { return; }"
+    },
+    {
+      "id": "retry-after-two-seconds",
+      "check": "cleanup retries after one second",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "chip::System::Clock::Seconds32(1)",
+      "replace": "chip::System::Clock::Seconds32(2)"
+    },
+    {
+      "id": "cleanup-skips-delete",
+      "check": "cleanup deletes the Apple Keychain fabric",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "const auto err = table.Delete(keychains[i]);",
+      "replace": "const auto err = CHIP_NO_ERROR;"
+    },
+    {
+      "id": "cleanup-deletes-homes",
+      "check": "cleanup deletes only Apple Keychain fabrics",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "== apple_keychain_vendor)",
+      "replace": "== apple_home_vendor)"
+    },
+    {
+      "id": "cleanup-keeps-marker",
+      "check": "cleanup clears the persisted pending marker",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "save_pending(false);",
+      "replace": "save_pending(true);"
+    },
+    {
+      "id": "cleanup-ignores-home",
+      "check": "a committed Home keeps the Keychain fabric",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "if (!policy_.has_home()) {",
+      "replace": "if (true) {"
+    },
+    {
+      "id": "delete-failure-no-retry",
+      "check": "a failed deletion retries",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "ESP_LOGW(tag, \"Apple Keychain cleanup failed: %\" CHIP_ERROR_FORMAT, err.Format());\n                    retry();",
+      "replace": "ESP_LOGW(tag, \"Apple Keychain cleanup failed: %\" CHIP_ERROR_FORMAT, err.Format());"
+    },
+    {
+      "id": "save-inverted",
+      "check": "the marker records the intent",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "pending ? 1 : 0",
+      "replace": "pending ? 0 : 1"
+    },
+    {
+      "id": "save-skips-commit",
+      "check": "the marker is committed",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "if (err == ESP_OK) err = nvs_commit(storage_);",
+      "replace": ""
+    },
+    {
+      "id": "start-fails-on-missing-marker",
+      "check": "a missing marker means nothing is pending",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) return err;",
+      "replace": "if (err != ESP_OK && (err != ESP_ERR_NVS_NOT_FOUND || true)) return err;"
+    },
+    {
+      "id": "start-ignores-read-error",
+      "check": "start() fails when the marker cannot be read",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) return err;",
+      "replace": "if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND && false) return err;"
+    },
+    {
+      "id": "start-counts-pending-fabric",
+      "check": "a fabric still being commissioned is not a committed Home",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "if (fabric.GetFabricIndex() != table.GetPendingNewFabricIndex())",
+      "replace": "if (true)"
+    },
+    {
+      "id": "start-skips-schedule",
+      "check": "a restored marker schedules cleanup",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "active_ = true;\n        if (policy_.pending()) schedule();",
+      "replace": "active_ = true;"
+    },
+    {
+      "id": "start-ignores-delegate-failure",
+      "check": "start() fails when the table refuses the delegate",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "if (added != CHIP_NO_ERROR) return ESP_FAIL;",
+      "replace": "if (added != CHIP_NO_ERROR && false) return ESP_FAIL;"
+    },
+    {
+      "id": "schedule-twice",
+      "check": "cleanup is queued once",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "if (!active_ || scheduled_) return;",
+      "replace": "if (!active_) return;"
+    },
+    {
+      "id": "schedule-failure-no-retry",
+      "check": "refused CHIP work retries",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "ESP_LOGW(tag, \"Cannot schedule Apple cleanup: %\" CHIP_ERROR_FORMAT, err.Format());\n            retry();",
+      "replace": "ESP_LOGW(tag, \"Cannot schedule Apple cleanup: %\" CHIP_ERROR_FORMAT, err.Format());"
+    },
+    {
+      "id": "schedule-failure-stays-scheduled",
+      "check": "refused CHIP work can be scheduled again",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "if (err != CHIP_NO_ERROR) {\n            scheduled_ = false;",
+      "replace": "if (err != CHIP_NO_ERROR) {"
+    },
+    {
+      "id": "work-stays-scheduled",
+      "check": "run cleanup work can be scheduled again",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "self->scheduled_ = false;",
+      "replace": ""
+    },
+    {
+      "id": "last-home-not-persisted",
+      "check": "removing the last Home persists the intent first",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "if (policy_.will_remove(index)) save_pending(true);",
+      "replace": "policy_.will_remove(index);"
+    },
+    {
+      "id": "removal-not-scheduled",
+      "check": "removing the last Home schedules cleanup",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "if (policy_.removed(index)) schedule();",
+      "replace": "policy_.removed(index);"
+    },
+    {
+      "id": "commit-not-recorded",
+      "check": "a committed Home is recorded",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "policy_.committed(index, static_cast<uint16_t>(fabric->GetVendorId()));",
+      "replace": "(void)fabric;"
+    },
+    {
+      "id": "commit-not-scheduled",
+      "check": "a commit while cleanup is pending schedules it",
+      "file": "components/amity_matter/apple_fabrics.cpp",
+      "find": "policy_.committed(index, static_cast<uint16_t>(fabric->GetVendorId()));\n        if (policy_.pending()) schedule();",
+      "replace": "policy_.committed(index, static_cast<uint16_t>(fabric->GetVendorId()));"
+    }
+  ]
+}
