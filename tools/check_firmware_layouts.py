@@ -7,6 +7,7 @@ Every listed record must still exist, so the list cannot silently go stale.
 """
 import argparse
 import json
+import os
 from pathlib import Path
 from elftools.elf.elffile import ELFFile
 
@@ -72,7 +73,9 @@ def main():
         elf=ELFFile(stream)
         if not elf.has_dwarf_info():raise SystemExit('ELF has no DWARF layout evidence')
         for cu in elf.get_dwarf_info().iter_CUs():
-            top=cu.get_top_DIE();source=name(top)
+            # ccache with CCACHE_BASEDIR compiles with paths relative to DW_AT_comp_dir.
+            top=cu.get_top_DIE();comp_dir=top.attributes.get('DW_AT_comp_dir')
+            source=os.path.normpath(os.path.join(comp_dir.value.decode(errors='replace') if comp_dir else '',name(top)))
             if not source.startswith(str(ROOT/'components')+'/') and source!=str(ROOT/'main/main.cpp'):continue
             for die in records_in(top):
                 if 'DW_AT_byte_size' not in die.attributes or name(die) not in RECORD_NAMES:continue
