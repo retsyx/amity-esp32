@@ -36,6 +36,7 @@ typedef uint32_t TickType_t;
 #define errCOULD_NOT_ALLOCATE_REQUIRED_MEMORY (-1)
 
 // Critical sections share one recursive lock; each mux counts its own nesting.
+// A FreeRTOS call that can wait, made inside one, fails the scenario.
 typedef struct {
     uint32_t owner;
     uint32_t count;

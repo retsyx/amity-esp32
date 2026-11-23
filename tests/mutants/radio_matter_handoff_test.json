@@ -575,6 +575,13 @@
       "file": "components/radio_control/radio_control.cpp",
       "find": "arbiter.request(RadioMode::remote_pairing,now(),seconds*1000,false);",
       "replace": "arbiter.request(RadioMode::remote_pairing,now(),seconds*1001,false);"
+    },
+    {
+      "id": "radio-mutex-in-critical-section",
+      "check": "the radio mutex is never taken inside the peripheral critical section",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "void peripheral_uncertain(){PeripheralLock lock;peripheral_tracking_failed=true;}",
+      "replace": "void peripheral_uncertain(){PeripheralLock lock;Lock radio;peripheral_tracking_failed=true;}"
     }
   ]
 }

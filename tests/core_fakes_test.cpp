@@ -358,6 +358,17 @@ void critical_sections() {
     CHECK(xPortInIsrContext() == pdTRUE);
 }
 
+// Inside a critical section a FreeRTOS call that need not wait still works,
+// but one that may wait fails the scenario, even when it would not have to.
+void wait_in_critical_section() {
+    portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+    SemaphoreHandle_t mutex = xSemaphoreCreateMutex();
+    CHECK(mutex != nullptr);
+    portENTER_CRITICAL_SAFE(&mux);
+    CHECK(xSemaphoreTake(mutex, 0) == pdTRUE && xSemaphoreGive(mutex) == pdTRUE);
+    xSemaphoreTake(mutex, portMAX_DELAY);
+}
+
 void app_description() {
     CHECK(sizeof(esp_app_desc_t) == 256 && sizeof(esp_image_header_t) == 24 && sizeof(esp_image_segment_header_t) == 8);
     const esp_app_desc_t *running = esp_app_get_description();
@@ -396,5 +407,6 @@ int main(int argc, char **argv) {
                             {"strict-seam", strict_seam},
                             {"seam-behaviour", seam_behaviour},
                             {"critical-sections", critical_sections},
+                            {"wait-in-critical-section", wait_in_critical_section},
                             {"app-description", app_description}});
 }

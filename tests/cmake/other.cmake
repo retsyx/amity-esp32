@@ -197,7 +197,7 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         SCENARIOS clock-timers periodic-timer timer-failures delay-leave task-records task-return
             task-caps-mismatch static-queue queue-timeouts semaphores mutex-ownership timer-wakes-wait
             blocking-threads endless-wait notifications logs restart-and-checks heap strict-seam
-            seam-behaviour critical-sections app-description)
+            seam-behaviour critical-sections wait-in-critical-section app-description)
     set_tests_properties(core_fakes_test.task-return PROPERTIES
         PASS_REGULAR_EXPRESSION "task returns returned from its function without deleting itself")
     set_tests_properties(core_fakes_test.task-caps-mismatch PROPERTIES
@@ -206,6 +206,8 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         PASS_REGULAR_EXPRESSION "an endless wait on a semaphore that nothing in this thread can end")
     set_tests_properties(core_fakes_test.strict-seam PROPERTIES
         PASS_REGULAR_EXPRESSION "seam heap_caps_get_free_size was called without a behaviour")
+    set_tests_properties(core_fakes_test.wait-in-critical-section PROPERTIES
+        PASS_REGULAR_EXPRESSION "xSemaphoreTake with a wait inside a critical section")
     amity_test(httpd_fake_test
         SOURCES "${T}/httpd_fake_test.cpp"
         INCLUDES "${T}/core_fakes" "${T}/web_request_fakes"

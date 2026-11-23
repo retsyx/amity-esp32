@@ -78,6 +78,12 @@ std::deque<std::unique_ptr<esp_timer>> timer_blocks;
 unsigned timer_creation_failures = 0, timer_start_failures = 0;
 std::atomic<bool> isr{false};
 thread_local tskTaskControlBlock *current_task = nullptr;
+// The critical sections the calling thread is in. FreeRTOS forbids waiting in one.
+thread_local unsigned critical_depth = 0;
+
+void check_wait(TickType_t ticks, const char *call) {
+    if (ticks && critical_depth) fail(std::string(call) + " with a wait inside a critical section");
+}
 
 // The calling thread's task: the recorded task it runs, or an implicit main task.
 tskTaskControlBlock *self() {
@@ -677,10 +683,12 @@ int esp_app_get_elf_sha256(char *dst, size_t size) {
 void vPortEnterCritical(portMUX_TYPE *mux) {
     critical.lock();
     ++mux->count;
+    ++critical_depth;
 }
 void vPortExitCritical(portMUX_TYPE *mux) {
-    if (!mux->count) fail("portEXIT_CRITICAL without portENTER_CRITICAL");
+    if (!mux->count || !critical_depth) fail("portEXIT_CRITICAL without portENTER_CRITICAL");
     --mux->count;
+    --critical_depth;
     critical.unlock();
 }
 BaseType_t xPortInIsrContext(void) { return isr.load() ? pdTRUE : pdFALSE; }
@@ -700,6 +708,7 @@ BaseType_t xTaskCreatePinnedToCoreWithCaps(TaskFunction_t pvTaskCode, const char
 void vTaskDelete(TaskHandle_t xTaskToDelete) { delete_task(xTaskToDelete, false); }
 void vTaskDeleteWithCaps(TaskHandle_t xTaskToDelete) { delete_task(xTaskToDelete, true); }
 void vTaskDelay(const TickType_t xTicksToDelay) {
+    if (critical_depth) fail("vTaskDelay inside a critical section");
     std::function<void(TickType_t)> hook;
     {
         std::lock_guard<std::mutex> lock(state);
@@ -721,6 +730,7 @@ UBaseType_t uxTaskGetStackHighWaterMark(TaskHandle_t xTask) {
     return block->task.stack_bytes / 2;
 }
 uint32_t ulTaskNotifyTake(BaseType_t xClearCountOnExit, TickType_t xTicksToWait) {
+    check_wait(xTicksToWait, "ulTaskNotifyTake");
     tskTaskControlBlock *block = self();
     std::unique_lock<std::mutex> lock(state);
     if (!wait(lock, xTicksToWait, "a task notification", [&] { return block->notifications > 0; })) return 0;
@@ -755,6 +765,7 @@ QueueHandle_t xQueueCreateWithCaps(UBaseType_t uxQueueLength, UBaseType_t uxItem
 }
 BaseType_t xQueueGenericSend(QueueHandle_t xQueue, const void *const pvItemToQueue, TickType_t xTicksToWait,
                              const BaseType_t xCopyPosition) {
+    check_wait(xTicksToWait, "xQueueSend");
     std::unique_lock<std::mutex> lock(state);
     check_live(xQueue);
     if (is_mutex(xQueue)) fail("xQueueSend to a mutex");
@@ -770,6 +781,7 @@ BaseType_t xQueueGenericSendFromISR(QueueHandle_t xQueue, const void *const pvIt
     return send_locked(xQueue, pvItemToQueue, xCopyPosition) ? pdTRUE : errQUEUE_FULL;
 }
 BaseType_t xQueueReceive(QueueHandle_t xQueue, void *const pvBuffer, TickType_t xTicksToWait) {
+    check_wait(xTicksToWait, "xQueueReceive");
     std::unique_lock<std::mutex> lock(state);
     check_live(xQueue);
     if (is_mutex(xQueue)) fail("xQueueReceive from a mutex");
@@ -778,6 +790,7 @@ BaseType_t xQueueReceive(QueueHandle_t xQueue, void *const pvBuffer, TickType_t 
                : errQUEUE_EMPTY;
 }
 BaseType_t xQueuePeek(QueueHandle_t xQueue, void *const pvBuffer, TickType_t xTicksToWait) {
+    check_wait(xTicksToWait, "xQueuePeek");
     std::unique_lock<std::mutex> lock(state);
     check_live(xQueue);
     return wait(lock, xTicksToWait, "an empty queue", [&] { return receive_locked(xQueue, pvBuffer, false); })
@@ -858,6 +871,7 @@ SemaphoreHandle_t xSemaphoreCreateCountingStatic(UBaseType_t uxMaxCount, UBaseTy
     return create_counting(uxMaxCount, uxInitialCount, pxSemaphoreBuffer);
 }
 BaseType_t xSemaphoreTake(SemaphoreHandle_t xSemaphore, TickType_t xBlockTime) {
+    check_wait(xBlockTime, "xSemaphoreTake");
     std::unique_lock<std::mutex> lock(state);
     check_live(xSemaphore);
     if (xSemaphore->kind == Queue::Kind::queue) fail("xSemaphoreTake of a queue");
@@ -875,6 +889,7 @@ BaseType_t xSemaphoreGive(SemaphoreHandle_t xSemaphore) {
     return give_locked(xSemaphore);
 }
 BaseType_t xSemaphoreTakeRecursive(SemaphoreHandle_t xMutex, TickType_t xBlockTime) {
+    check_wait(xBlockTime, "xSemaphoreTakeRecursive");
     std::unique_lock<std::mutex> lock(state);
     check_live(xMutex);
     if (xMutex->kind != Queue::Kind::recursive_mutex) fail("xSemaphoreTakeRecursive of a non-recursive semaphore");
