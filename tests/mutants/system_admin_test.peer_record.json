@@ -1,0 +1,110 @@
+{
+  "ctest": "^system_admin_test\\.",
+  "targets": [
+    "system_admin_test"
+  ],
+  "baseline": {
+    "ctest": "^system_peer_record_test\\.py$",
+    "targets": []
+  },
+  "mutants": [
+    {
+      "id": "stub-snapshot-fail",
+      "check": "stub: early return from snapshot()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "esp_err_t snapshot(httpd_req_t* req){",
+      "replace": "esp_err_t snapshot(httpd_req_t* req){ return ESP_FAIL;"
+    },
+    {
+      "id": "peers-not-listed",
+      "check": "every runtime peer is listed",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "auto* record=cJSON_CreateObject();cJSON_AddItemToArray(peers,record);",
+      "replace": "continue;auto* record=cJSON_CreateObject();cJSON_AddItemToArray(peers,record);"
+    },
+    {
+      "id": "enrolled-not-recorded",
+      "check": "a peer record states whether the peer is enrolled",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "cJSON_AddBoolToObject(record,\"enrolled\",peer.enrolled);",
+      "replace": ""
+    },
+    {
+      "id": "provisional-not-recorded",
+      "check": "a peer record states whether the peer is provisional",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "cJSON_AddBoolToObject(record,\"provisional\",peer.provisional);",
+      "replace": ""
+    },
+    {
+      "id": "provisional-as-enrolled",
+      "check": "a peer is provisional only while its join is uncommitted",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "cJSON_AddBoolToObject(record,\"provisional\",peer.provisional);",
+      "replace": "cJSON_AddBoolToObject(record,\"provisional\",peer.enrolled);"
+    },
+    {
+      "id": "unknown-boot-as-text",
+      "check": "an unknown boot is null",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "else cJSON_AddNullToObject(record,\"boot_id\");",
+      "replace": "else cJSON_AddStringToObject(record,\"boot_id\",\"\");"
+    },
+    {
+      "id": "ready-as-management-ready",
+      "check": "a peer record states whether the peer is ready",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "cJSON_AddBoolToObject(record,\"ready\",peer.ready);",
+      "replace": "cJSON_AddBoolToObject(record,\"ready\",peer.management_ready);"
+    },
+    {
+      "id": "management-ready-as-ready",
+      "check": "a peer record states whether the peer's management is ready",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "cJSON_AddBoolToObject(record,\"management_ready\",peer.management_ready);",
+      "replace": "cJSON_AddBoolToObject(record,\"management_ready\",peer.ready);"
+    },
+    {
+      "id": "supported-as-configured",
+      "check": "a peer record states its supported tentacles",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "cJSON_AddNumberToObject(record,\"supported_tentacles\",peer.supported_tentacles);",
+      "replace": "cJSON_AddNumberToObject(record,\"supported_tentacles\",peer.configured_tentacles_mask);"
+    },
+    {
+      "id": "configured-mask-not-recorded",
+      "check": "a peer record states its configured tentacles",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "cJSON_AddNumberToObject(record,\"configured_tentacles_mask\",peer.configured_tentacles_mask);",
+      "replace": ""
+    },
+    {
+      "id": "firmware-not-recorded",
+      "check": "a peer record states its firmware",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "cJSON_AddStringToObject(record,\"firmware_identity\",peer.firmware_identity.c_str());",
+      "replace": ""
+    },
+    {
+      "id": "hostname-not-recorded",
+      "check": "a peer record states its hostname",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "cJSON_AddStringToObject(record,\"hostname\",peer.hostname.c_str());",
+      "replace": ""
+    },
+    {
+      "id": "wifi-always-recorded",
+      "check": "a peer's Wi-Fi signal is recorded only once reported",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(peer.wifi_known){cJSON_AddNumberToObject(record,\"wifi_rssi\",peer.wifi_rssi);",
+      "replace": "{cJSON_AddNumberToObject(record,\"wifi_rssi\",peer.wifi_rssi);"
+    },
+    {
+      "id": "wifi-channel-as-rssi",
+      "check": "a peer record states its Wi-Fi channel",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "cJSON_AddNumberToObject(record,\"wifi_channel\",peer.wifi_channel);",
+      "replace": "cJSON_AddNumberToObject(record,\"wifi_channel\",peer.wifi_rssi);"
+    }
+  ]
+}

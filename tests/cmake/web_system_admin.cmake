@@ -41,7 +41,7 @@ if(AMITY_TEST_TIER STREQUAL sdk)
             scan-refusals removal-review removal-reservation-failure removal-update-required removal-marker-failure
             removal-success removal-forget-failure removal-saved-only removal-metadata-only replacement
             replacement-review request-fields administrative-paths unknown-change update-cohort system-snapshot
-            sanity)
+            system-peers sanity)
     amity_python_tests(
         configuration_snapshot_web_test.py
     )

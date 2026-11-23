@@ -1195,6 +1195,56 @@ void system_snapshot() {
     CHECK(reply.text("hostname") == "amity");
 }
 
+// GET /api/system lists every runtime peer with what the UI reads: its ID,
+// readiness, boot (null until known), whether it is enrolled or still
+// provisional, its tentacles, firmware and hostname, and its Wi-Fi signal
+// once the peer has reported one. A candidate whose join is stored but not
+// yet committed is provisional, never enrolled.
+void system_peers() {
+    System system;
+    system.save(direct_configuration());
+    system.boot();
+    // Its link is up, but its management session is not ready yet.
+    auto enrolled = member(3, 13, "den");
+    enrolled.supported_tentacles = 4;
+    enrolled.configured_tentacles_mask = 5;
+    enrolled.firmware_identity = "0.1.179 c0ffee";
+    enrolled.wifi_known = true;
+    enrolled.wifi_rssi = -61;
+    enrolled.wifi_channel = 11;
+    c::RuntimePeerStatus joining;
+    joining.id = id<m::OctopusId>(9);
+    joining.provisional = true;
+    system.peers = {enrolled, joining};
+    const auto reply = send(HTTP_GET, "/api/system");
+    CHECK(reply.handled && reply.result == ESP_OK && reply.response.status == "200 OK");
+    const auto *peers = cJSON_GetObjectItemCaseSensitive(reply.item("membership"), "peers");
+    CHECK(cJSON_IsArray(peers) && cJSON_GetArraySize(peers) == 2);
+    const auto field = [](const cJSON *record, const char *key) { return cJSON_GetObjectItemCaseSensitive(record, key); };
+    const auto text = [&field](const cJSON *record, const char *key) {
+        const auto *value = field(record, key);
+        return cJSON_IsString(value) ? std::string(value->valuestring) : "<not a string>";
+    };
+    const auto number = [&field](const cJSON *record, const char *key) {
+        const auto *value = field(record, key);
+        return cJSON_IsNumber(value) ? value->valuedouble : -1000;
+    };
+    const auto *first = cJSON_GetArrayItem(peers, 0);
+    CHECK(text(first, "octopus_id") == id<m::OctopusId>(3).str() && text(first, "boot_id") == id<m::BootId>(13).str());
+    CHECK(cJSON_IsTrue(field(first, "ready")) && cJSON_IsFalse(field(first, "management_ready")));
+    CHECK(cJSON_IsTrue(field(first, "enrolled")) && cJSON_IsFalse(field(first, "provisional")));
+    CHECK(number(first, "supported_tentacles") == 4 && number(first, "configured_tentacles_mask") == 5);
+    CHECK(text(first, "firmware_identity") == "0.1.179 c0ffee" && text(first, "hostname") == "den");
+    CHECK(number(first, "wifi_rssi") == -61 && number(first, "wifi_channel") == 11 && cJSON_GetArraySize(first) == 12);
+    const auto *second = cJSON_GetArrayItem(peers, 1);
+    CHECK(text(second, "octopus_id") == id<m::OctopusId>(9).str() && cJSON_IsNull(field(second, "boot_id")));
+    CHECK(cJSON_IsFalse(field(second, "ready")) && cJSON_IsFalse(field(second, "management_ready")));
+    CHECK(cJSON_IsFalse(field(second, "enrolled")) && cJSON_IsTrue(field(second, "provisional")));
+    CHECK(number(second, "supported_tentacles") == 1 && number(second, "configured_tentacles_mask") == 1);
+    CHECK(text(second, "firmware_identity").empty() && text(second, "hostname").empty());
+    CHECK(!field(second, "wifi_rssi") && !field(second, "wifi_channel") && cJSON_GetArraySize(second) == 10);
+}
+
 // The harness consumes what it scripts: a request body read to its end
 // under its deadline, the saved record loaded and published, the
 // synchronization task created and one response sent.
@@ -1265,6 +1315,7 @@ int main(int argc, char **argv) {
                                {"unknown-change", unknown_change},
                                {"update-cohort", update_cohort},
                                {"system-snapshot", system_snapshot},
+                               {"system-peers", system_peers},
                                {"sanity", sanity},
                            });
 }
