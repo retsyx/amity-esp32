@@ -27,8 +27,6 @@ consortium_settings_test.py pending:A2
 consortium_synchronization_recovery_test.py pending:A4
 consortium_task_lifetime_test.py pending:A2
 consortium_tcp_ack_trace_test.py pending:A4
-consortium_tls_credentials_test.py pending:D
-consortium_tls_tcp_test.py pending:D
 consortium_worker_poll_test.py pending:A4
 controller_api_surface_test.py pending:E2
 controller_integration_test.py pending:Z

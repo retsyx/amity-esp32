@@ -19,10 +19,6 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         consortium_group_storage_test.py
     )
 elseif(AMITY_TEST_TIER STREQUAL sdk)
-    amity_python_tests(
-        consortium_tls_credentials_test.py
-        consortium_tls_tcp_test.py
-    )
-    amity_host_mbedtls_python_tests(consortium_tls_credentials_test.py consortium_tls_tcp_test.py)
+    include("${CMAKE_CURRENT_LIST_DIR}/consortium_tls_sdk.cmake")
 endif()
 include("${T}/cmake/consortium_tls_link.cmake")

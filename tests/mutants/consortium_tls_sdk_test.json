@@ -1,0 +1,834 @@
+{
+  "ctest": "^consortium_tls_sdk_test\\.",
+  "targets": [
+    "consortium_tls_sdk_test"
+  ],
+  "baseline": {
+    "ctest": "^consortium_(tls_credentials|tls_tcp)_test\\.py$",
+    "targets": []
+  },
+  "mutants": [
+    {
+      "id": "stub-sha256-empty",
+      "check": "stub: early return from sha256()",
+      "file": "components/consortium/credentials.cpp",
+      "find": "std::string sha256(std::string_view bytes){",
+      "replace": "std::string sha256(std::string_view bytes){ return {};"
+    },
+    {
+      "id": "stub-certificate_binding-false",
+      "check": "stub: early return from certificate_binding()",
+      "file": "components/consortium/credentials.cpp",
+      "find": "bool certificate_binding(const mbedtls_x509_crt &crt,model::OctopusId id,std::string &pin){",
+      "replace": "bool certificate_binding(const mbedtls_x509_crt &crt,model::OctopusId id,std::string &pin){ return false;"
+    },
+    {
+      "id": "stub-certificate_binding-true",
+      "check": "stub: early return from certificate_binding()",
+      "file": "components/consortium/credentials.cpp",
+      "find": "bool certificate_binding(const mbedtls_x509_crt &crt,model::OctopusId id,std::string &pin){",
+      "replace": "bool certificate_binding(const mbedtls_x509_crt &crt,model::OctopusId id,std::string &pin){ return true;"
+    },
+    {
+      "id": "stub-parse_certificate-false",
+      "check": "stub: early return from parse_certificate()",
+      "file": "components/consortium/credentials.cpp",
+      "find": "bool parse_certificate(std::string_view der,model::OctopusId id,mbedtls_x509_crt &crt,std::string &pin){",
+      "replace": "bool parse_certificate(std::string_view der,model::OctopusId id,mbedtls_x509_crt &crt,std::string &pin){ return false;"
+    },
+    {
+      "id": "stub-parse_certificate-true",
+      "check": "stub: early return from parse_certificate()",
+      "file": "components/consortium/credentials.cpp",
+      "find": "bool parse_certificate(std::string_view der,model::OctopusId id,mbedtls_x509_crt &crt,std::string &pin){",
+      "replace": "bool parse_certificate(std::string_view der,model::OctopusId id,mbedtls_x509_crt &crt,std::string &pin){ return true;"
+    },
+    {
+      "id": "stub-decode_identity-false",
+      "check": "stub: early return from decode_identity()",
+      "file": "components/consortium/credentials.cpp",
+      "find": "bool decode_identity(std::string_view record,model::OctopusId id,Identity &out){",
+      "replace": "bool decode_identity(std::string_view record,model::OctopusId id,Identity &out){ return false;"
+    },
+    {
+      "id": "stub-decode_identity-true",
+      "check": "stub: early return from decode_identity()",
+      "file": "components/consortium/credentials.cpp",
+      "find": "bool decode_identity(std::string_view record,model::OctopusId id,Identity &out){",
+      "replace": "bool decode_identity(std::string_view record,model::OctopusId id,Identity &out){ return true;"
+    },
+    {
+      "id": "stub-certificate-false",
+      "check": "stub: early return from certificate()",
+      "file": "components/consortium/credentials.cpp",
+      "find": "bool certificate(std::string_view der,model::OctopusId id,std::string &pin){",
+      "replace": "bool certificate(std::string_view der,model::OctopusId id,std::string &pin){ return false;"
+    },
+    {
+      "id": "stub-certificate-true",
+      "check": "stub: early return from certificate()",
+      "file": "components/consortium/credentials.cpp",
+      "find": "bool certificate(std::string_view der,model::OctopusId id,std::string &pin){",
+      "replace": "bool certificate(std::string_view der,model::OctopusId id,std::string &pin){ return true;"
+    },
+    {
+      "id": "stub-pinned_leaf-false",
+      "check": "stub: early return from pinned_leaf()",
+      "file": "components/consortium/credentials.cpp",
+      "find": "bool pinned_leaf(std::string_view der,model::OctopusId id,std::string_view pin){",
+      "replace": "bool pinned_leaf(std::string_view der,model::OctopusId id,std::string_view pin){ return false;"
+    },
+    {
+      "id": "stub-pinned_leaf-true",
+      "check": "stub: early return from pinned_leaf()",
+      "file": "components/consortium/credentials.cpp",
+      "find": "bool pinned_leaf(std::string_view der,model::OctopusId id,std::string_view pin){",
+      "replace": "bool pinned_leaf(std::string_view der,model::OctopusId id,std::string_view pin){ return true;"
+    },
+    {
+      "id": "stub-load_identity-fail",
+      "check": "stub: early return from load_identity()",
+      "file": "components/consortium/credentials.cpp",
+      "find": "esp_err_t load_identity(model::OctopusId id,Identity &out,bool create){",
+      "replace": "esp_err_t load_identity(model::OctopusId id,Identity &out,bool create){ return ESP_FAIL;"
+    },
+    {
+      "id": "stub-load_group-fail",
+      "check": "stub: early return from load_group()",
+      "file": "components/consortium/credentials.cpp",
+      "find": "esp_err_t load_group(Group &out){",
+      "replace": "esp_err_t load_group(Group &out){ return ESP_FAIL;"
+    },
+    {
+      "id": "stub-save_group-fail",
+      "check": "stub: early return from save_group()",
+      "file": "components/consortium/credentials.cpp",
+      "find": "esp_err_t save_group(const Group &g){",
+      "replace": "esp_err_t save_group(const Group &g){ return ESP_FAIL;"
+    },
+    {
+      "id": "stub-send_socket-empty",
+      "check": "stub: early return from send_socket()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "int send_socket(void *ctx,const uint8_t *data,size_t size){",
+      "replace": "int send_socket(void *ctx,const uint8_t *data,size_t size){ return {};"
+    },
+    {
+      "id": "stub-receive_socket-empty",
+      "check": "stub: early return from receive_socket()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "int receive_socket(void *ctx,uint8_t *data,size_t size){",
+      "replace": "int receive_socket(void *ctx,uint8_t *data,size_t size){ return {};"
+    },
+    {
+      "id": "stub-reject_handshake-return",
+      "check": "stub: early return from reject_handshake()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "void reject_handshake(mbedtls_ssl_context &ssl,int socket,bool server,int reason){",
+      "replace": "void reject_handshake(mbedtls_ssl_context &ssl,int socket,bool server,int reason){ return;",
+      "survives": "only a server handshake that fails inside TlsLink::handshake runs reject_handshake; the old and new tests fail handshakes while stepping Mbed TLS directly, and the scripted TLS link tests cover it"
+    },
+    {
+      "id": "stub-verify-empty",
+      "check": "stub: early return from verify()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "int TlsLink::verify(void *ctx,mbedtls_x509_crt *crt,int depth,uint32_t *flags){",
+      "replace": "int TlsLink::verify(void *ctx,mbedtls_x509_crt *crt,int depth,uint32_t *flags){ return {};"
+    },
+    {
+      "id": "stub-setup-false",
+      "check": "stub: early return from setup()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "bool TlsLink::setup(const Identity &identity,const std::vector<Peer> &peers,bool is_server,int fd,model::OctopusId expected){",
+      "replace": "bool TlsLink::setup(const Identity &identity,const std::vector<Peer> &peers,bool is_server,int fd,model::OctopusId expected){ return false;"
+    },
+    {
+      "id": "stub-setup-true",
+      "check": "stub: early return from setup()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "bool TlsLink::setup(const Identity &identity,const std::vector<Peer> &peers,bool is_server,int fd,model::OctopusId expected){",
+      "replace": "bool TlsLink::setup(const Identity &identity,const std::vector<Peer> &peers,bool is_server,int fd,model::OctopusId expected){ return true;"
+    },
+    {
+      "id": "stub-handshake-false",
+      "check": "stub: early return from handshake()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "bool TlsLink::handshake(){",
+      "replace": "bool TlsLink::handshake(){ return false;"
+    },
+    {
+      "id": "stub-handshake-true",
+      "check": "stub: early return from handshake()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "bool TlsLink::handshake(){",
+      "replace": "bool TlsLink::handshake(){ return true;"
+    },
+    {
+      "id": "stub-decimal-false",
+      "check": "stub: early return from decimal()",
+      "file": "components/consortium/wire.cpp",
+      "find": "bool decimal(const Json *v,uint64_t &out) {",
+      "replace": "bool decimal(const Json *v,uint64_t &out) { return false;"
+    },
+    {
+      "id": "stub-decimal-true",
+      "check": "stub: early return from decimal()",
+      "file": "components/consortium/wire.cpp",
+      "find": "bool decimal(const Json *v,uint64_t &out) {",
+      "replace": "bool decimal(const Json *v,uint64_t &out) { return true;"
+    },
+    {
+      "id": "stub-wait_socket-return",
+      "check": "stub: early return from wait_socket()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "void wait_socket(int socket,bool writable,uint64_t deadline){",
+      "replace": "void wait_socket(int socket,bool writable,uint64_t deadline){ return;"
+    },
+    {
+      "id": "stub-send-false",
+      "check": "stub: early return from send()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "bool TlsLink::send(std::string_view body,bool bulk){",
+      "replace": "bool TlsLink::send(std::string_view body,bool bulk){ return false;"
+    },
+    {
+      "id": "stub-send-true",
+      "check": "stub: early return from send()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "bool TlsLink::send(std::string_view body,bool bulk){",
+      "replace": "bool TlsLink::send(std::string_view body,bool bulk){ return true;"
+    },
+    {
+      "id": "stub-receive_failed-empty",
+      "check": "stub: early return from receive_failed()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "TlsLink::ReceiveResult TlsLink::receive_failed(TlsReceiveDiagnostic::Cause cause,int code,uint64_t now){",
+      "replace": "TlsLink::ReceiveResult TlsLink::receive_failed(TlsReceiveDiagnostic::Cause cause,int code,uint64_t now){ return {};",
+      "survives": "the old and new tests receive only whole frames from a live peer; receive failures and expiry belong to the scripted TLS link tests"
+    },
+    {
+      "id": "stub-receive_expired-empty",
+      "check": "stub: early return from receive_expired()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "TlsLink::ReceiveResult TlsLink::receive_expired(TlsReceiveDiagnostic::Cause cause,int code,uint64_t now){",
+      "replace": "TlsLink::ReceiveResult TlsLink::receive_expired(TlsReceiveDiagnostic::Cause cause,int code,uint64_t now){ return {};",
+      "survives": "the old and new tests receive only whole frames from a live peer; receive failures and expiry belong to the scripted TLS link tests"
+    },
+    {
+      "id": "stub-poll_receive-empty",
+      "check": "stub: early return from poll_receive()",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "TlsLink::ReceiveResult TlsLink::poll_receive(std::string &out){",
+      "replace": "TlsLink::ReceiveResult TlsLink::poll_receive(std::string &out){ return {};"
+    },
+    {
+      "id": "identity-created-without-create",
+      "check": "a missing identity is generated only when create is set",
+      "file": "components/consortium/credentials.cpp",
+      "find": "if(found!=ESP_ERR_NVS_NOT_FOUND||!create)return found;",
+      "replace": "(void)create;if(found!=ESP_ERR_NVS_NOT_FOUND)return found;"
+    },
+    {
+      "id": "identity-stored-under-other-key",
+      "check": "the generated identity is stored where load_identity reads it",
+      "file": "components/consortium/credentials.cpp",
+      "find": "return write_record(\"amity_group\",\"identity\",candidate);",
+      "replace": "return write_record(\"amity_group\",\"identity_\",candidate);"
+    },
+    {
+      "id": "identity-store-failure-ignored",
+      "check": "an identity that cannot be stored is reported",
+      "file": "components/consortium/credentials.cpp",
+      "find": "return write_record(\"amity_group\",\"identity\",candidate);",
+      "replace": "write_record(\"amity_group\",\"identity\",candidate);return ESP_OK;"
+    },
+    {
+      "id": "identity-serial-sign-kept",
+      "check": "the generated serial number is positive",
+      "file": "components/consortium/credentials.cpp",
+      "find": "serial[0]=(serial[0]&0x7f)|1;",
+      "replace": "serial[0]=serial[0]|1;"
+    },
+    {
+      "id": "identity-serial-may-be-zero",
+      "check": "the generated serial number is never zero",
+      "file": "components/consortium/credentials.cpp",
+      "find": "serial[0]=(serial[0]&0x7f)|1;",
+      "replace": "serial[0]=serial[0]&0x7f;"
+    },
+    {
+      "id": "identity-key-usage-changed",
+      "check": "the generated leaf has the digital-signature key usage",
+      "file": "components/consortium/credentials.cpp",
+      "find": "if(!r)r=mbedtls_x509write_crt_set_key_usage(&cert,MBEDTLS_X509_KU_DIGITAL_SIGNATURE);",
+      "replace": "if(!r)r=mbedtls_x509write_crt_set_key_usage(&cert,MBEDTLS_X509_KU_KEY_CERT_SIGN);"
+    },
+    {
+      "id": "identity-record-version-changed",
+      "check": "the identity record has its exact format",
+      "file": "components/consortium/credentials.cpp",
+      "find": "candidate=\"{\\\"version\\\":1,",
+      "replace": "candidate=\"{\\\"version\\\":1 ,"
+    },
+    {
+      "id": "stored-peer-fully-validated",
+      "check": "a stored peer is bound by its pinned SPKI without repeating full validation",
+      "file": "components/consortium/credentials.cpp",
+      "find": "if(!pinned_leaf(peer.der,peer.id,peer.pin))return ESP_ERR_INVALID_STATE;",
+      "replace": "if(!pinned_leaf(peer.der,peer.id,peer.pin)||!certificate(peer.der,peer.id,peer.pin))return ESP_ERR_INVALID_STATE;"
+    },
+    {
+      "id": "stored-peer-pin-unchecked",
+      "check": "a stored peer whose pin does not match its leaf is refused",
+      "file": "components/consortium/credentials.cpp",
+      "find": "&&certificate_binding(crt,id,derived)&&derived==pin;",
+      "replace": "&&certificate_binding(crt,id,derived)&&((void)pin,true);"
+    },
+    {
+      "id": "untrusted-signature-unchecked",
+      "check": "an untrusted leaf's self-signature is verified",
+      "file": "components/consortium/credentials.cpp",
+      "find": "!mbedtls_pk_verify(&crt.pk,MBEDTLS_MD_SHA256,digest,hash_size,crt.MBEDTLS_PRIVATE(sig).p,crt.MBEDTLS_PRIVATE(sig).len);",
+      "replace": "true;"
+    },
+    {
+      "id": "untrusted-clock-enforced",
+      "check": "an untrusted leaf outside its validity period is still accepted",
+      "file": "components/consortium/credentials.cpp",
+      "find": "if(result&&((flags&~uint32_t(MBEDTLS_X509_BADCERT_EXPIRED|MBEDTLS_X509_BADCERT_FUTURE))||!flags))return false;",
+      "replace": "if(result)return false;"
+    },
+    {
+      "id": "untrusted-size-1025",
+      "check": "an untrusted leaf over 1024 bytes is refused",
+      "file": "components/consortium/credentials.cpp",
+      "find": "if(der.empty()||der.size()>1024||",
+      "replace": "if(der.empty()||der.size()>1025||"
+    },
+    {
+      "id": "untrusted-size-1023",
+      "check": "an untrusted leaf of exactly 1024 bytes is accepted",
+      "file": "components/consortium/credentials.cpp",
+      "find": "if(der.empty()||der.size()>1024||",
+      "replace": "if(der.empty()||der.size()>1023||"
+    },
+    {
+      "id": "binding-ca-allowed",
+      "check": "a CA certificate is not a leaf",
+      "file": "components/consortium/credentials.cpp",
+      "find": "if(crt.next||crt.MBEDTLS_PRIVATE(ca_istrue)||",
+      "replace": "if(crt.next||"
+    },
+    {
+      "id": "binding-key-usage-unchecked",
+      "check": "the leaf has exactly the digital-signature key usage",
+      "file": "components/consortium/credentials.cpp",
+      "find": "crt.MBEDTLS_PRIVATE(key_usage)!=MBEDTLS_X509_KU_DIGITAL_SIGNATURE||",
+      "replace": ""
+    },
+    {
+      "id": "binding-extensions-unchecked",
+      "check": "the leaf has every required extension",
+      "file": "components/consortium/credentials.cpp",
+      "find": "if((crt.MBEDTLS_PRIVATE(ext_types)&required_extensions)!=required_extensions||crt.issuer_raw.len",
+      "replace": "if((void)required_extensions,crt.issuer_raw.len"
+    },
+    {
+      "id": "binding-digest-unchecked",
+      "check": "the leaf is signed with SHA-256",
+      "file": "components/consortium/credentials.cpp",
+      "find": "if(crt.MBEDTLS_PRIVATE(sig_md)!=MBEDTLS_MD_SHA256)return false;",
+      "replace": ""
+    },
+    {
+      "id": "binding-version-unchecked",
+      "check": "the leaf is an X.509 version 3 certificate",
+      "file": "components/consortium/credentials.cpp",
+      "find": "crt.version!=3||",
+      "replace": ""
+    },
+    {
+      "id": "binding-issuer-unchecked",
+      "check": "the leaf is self-issued",
+      "file": "components/consortium/credentials.cpp",
+      "find": "crt.issuer_raw.len!=crt.subject_raw.len||memcmp(crt.issuer_raw.p,crt.subject_raw.p,crt.subject_raw.len)||",
+      "replace": ""
+    },
+    {
+      "id": "binding-key-family-unchecked",
+      "check": "the leaf key is on a SECP R1 curve",
+      "file": "components/consortium/credentials.cpp",
+      "find": "||mbedtls_pk_get_key_type(&crt.pk)!=PSA_KEY_TYPE_ECC_PUBLIC_KEY(PSA_ECC_FAMILY_SECP_R1))return false;",
+      "replace": ")return false;"
+    },
+    {
+      "id": "binding-key-size-unchecked",
+      "check": "the leaf key has 256 bits",
+      "file": "components/consortium/credentials.cpp",
+      "find": "mbedtls_pk_get_bitlen(&crt.pk)!=256||",
+      "replace": ""
+    },
+    {
+      "id": "binding-chain-allowed",
+      "check": "a chain is not a leaf",
+      "file": "components/consortium/credentials.cpp",
+      "find": "if(crt.next||crt.MBEDTLS_PRIVATE(ca_istrue)||",
+      "replace": "if(crt.MBEDTLS_PRIVATE(ca_istrue)||"
+    },
+    {
+      "id": "binding-second-name-allowed",
+      "check": "the leaf names exactly one host",
+      "file": "components/consortium/credentials.cpp",
+      "find": "entry=entry->next){if(san)return false;",
+      "replace": "entry=entry->next){"
+    },
+    {
+      "id": "binding-name-unchecked",
+      "check": "the leaf names the id it is bound to",
+      "file": "components/consortium/credentials.cpp",
+      "find": "if(value.len!=expected.size()||std::memcmp(value.p,expected.data(),value.len))return false;",
+      "replace": "(void)value;"
+    },
+    {
+      "id": "binding-server-auth-unchecked",
+      "check": "the leaf allows server authentication",
+      "file": "components/consortium/credentials.cpp",
+      "find": "mbedtls_x509_crt_check_extended_key_usage(&crt,MBEDTLS_OID_SERVER_AUTH,MBEDTLS_OID_SIZE(MBEDTLS_OID_SERVER_AUTH))||",
+      "replace": ""
+    },
+    {
+      "id": "binding-pin-short",
+      "check": "the pin is the SHA-256 of the whole subjectPublicKeyInfo",
+      "file": "components/consortium/credentials.cpp",
+      "find": "pin=sha256(std::string_view(reinterpret_cast<char*>(spki+sizeof(spki)-length),length));",
+      "replace": "pin=sha256(std::string_view(reinterpret_cast<char*>(spki+sizeof(spki)-length),length-1));"
+    },
+    {
+      "id": "identity-key-pair-unchecked",
+      "check": "the stored private key matches the stored leaf",
+      "file": "components/consortium/credentials.cpp",
+      "find": "&&mbedtls_pk_check_pair(&crt.pk,&parsed)==0;",
+      "replace": ";"
+    },
+    {
+      "id": "identity-leaf-unvalidated",
+      "check": "the stored leaf passes full validation",
+      "file": "components/consortium/credentials.cpp",
+      "find": "std::string pin;if(!certificate(leaf,id,pin))return false;",
+      "replace": "std::string pin;certificate(leaf,id,pin);"
+    },
+    {
+      "id": "identity-record-open",
+      "check": "the identity record has exactly its own fields",
+      "file": "components/consortium/credentials.cpp",
+      "find": "||!closed(json,{\"version\",\"octopus_id\",\"leaf\",\"key\"}))return false;",
+      "replace": ")return false;"
+    },
+    {
+      "id": "identity-record-version-2",
+      "check": "the identity record has version 1",
+      "file": "components/consortium/credentials.cpp",
+      "find": "!json_uint(json.get(\"version\"),version,1,1)",
+      "replace": "!json_uint(json.get(\"version\"),version,1,2)"
+    },
+    {
+      "id": "identity-record-other-board",
+      "check": "the identity record names this board",
+      "file": "components/consortium/credentials.cpp",
+      "find": "||!consortium::id(json.get(\"octopus_id\"),stored)||stored!=id)return false;",
+      "replace": "||!consortium::id(json.get(\"octopus_id\"),stored))return false;"
+    },
+    {
+      "id": "identity-invalid-error-code",
+      "check": "a stored identity that does not decode is reported as invalid state",
+      "file": "components/consortium/credentials.cpp",
+      "find": "if(found==ESP_OK)return decode_identity(candidate,id,out)?ESP_OK:ESP_ERR_INVALID_STATE;",
+      "replace": "if(found==ESP_OK)return decode_identity(candidate,id,out)?ESP_OK:ESP_FAIL;"
+    },
+    {
+      "id": "verify-intermediate-allowed",
+      "check": "an intermediate certificate is refused",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(depth!=0||crt->next){",
+      "replace": "if((void)depth,crt->next){"
+    },
+    {
+      "id": "verify-chain-allowed",
+      "check": "a chain is refused",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(depth!=0||crt->next){",
+      "replace": "if(depth!=0){"
+    },
+    {
+      "id": "verify-clears-every-flag",
+      "check": "the callback clears only the clock flags",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "*flags&=~uint32_t(MBEDTLS_X509_BADCERT_EXPIRED|MBEDTLS_X509_BADCERT_FUTURE);",
+      "replace": "*flags=0;"
+    },
+    {
+      "id": "verify-future-kept",
+      "check": "the callback clears a not-yet-valid flag too",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "*flags&=~uint32_t(MBEDTLS_X509_BADCERT_EXPIRED|MBEDTLS_X509_BADCERT_FUTURE);",
+      "replace": "*flags&=~uint32_t(MBEDTLS_X509_BADCERT_EXPIRED);"
+    },
+    {
+      "id": "verify-unexpected-peer",
+      "check": "a leaf for another peer than the expected one is refused",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(self.authenticated&&self.authenticated!=peer.id){*flags|=MBEDTLS_X509_BADCERT_OTHER;return 0;}",
+      "replace": ""
+    },
+    {
+      "id": "verify-unknown-leaf",
+      "check": "a leaf that is not exactly an allowed one is refused",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "*flags|=MBEDTLS_X509_BADCERT_OTHER;return 0;\n}",
+      "replace": "return 0;\n}"
+    },
+    {
+      "id": "verify-peer-unrecorded",
+      "check": "the callback records the peer it accepted",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "self.authenticated=peer.id;",
+      "replace": ""
+    },
+    {
+      "id": "verify-untimed",
+      "check": "every verify call is timed",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "~TimedVerify(){++link.timing_verify_calls;",
+      "replace": "~TimedVerify(){"
+    },
+    {
+      "id": "setup-pin-unchecked",
+      "check": "an allowed leaf must match its pin",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "&&certificate_binding(*anchor,peer.id,pin)&&pin==peer.pin;",
+      "replace": "&&certificate_binding(*anchor,peer.id,pin);"
+    },
+    {
+      "id": "setup-binding-skipped",
+      "check": "an allowed leaf must bind its id",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "const bool valid=peer.der.size()<=1024&&certificate_binding(*anchor,peer.id,pin)&&pin==peer.pin;",
+      "replace": "const bool valid=peer.der.size()<=1024;"
+    },
+    {
+      "id": "setup-leaf-size-unchecked",
+      "check": "an allowed leaf over 1024 bytes is refused",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "const bool valid=peer.der.size()<=1024&&",
+      "replace": "const bool valid="
+    },
+    {
+      "id": "setup-empty-allowlist",
+      "check": "an empty allowlist is refused",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(peers.empty()||peers.size()>maximum_roster_peers)return false;",
+      "replace": "if(peers.size()>maximum_roster_peers)return false;"
+    },
+    {
+      "id": "setup-after-failure",
+      "check": "a link is set up once, even after a failed setup",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(configured||socket>=0)return false;",
+      "replace": "if(configured)return false;"
+    },
+    {
+      "id": "setup-client-expects-anyone",
+      "check": "a client must expect a peer",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(!is_server){if(!expected)return false;",
+      "replace": "if(!is_server){"
+    },
+    {
+      "id": "setup-expected-peer-dropped",
+      "check": "a link accepts only the peer it expects",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "allowed=peers;authenticated=expected;",
+      "replace": "allowed=peers;"
+    },
+    {
+      "id": "save-four-peers",
+      "check": "save_group refuses a fourth peer",
+      "file": "components/consortium/credentials.cpp",
+      "find": "g.role==Group::unclaimed||g.peers.size()>maximum_roster_peers||",
+      "replace": "g.role==Group::unclaimed||g.peers.size()>maximum_roster_peers+1||"
+    },
+    {
+      "id": "setup-four-peers",
+      "check": "TLS setup refuses a fourth peer",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(peers.empty()||peers.size()>maximum_roster_peers)return false;",
+      "replace": "if(peers.empty()||peers.size()>maximum_roster_peers+1)return false;"
+    },
+    {
+      "id": "admission-pending-unbounded",
+      "check": "only one handshake may be pending",
+      "file": "components/consortium/connection_admission.hpp",
+      "find": "if(pending_>=maximum_pending_connections||total_>=maximum_connection_slots)return {};",
+      "replace": "if(total_>=maximum_connection_slots)return {};"
+    },
+    {
+      "id": "admission-total-unbounded",
+      "check": "at most four links are retained",
+      "file": "components/consortium/connection_admission.hpp",
+      "find": "if(pending_>=maximum_pending_connections||total_>=maximum_connection_slots)return {};",
+      "replace": "if(pending_>=maximum_pending_connections)return {};"
+    },
+    {
+      "id": "admission-two-pending",
+      "check": "the pending budget is one handshake",
+      "file": "components/consortium/include/amity/consortium/limits.hpp",
+      "find": "maximum_pending_connections=1;",
+      "replace": "maximum_pending_connections=2;"
+    },
+    {
+      "id": "admission-pending-kept",
+      "check": "an authenticated link stops counting as pending",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(good)admission.authenticated();",
+      "replace": ""
+    },
+    {
+      "id": "admission-release-keeps-pending",
+      "check": "destroying a pending link releases its pending slot",
+      "file": "components/consortium/connection_admission.hpp",
+      "find": "if(pending_)--owner_->pending_;",
+      "replace": ""
+    },
+    {
+      "id": "handshake-deadline-9990",
+      "check": "a handshake gets exactly 10 s",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "const auto deadline=now_ms()+10000;",
+      "replace": "const auto deadline=now_ms()+9990;"
+    },
+    {
+      "id": "wait-step-200",
+      "check": "a socket wait lasts at most 100 ms",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "const auto remaining=std::min<uint64_t>(deadline-now,100);",
+      "replace": "const auto remaining=std::min<uint64_t>(deadline-now,200);"
+    },
+    {
+      "id": "wait-direction-swapped",
+      "check": "a read waits for input and a write for output space",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "::select(socket+1,writable?nullptr:&set,writable?&set:nullptr,nullptr,&timeout);",
+      "replace": "::select(socket+1,writable?&set:nullptr,writable?nullptr:&set,nullptr,&timeout);"
+    },
+    {
+      "id": "handshake-failure-usable",
+      "check": "a failed handshake leaves the link unusable",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "handshaken=good;transport_failed=!good;",
+      "replace": "handshaken=good;"
+    },
+    {
+      "id": "clock-in-tenths",
+      "check": "now_ms counts milliseconds",
+      "file": "components/consortium/credentials.cpp",
+      "find": "return static_cast<uint64_t>(esp_timer_get_time()/1000);",
+      "replace": "return static_cast<uint64_t>(esp_timer_get_time()/100);"
+    },
+    {
+      "id": "tls-verify-optional",
+      "check": "each end requires the other end's certificate",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "mbedtls_ssl_conf_authmode(&config,MBEDTLS_SSL_VERIFY_REQUIRED);",
+      "replace": "mbedtls_ssl_conf_authmode(&config,MBEDTLS_SSL_VERIFY_OPTIONAL);"
+    },
+    {
+      "id": "tls-no-anchors",
+      "check": "the allowed leaves are the only trust anchors",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "mbedtls_ssl_conf_ca_chain(&config,&anchors,nullptr);",
+      "replace": ""
+    },
+    {
+      "id": "tls-other-suite",
+      "check": "links use ECDHE-ECDSA with AES-128-GCM",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "static const int suites[]={MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,0};",
+      "replace": "static const int suites[]={MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,0};"
+    },
+    {
+      "id": "tls-session-tickets",
+      "check": "no session resumes",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "mbedtls_ssl_conf_session_tickets(&config,MBEDTLS_SSL_SESSION_TICKETS_DISABLED);",
+      "replace": "mbedtls_ssl_conf_session_tickets(&config,MBEDTLS_SSL_SESSION_TICKETS_ENABLED);"
+    },
+    {
+      "id": "keepalive-idle-11",
+      "check": "keepalive starts after 10 s idle",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "keep_idle=10,",
+      "replace": "keep_idle=11,"
+    },
+    {
+      "id": "keepalive-interval-4",
+      "check": "keepalive probes are 3 s apart",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "keep_interval=3,",
+      "replace": "keep_interval=4,"
+    },
+    {
+      "id": "keepalive-count-4",
+      "check": "three keepalive probes",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "keep_count=3;",
+      "replace": "keep_count=4;"
+    },
+    {
+      "id": "keepalive-off",
+      "check": "TCP keepalive is on",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(setsockopt(socket,SOL_SOCKET,SO_KEEPALIVE,&keep_alive,sizeof(keep_alive))||",
+      "replace": "if((void)keep_alive,"
+    },
+    {
+      "id": "nagle-kept",
+      "check": "Nagle coalescing is off",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "const int no_delay=1;",
+      "replace": "const int no_delay=0;"
+    },
+    {
+      "id": "socket-option-failures-ignored",
+      "check": "a socket that cannot take the TCP options fails setup",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "if(setsockopt(socket,IPPROTO_TCP,TCP_NODELAY,&no_delay,sizeof(no_delay)))return timing.done(false);\n    // Detect an unreachable idle peer in TCP without application traffic.\n    const int keep_alive=1,keep_idle=10,keep_interval=3,keep_count=3;\n    if(setsockopt(socket,SOL_SOCKET,SO_KEEPALIVE,&keep_alive,sizeof(keep_alive))||\n       setsockopt(socket,IPPROTO_TCP,TCP_KEEPIDLE,&keep_idle,sizeof(keep_idle))||\n       setsockopt(socket,IPPROTO_TCP,TCP_KEEPINTVL,&keep_interval,sizeof(keep_interval))||\n       setsockopt(socket,IPPROTO_TCP,TCP_KEEPCNT,&keep_count,sizeof(keep_count)))return timing.done(false);",
+      "replace": "setsockopt(socket,IPPROTO_TCP,TCP_NODELAY,&no_delay,sizeof(no_delay));\n    // Detect an unreachable idle peer in TCP without application traffic.\n    const int keep_alive=1,keep_idle=10,keep_interval=3,keep_count=3;\n    setsockopt(socket,SOL_SOCKET,SO_KEEPALIVE,&keep_alive,sizeof(keep_alive));\n       setsockopt(socket,IPPROTO_TCP,TCP_KEEPIDLE,&keep_idle,sizeof(keep_idle));\n       setsockopt(socket,IPPROTO_TCP,TCP_KEEPINTVL,&keep_interval,sizeof(keep_interval));\n       setsockopt(socket,IPPROTO_TCP,TCP_KEEPCNT,&keep_count,sizeof(keep_count));"
+    },
+    {
+      "id": "socket-timeouts-200",
+      "check": "the socket timeouts are 100 ms",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "struct timeval timeout{0,100000};",
+      "replace": "struct timeval timeout{0,200000};"
+    },
+    {
+      "id": "ordinary-records-1024",
+      "check": "ordinary frames go in records of at most 512 bytes",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "bulk?size_t{2048}:size_t{512}",
+      "replace": "bulk?size_t{2048}:size_t{1024}"
+    },
+    {
+      "id": "bulk-records-4096",
+      "check": "bulk frames go in records of at most 2048 bytes",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "bulk?size_t{2048}:size_t{512}",
+      "replace": "bulk?size_t{4096}:size_t{512}"
+    },
+    {
+      "id": "frame-class-lost",
+      "check": "a received frame keeps its class",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "completed_bulk=incoming_reader.bulk();",
+      "replace": "completed_bulk=false;"
+    },
+    {
+      "id": "frame-length-keeps-flag",
+      "check": "the bulk flag is not part of the length",
+      "file": "components/consortium/tls_link.cpp",
+      "find": "(uint32_t(incoming_prefix[2])<<8)|incoming_prefix[3])&~bulk_frame_flag;",
+      "replace": "(uint32_t(incoming_prefix[2])<<8)|incoming_prefix[3]);"
+    },
+    {
+      "id": "record-cap-1-short",
+      "check": "a record of exactly the caller's limit is read",
+      "file": "components/consortium/credentials.cpp",
+      "find": "if(!size||size>cap)e=ESP_ERR_INVALID_SIZE;",
+      "replace": "if(!size||size>=cap)e=ESP_ERR_INVALID_SIZE;"
+    },
+    {
+      "id": "record-empty-read",
+      "check": "an empty record is refused",
+      "file": "components/consortium/credentials.cpp",
+      "find": "if(!size||size>cap)e=ESP_ERR_INVALID_SIZE;",
+      "replace": "if(size>cap)e=ESP_ERR_INVALID_SIZE;"
+    },
+    {
+      "id": "record-resized-read",
+      "check": "a record that changes between its size and its read is refused",
+      "file": "components/consortium/credentials.cpp",
+      "find": "if(e==ESP_OK&&size!=out.size())e=ESP_ERR_INVALID_SIZE;",
+      "replace": ""
+    },
+    {
+      "id": "record-read-handle-kept",
+      "check": "a read closes its NVS handle",
+      "file": "components/consortium/credentials.cpp",
+      "find": "e=ESP_ERR_INVALID_SIZE;}}nvs_close(h);return e;}",
+      "replace": "e=ESP_ERR_INVALID_SIZE;}}return e;}"
+    },
+    {
+      "id": "record-read-partition",
+      "check": "records live on the amity_cfg partition",
+      "file": "components/consortium/credentials.cpp",
+      "find": "nvs_open_from_partition(\"amity_cfg\",space,NVS_READONLY,&h)",
+      "replace": "nvs_open_from_partition(\"amity_cfg2\",space,NVS_READONLY,&h)"
+    },
+    {
+      "id": "record-write-32769",
+      "check": "a record over 32768 bytes is refused",
+      "file": "components/consortium/credentials.cpp",
+      "find": "if(bytes.empty()||bytes.size()>32768)return ESP_ERR_INVALID_SIZE;",
+      "replace": "if(bytes.empty()||bytes.size()>32769)return ESP_ERR_INVALID_SIZE;"
+    },
+    {
+      "id": "record-empty-write",
+      "check": "an empty record is not written",
+      "file": "components/consortium/credentials.cpp",
+      "find": "if(bytes.empty()||bytes.size()>32768)return ESP_ERR_INVALID_SIZE;",
+      "replace": "if(bytes.size()>32768)return ESP_ERR_INVALID_SIZE;"
+    },
+    {
+      "id": "record-uncommitted",
+      "check": "a written record is committed",
+      "file": "components/consortium/credentials.cpp",
+      "find": "if(e==ESP_OK)e=nvs_commit(h);",
+      "replace": ""
+    },
+    {
+      "id": "record-commit-after-failure",
+      "check": "a failed write is reported, not committed over",
+      "file": "components/consortium/credentials.cpp",
+      "find": "if(e==ESP_OK)e=nvs_commit(h);",
+      "replace": "e=nvs_commit(h);"
+    },
+    {
+      "id": "record-write-handle-kept",
+      "check": "a write closes its NVS handle",
+      "file": "components/consortium/credentials.cpp",
+      "find": "e=nvs_commit(h);nvs_close(h);return e;}",
+      "replace": "e=nvs_commit(h);return e;}"
+    },
+    {
+      "id": "record-read-outside-broker",
+      "check": "reads run on the flash broker",
+      "file": "components/consortium/credentials.cpp",
+      "find": "return config_store::with_internal_flash_stack([&]{result=read_record_internal(space,key,out,cap);})?result:ESP_FAIL;",
+      "replace": "return (void)result,read_record_internal(space,key,out,cap);"
+    },
+    {
+      "id": "record-write-refusal-ignored",
+      "check": "a write the broker refuses fails",
+      "file": "components/consortium/credentials.cpp",
+      "find": "return config_store::with_internal_flash_stack([&]{result=write_record_internal(space,key,bytes);})?result:ESP_FAIL;",
+      "replace": "config_store::with_internal_flash_stack([&]{result=write_record_internal(space,key,bytes);});return ESP_OK;"
+    },
+    {
+      "id": "random-hex-33",
+      "check": "random_hex gives at most 32 bytes",
+      "file": "components/consortium/credentials.cpp",
+      "find": "if(!count||count>32)return {};",
+      "replace": "if(!count||count>33)return {};"
+    }
+  ]
+}
