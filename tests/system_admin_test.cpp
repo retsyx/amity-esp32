@@ -749,6 +749,314 @@ void admission_status() {
     CHECK(reply.text("candidate_id") == id<m::OctopusId>(9).str() && cJSON_GetArraySize(reply.item("candidates")) == 0);
 }
 
+// Removing and replacing an added Amity
+
+const config_store::ConfiguredActivity &activity(const Configuration &config, const std::string &label) {
+    for (const auto &value : config.activities)
+        if (value.label == label) return value;
+    amity_test::fail(__FILE__, __LINE__, "no such activity");
+}
+
+// The original main with an added member, 9, whose adapter holds the source
+// of the Watch activity. Console uses only the main's equipment. The runtime
+// revokes, reports and forgets the member as the scenario scripts.
+struct Removal : System {
+    std::string removal_stage = "admitted", reset = "pending";
+    esp_err_t revocation = ESP_OK;
+    bool forget_fails = false;
+    explicit Removal(bool enrolled = true) {
+        auto config = switch_configuration(direct_configuration());
+        const auto owner = id<m::OctopusId>(9);
+        config.octopuses.push_back({owner, 1});
+        for (auto &component : config.components)
+            if (component.record.component_id == activity(config, "Watch").source)
+                component.record.qualified_name->port.octopus_id = owner;
+        save(config);
+        boot();
+        if (enrolled) peers = {member(9, 19, "member")};
+        names = {{owner, "member"}};
+        synchronize();
+        install<&c::runtime_remove_octopus>([this](m::OctopusId octopus, m::MessageId request, uint64_t expected,
+                                                   std::optional<m::BootId> boot) {
+            events.push_back("revoke");
+            CHECK(octopus == id<m::OctopusId>(9) && request == id<m::MessageId>(200));
+            if (revocation != ESP_OK) return revocation;
+            if (expected != status.membership_revision) return ESP_ERR_INVALID_STATE;
+            const auto peer = std::find_if(peers.begin(), peers.end(), [&](const auto &p) { return p.id == octopus; });
+            if (peer == peers.end() || (boot && *boot != peer->boot_id)) return ESP_ERR_INVALID_STATE;
+            ++status.membership_revision;
+            peers.erase(peer);
+            return ESP_OK;
+        });
+        install<&c::runtime_removal_operation>([this](m::OctopusId octopus, m::MessageId request) {
+            CHECK(octopus == id<m::OctopusId>(9) && request == id<m::MessageId>(200));
+            return "{\"stage\":\"" + removal_stage + "\",\"reset\":\"" + reset + "\"}";
+        });
+        install<&c::runtime_forget_removed_octopus>([this](m::OctopusId octopus) {
+            events.push_back("forget");
+            if (forget_fails) return ESP_FAIL;
+            CHECK(std::none_of(peers.begin(), peers.end(), [&](const auto &p) { return p.id == octopus; }));
+            names.erase(std::remove_if(names.begin(), names.end(), [&](const auto &item) { return item.first == octopus; }),
+                        names.end());
+            return ESP_OK;
+        });
+    }
+
+    // The removal of member 9 the device list sends after review, listing
+    // the activities it deletes.
+    Json request(bool enrolled = true, std::initializer_list<const char *> affected_labels = {"Watch"}) const {
+        const auto config = active();
+        Json root(cJSON_CreateObject(), cJSON_Delete);
+        cJSON_AddStringToObject(root.get(), "request_id", id<m::MessageId>(200).str().c_str());
+        cJSON_AddStringToObject(root.get(), "octopus_id", id<m::OctopusId>(9).str().c_str());
+        cJSON_AddBoolToObject(root.get(), "confirm", true);
+        cJSON_AddStringToObject(root.get(), "expected_membership_revision", "7");
+        cJSON_AddStringToObject(root.get(), "expected_config_revision", std::to_string(config->config_revision).c_str());
+        cJSON_AddStringToObject(root.get(), "expected_presentation_revision",
+                                std::to_string(config->presentation_revision).c_str());
+        if (enrolled) cJSON_AddStringToObject(root.get(), "expected_target_boot_id", id<m::BootId>(19).str().c_str());
+        else cJSON_AddNullToObject(root.get(), "expected_target_boot_id");
+        auto *affected = cJSON_AddArrayToObject(root.get(), "affected_activity_ids");
+        for (const auto *label : affected_labels)
+            cJSON_AddItemToArray(affected, cJSON_CreateString(activity(*config, label).activity_id.str().c_str()));
+        return root;
+    }
+    static cJSON *port(const m::CecPortRef &value) {
+        auto *out = cJSON_Parse(m::name_json({value, "OSD"}).c_str());
+        cJSON_DeleteItemFromObjectCaseSensitive(out, "osd_name");
+        return out;
+    }
+    // Replacing member 9 by member 10, mapping each of 9's connectors and
+    // pieces of equipment to the same place on 10.
+    Json replacement() const {
+        auto root = request();
+        for (const auto *field : {"octopus_id", "confirm", "affected_activity_ids"})
+            cJSON_DeleteItemFromObjectCaseSensitive(root.get(), field);
+        cJSON_AddStringToObject(root.get(), "previous_octopus_id", id<m::OctopusId>(9).str().c_str());
+        cJSON_AddStringToObject(root.get(), "replacement_octopus_id", id<m::OctopusId>(10).str().c_str());
+        cJSON_AddBoolToObject(root.get(), "old_hardware_isolated", true);
+        auto *ports = cJSON_AddArrayToObject(root.get(), "ports");
+        auto *equipment = cJSON_AddArrayToObject(root.get(), "equipment");
+        for (const auto &component : active()->components) {
+            if (!component.record.qualified_name || component.record.qualified_name->port.octopus_id != id<m::OctopusId>(9))
+                continue;
+            const auto &previous = *component.record.qualified_name;
+            auto next = previous;
+            next.port.octopus_id = id<m::OctopusId>(10);
+            auto *mapping = cJSON_CreateObject();
+            cJSON_AddItemToObject(mapping, "previous", port(previous.port));
+            cJSON_AddItemToObject(mapping, "replacement", port(next.port));
+            cJSON_AddItemToArray(ports, mapping);
+            auto *selection = cJSON_CreateObject();
+            cJSON_AddStringToObject(selection, "component_id", component.record.component_id.str().c_str());
+            cJSON_AddItemToObject(selection, "previous", cJSON_Parse(m::name_json(previous).c_str()));
+            cJSON_AddItemToObject(selection, "replacement", cJSON_Parse(m::name_json(next).c_str()));
+            cJSON_AddBoolToObject(selection, "same_equipment_confirmed", true);
+            cJSON_AddItemToArray(equipment, selection);
+        }
+        return root;
+    }
+    Reply remove(const Json &root) { return send(HTTP_POST, "/api/membership/remove", print(root)); }
+    Reply replace(const Json &root) { return send(HTTP_POST, "/api/replacements/apply", print(root)); }
+    Reply progress() { return send(HTTP_GET, operation_path(200)); }
+    bool owner_gone() const {
+        return config_store::serialize_configuration(*active()).find(id<m::OctopusId>(9).str()) == std::string::npos;
+    }
+};
+
+// A removal is refused before anything changes unless its review is
+// current: revisions, boot, the exact set of affected activities and the
+// confirmation.
+void removal_review() {
+    Removal removal;
+    const auto before = removal.active();
+    for (const auto *field : {"expected_config_revision", "expected_presentation_revision", "expected_membership_revision"}) {
+        auto root = removal.request();
+        cJSON_ReplaceItemInObjectCaseSensitive(root.get(), field, cJSON_CreateString("99"));
+        CHECK(rejected(removal.remove(root), "stale_removal", "409 Conflict"));
+    }
+    auto root = removal.request();
+    cJSON_ReplaceItemInObjectCaseSensitive(root.get(), "affected_activity_ids", cJSON_CreateArray());
+    CHECK(rejected(removal.remove(root), "stale_removal", "409 Conflict"));
+    root = removal.request();
+    cJSON_AddItemToArray(cJSON_GetObjectItemCaseSensitive(root.get(), "affected_activity_ids"),
+                         cJSON_CreateString(activity(*before, "Watch").activity_id.str().c_str()));
+    CHECK(rejected(removal.remove(root), "stale_removal", "409 Conflict"));
+    root = removal.request();
+    cJSON_AddItemToArray(cJSON_GetObjectItemCaseSensitive(root.get(), "affected_activity_ids"),
+                         cJSON_CreateString(activity(*before, "Console").activity_id.str().c_str()));
+    CHECK(rejected(removal.remove(root), "stale_removal", "409 Conflict"));
+    root = removal.request();
+    cJSON_ReplaceItemInObjectCaseSensitive(root.get(), "expected_target_boot_id",
+                                           cJSON_CreateString(id<m::BootId>(99).str().c_str()));
+    CHECK(rejected(removal.remove(root), "stale_removal", "409 Conflict"));
+    root = removal.request();
+    cJSON_ReplaceItemInObjectCaseSensitive(root.get(), "expected_target_boot_id", cJSON_CreateNull());
+    CHECK(rejected(removal.remove(root), "stale_removal", "409 Conflict"));
+    root = removal.request();
+    cJSON_ReplaceItemInObjectCaseSensitive(root.get(), "confirm", cJSON_CreateBool(false));
+    CHECK(rejected(removal.remove(root), "invalid_removal", "400 Bad Request"));
+    root = removal.request();
+    cJSON_ReplaceItemInObjectCaseSensitive(root.get(), "octopus_id", cJSON_CreateString(id<m::OctopusId>(2).str().c_str()));
+    CHECK(rejected(removal.remove(root), "invalid_removal", "409 Conflict"));
+    // A member still being added is reviewed by its boot like an enrolled one.
+    removal.peers[0].enrolled = false;
+    removal.peers[0].provisional = true;
+    CHECK(rejected(removal.remove(removal.request(false)), "stale_removal", "409 Conflict"));
+    removal.peers[0] = member(9, 19, "member");
+    // A device that is neither enrolled, named nor saved is not removable.
+    root = removal.request(false, {});
+    cJSON_ReplaceItemInObjectCaseSensitive(root.get(), "octopus_id", cJSON_CreateString(id<m::OctopusId>(11).str().c_str()));
+    CHECK(rejected(removal.remove(root), "stale_removal", "409 Conflict"));
+    CHECK(calls("amity::consortium::runtime_remove_octopus") == 0 && calls("amity::consortium::runtime_forget_removed_octopus") == 0);
+    CHECK(removal.events.empty() && web_admin::operations.empty() && removal.active() == before);
+    CHECK(rejected(removal.progress(), "unknown_operation", "404 Not Found"));
+}
+
+// When the owner cannot reserve the save, nothing is revoked or saved.
+void removal_reservation_failure() {
+    Removal removal;
+    const auto before = removal.active();
+    removal.reservation = ESP_ERR_NO_MEM;
+    CHECK(rejected(removal.remove(removal.request()), "removal_unavailable", "409 Conflict"));
+    CHECK(removal.events == std::vector<std::string>({"reserve"}) && removal.active() == before);
+    CHECK(calls("config_store::cancel_staged_configuration") == 1 && !removal.journal->staged());
+    CHECK(web_admin::operations.empty() && removal.names.size() == 1 && removal.peers.size() == 1);
+}
+
+// A member whose firmware cannot be reset by removal must be updated first.
+void removal_update_required() {
+    Removal removal;
+    const auto before = removal.active();
+    removal.revocation = ESP_ERR_NOT_SUPPORTED;
+    const auto reply = removal.remove(removal.request());
+    CHECK(rejected(reply, "update_required", "409 Conflict") && reply.text("message").find("Update this Amity") == 0);
+    CHECK(removal.events == std::vector<std::string>({"reserve", "revoke"}) && removal.active() == before);
+    CHECK(web_admin::operations.empty() && removal.names.size() == 1);
+}
+
+// A revoked membership whose saved cleanup fails is reported failed, never
+// complete; the member's reset is followed separately.
+void removal_marker_failure() {
+    Removal removal;
+    const auto before = removal.active();
+    removal.memory.fail_marker = true;
+    auto reply = removal.remove(removal.request());
+    CHECK(tracked(reply, id<m::MessageId>(200).str(), "failed") && reply.text("reset") == "pending");
+    CHECK(reply.text("message").find("Membership was removed") == 0);
+    CHECK(removal.events == std::vector<std::string>({"reserve", "revoke", "commit"}) && removal.active() == before);
+    CHECK(removal.peers.empty() && removal.names.size() == 1);
+    removal.removal_stage = "complete";
+    removal.reset = "scheduled";
+    reply = removal.progress();
+    CHECK(tracked(reply, id<m::MessageId>(200).str(), "failed") && reply.text("reset") == "scheduled");
+}
+
+// A removal revokes the member after the owner reserves the save and before
+// it commits, then forgets its name. It deletes the activities that used the
+// member's equipment, and completes once the owner applies the saved
+// configuration and the member's reset is under way.
+void removal_success() {
+    Removal removal;
+    const auto keep = activity(*removal.active(), "Console").activity_id;
+    const auto applied = removal.hub;
+    removal.apply = false;
+    auto reply = removal.remove(removal.request());
+    CHECK(tracked(reply, id<m::MessageId>(200).str(), "configuring") && reply.text("reset") == "pending");
+    CHECK(removal.events == std::vector<std::string>({"reserve", "revoke", "commit", "publish", "forget"}));
+    CHECK(removal.peers.empty() && removal.names.empty() && removal.status.membership_revision == 8);
+    const auto config = removal.active();
+    CHECK(config->activities.size() == 1 && config->activities.front().activity_id == keep);
+    CHECK(config->octopuses.size() == 1 && removal.owner_gone() && removal.control.configuration_snapshot() == removal.saved);
+    removal.removal_stage = "complete";
+    removal.reset = "scheduled";
+    CHECK(tracked(removal.progress(), id<m::MessageId>(200).str(), "configuring"));
+    removal.hub = applied;
+    removal.hub.applied_config_revision = config->config_revision;
+    removal.hub.applied_presentation_revision = config->presentation_revision;
+    reply = removal.progress();
+    CHECK(tracked(reply, id<m::MessageId>(200).str(), "complete") && reply.text("reset") == "scheduled");
+    CHECK(reply.text("message").empty());
+}
+
+// A removal that cannot erase the member's name or settings is incomplete.
+void removal_forget_failure() {
+    Removal removal;
+    removal.forget_fails = true;
+    const auto reply = removal.remove(removal.request());
+    CHECK(tracked(reply, id<m::MessageId>(200).str(), "failed") && reply.text("message").find("incomplete") != std::string::npos);
+    CHECK(removal.events == std::vector<std::string>({"reserve", "revoke", "commit", "publish", "forget"}));
+    CHECK(removal.owner_gone() && removal.names.size() == 1);
+}
+
+// A device that is only saved, not enrolled, is removed without a reset.
+void removal_saved_only() {
+    Removal removal(false);
+    const auto reply = removal.remove(removal.request(false));
+    CHECK(tracked(reply, id<m::MessageId>(200).str(), "complete") && reply.text("reset") == "not_needed");
+    CHECK(removal.events == std::vector<std::string>({"reserve", "commit", "publish", "forget"}));
+    CHECK(removal.owner_gone() && removal.names.empty() && calls("amity::consortium::runtime_removal_operation") == 0);
+}
+
+// After the saved records were removed but the name was kept, removing the
+// device again erases the name.
+void removal_metadata_only() {
+    Removal removal(false);
+    Configuration clean;
+    std::vector<m::ActivityId> affected;
+    std::string error;
+    CHECK(config_store::propose_octopus_removal(*removal.active(), id<m::OctopusId>(9), clean, affected, error));
+    CHECK(amity::activate_distributed_configuration(clean, removal.active()->revisions(), id<m::MessageId>(201)) == ESP_OK);
+    CHECK(removal.owner_gone() && removal.names.size() == 1);
+    const auto reply = removal.remove(removal.request(false, {}));
+    CHECK(tracked(reply, id<m::MessageId>(200).str(), "complete") && removal.names.empty());
+    CHECK(calls("amity::consortium::runtime_remove_octopus") == 0 && calls("amity::consortium::runtime_forget_removed_octopus") == 1);
+}
+
+// Replacement revokes the old member, moves its equipment to the new one
+// and keeps every activity and its order.
+void replacement() {
+    Removal removal;
+    auto expanded = *removal.active();
+    expanded.octopuses.push_back({id<m::OctopusId>(10), 1});
+    CHECK(amity::activate_distributed_configuration(expanded, removal.active()->revisions(), id<m::MessageId>(202)) == ESP_OK);
+    removal.peers.push_back(member(10, 20, "spare"));
+    const auto order = removal.active()->activity_order;
+    removal.events.clear();
+    auto reply = removal.replace(removal.replacement());
+    CHECK(tracked(reply, id<m::MessageId>(200).str(), "configuring") && reply.text("reset") == "pending");
+    CHECK(removal.events == std::vector<std::string>({"reserve", "revoke", "commit", "publish", "forget"}));
+    const auto config = removal.active();
+    CHECK(config->activity_order == order && config->activities.size() == 2 && removal.owner_gone());
+    CHECK(removal.names.empty() && removal.peers.size() == 1 && removal.peers[0].id == id<m::OctopusId>(10));
+    removal.removal_stage = "complete";
+    removal.reset = "offline";
+    reply = removal.progress();
+    CHECK(tracked(reply, id<m::MessageId>(200).str(), "applied") && reply.text("reset") == "offline");
+}
+
+// A replacement is refused before anything changes for the main Amity, a
+// stale review or an incomplete mapping.
+void replacement_review() {
+    Removal removal;
+    const auto before = removal.active();
+    auto root = removal.replacement();
+    cJSON_ReplaceItemInObjectCaseSensitive(root.get(), "previous_octopus_id",
+                                           cJSON_CreateString(id<m::OctopusId>(2).str().c_str()));
+    CHECK(rejected(removal.replace(root), "coordinator_replacement", "409 Conflict"));
+    root = removal.replacement();
+    cJSON_ReplaceItemInObjectCaseSensitive(root.get(), "expected_config_revision", cJSON_CreateString("99"));
+    CHECK(rejected(removal.replace(root), "stale_revision", "409 Conflict"));
+    root = removal.replacement();
+    cJSON_ReplaceItemInObjectCaseSensitive(root.get(), "expected_target_boot_id",
+                                           cJSON_CreateString(id<m::BootId>(99).str().c_str()));
+    CHECK(rejected(removal.replace(root), "stale_revision", "409 Conflict"));
+    root = removal.replacement();
+    cJSON_ReplaceItemInObjectCaseSensitive(root.get(), "ports", cJSON_CreateArray());
+    CHECK(rejected(removal.replace(root), "invalid_mapping", "400 Bad Request"));
+    CHECK(removal.events.empty() && removal.active() == before && web_admin::operations.empty());
+}
+
 // The harness consumes what it scripts: a request body read to its end
 // under its deadline, the saved record loaded and published, the
 // synchronization task created and one response sent.
@@ -803,6 +1111,16 @@ int main(int argc, char **argv) {
                                {"admission-scan-change", admission_scan_change},
                                {"admission-failure", admission_failure},
                                {"admission-status", admission_status},
+                               {"removal-review", removal_review},
+                               {"removal-reservation-failure", removal_reservation_failure},
+                               {"removal-update-required", removal_update_required},
+                               {"removal-marker-failure", removal_marker_failure},
+                               {"removal-success", removal_success},
+                               {"removal-forget-failure", removal_forget_failure},
+                               {"removal-saved-only", removal_saved_only},
+                               {"removal-metadata-only", removal_metadata_only},
+                               {"replacement", replacement},
+                               {"replacement-review", replacement_review},
                                {"sanity", sanity},
                            });
 }

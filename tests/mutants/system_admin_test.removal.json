@@ -1,0 +1,390 @@
+{
+  "ctest": "^system_admin_test\\.",
+  "targets": [
+    "system_admin_test"
+  ],
+  "baseline": {
+    "ctest": "^membership_removal_api_test\\.py$",
+    "targets": []
+  },
+  "mutants": [
+    {
+      "id": "stub-string-empty",
+      "check": "stub: early return from string()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "std::string string(cJSON* root,const char* key){",
+      "replace": "std::string string(cJSON* root,const char* key){ return {};"
+    },
+    {
+      "id": "stub-uint64-false",
+      "check": "stub: early return from uint64()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "bool uint64(cJSON* root,const char* key,uint64_t& value){",
+      "replace": "bool uint64(cJSON* root,const char* key,uint64_t& value){ return false;"
+    },
+    {
+      "id": "stub-uint64-true",
+      "check": "stub: early return from uint64()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "bool uint64(cJSON* root,const char* key,uint64_t& value){",
+      "replace": "bool uint64(cJSON* root,const char* key,uint64_t& value){ return true;"
+    },
+    {
+      "id": "stub-json-empty",
+      "check": "stub: early return from json()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "std::string json(cJSON* root){",
+      "replace": "std::string json(cJSON* root){ return {};"
+    },
+    {
+      "id": "stub-expected_pair-false",
+      "check": "stub: early return from expected_pair()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "bool expected_pair(cJSON* root,config_store::RevisionPair& pair){",
+      "replace": "bool expected_pair(cJSON* root,config_store::RevisionPair& pair){ return false;"
+    },
+    {
+      "id": "stub-expected_pair-true",
+      "check": "stub: early return from expected_pair()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "bool expected_pair(cJSON* root,config_store::RevisionPair& pair){",
+      "replace": "bool expected_pair(cJSON* root,config_store::RevisionPair& pair){ return true;"
+    },
+    {
+      "id": "stub-reviewed_activities-false",
+      "check": "stub: early return from reviewed_activities()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "bool reviewed_activities(cJSON* root,const std::vector<m::ActivityId>& affected){",
+      "replace": "bool reviewed_activities(cJSON* root,const std::vector<m::ActivityId>& affected){ return false;"
+    },
+    {
+      "id": "stub-reviewed_activities-true",
+      "check": "stub: early return from reviewed_activities()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "bool reviewed_activities(cJSON* root,const std::vector<m::ActivityId>& affected){",
+      "replace": "bool reviewed_activities(cJSON* root,const std::vector<m::ActivityId>& affected){ return true;"
+    },
+    {
+      "id": "stub-reviewed_member-false",
+      "check": "stub: early return from reviewed_member()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "bool reviewed_member(m::OctopusId owner,uint64_t revision,std::optional<m::BootId> boot,bool& enrolled){",
+      "replace": "bool reviewed_member(m::OctopusId owner,uint64_t revision,std::optional<m::BootId> boot,bool& enrolled){ return false;"
+    },
+    {
+      "id": "stub-reviewed_member-true",
+      "check": "stub: early return from reviewed_member()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "bool reviewed_member(m::OctopusId owner,uint64_t revision,std::optional<m::BootId> boot,bool& enrolled){",
+      "replace": "bool reviewed_member(m::OctopusId owner,uint64_t revision,std::optional<m::BootId> boot,bool& enrolled){ return true;"
+    },
+    {
+      "id": "stub-object_fields-false",
+      "check": "stub: early return from object_fields()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "bool object_fields(cJSON* value,std::initializer_list<const char*> required,std::initializer_list<const char*> optional={}){",
+      "replace": "bool object_fields(cJSON* value,std::initializer_list<const char*> required,std::initializer_list<const char*> optional={}){ return false;"
+    },
+    {
+      "id": "stub-object_fields-true",
+      "check": "stub: early return from object_fields()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "bool object_fields(cJSON* value,std::initializer_list<const char*> required,std::initializer_list<const char*> optional={}){",
+      "replace": "bool object_fields(cJSON* value,std::initializer_list<const char*> required,std::initializer_list<const char*> optional={}){ return true;"
+    },
+    {
+      "id": "stub-parse_port_value-false",
+      "check": "stub: early return from parse_port_value()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "bool parse_port_value(cJSON* value,m::CecPortRef& port){",
+      "replace": "bool parse_port_value(cJSON* value,m::CecPortRef& port){ return false;"
+    },
+    {
+      "id": "stub-parse_port_value-true",
+      "check": "stub: early return from parse_port_value()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "bool parse_port_value(cJSON* value,m::CecPortRef& port){",
+      "replace": "bool parse_port_value(cJSON* value,m::CecPortRef& port){ return true;"
+    },
+    {
+      "id": "stub-update_operation-return",
+      "check": "stub: early return from update_operation()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "void update_operation(Tracked& operation){",
+      "replace": "void update_operation(Tracked& operation){ return;"
+    },
+    {
+      "id": "presentation-revision-unread",
+      "check": "a review names the presentation revision",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "return uint64(root,\"expected_config_revision\",pair.config_revision)&&uint64(root,\"expected_presentation_revision\",pair.presentation_revision);",
+      "replace": "return uint64(root,\"expected_config_revision\",pair.config_revision);"
+    },
+    {
+      "id": "removal-revisions-unchecked",
+      "check": "a removal reviewed against older revisions is stale",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(!active||!expected_pair(root.get(),expected)||expected!=active->revisions()||\n           (!enrolled",
+      "replace": "if(!active||!expected_pair(root.get(),expected)||\n           (!enrolled"
+    },
+    {
+      "id": "affected-duplicates-accepted",
+      "check": "an affected activity is listed once",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(!id||!reviewed.insert(*id).second)return false;",
+      "replace": "if(!id)return false;"
+    },
+    {
+      "id": "affected-set-unchecked",
+      "check": "the affected activities are exactly those removal deletes",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "return reviewed==std::set<m::ActivityId>(affected.begin(),affected.end());",
+      "replace": "return ((void)affected,true);"
+    },
+    {
+      "id": "boot-unchecked",
+      "check": "the reviewed boot must be the member's current boot",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "return boot==current_boot;",
+      "replace": "return ((void)boot,(void)current_boot,true);"
+    },
+    {
+      "id": "member-boot-unread",
+      "check": "an enrolled member is reviewed by its boot",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(peer.boot_id)current_boot=peer.boot_id;",
+      "replace": ""
+    },
+    {
+      "id": "provisional-member-ignored",
+      "check": "a provisional member counts as enrolled",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(peer.id==owner&&(peer.enrolled||peer.provisional)){",
+      "replace": "if(peer.id==owner&&peer.enrolled){"
+    },
+    {
+      "id": "confirmation-unchecked",
+      "check": "a removal must be confirmed",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(!owner||!cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(root.get(),\"confirm\"))||",
+      "replace": "if(!owner||"
+    },
+    {
+      "id": "self-removal-accepted",
+      "check": "this Amity cannot remove itself",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(*owner==control->octopus_id()){result=error(req,\"invalid_removal\"",
+      "replace": "if(false){result=error(req,\"invalid_removal\""
+    },
+    {
+      "id": "unknown-device-accepted",
+      "check": "only an enrolled, named or saved device can be removed",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "(!enrolled&&!named&&std::none_of(",
+      "replace": "(false&&!named&&std::none_of("
+    },
+    {
+      "id": "name-not-consulted",
+      "check": "a device known only by its name can still be removed",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "const bool named=std::any_of(known_names.begin(),known_names.end(),[&](const auto& entry){return entry.first==*owner;});",
+      "replace": "const bool named=((void)known_names,false);"
+    },
+    {
+      "id": "removal-not-revoked",
+      "check": "a removal revokes an enrolled member before committing",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(!enrolled)return ESP_OK;\n            const auto removed=amity::consortium::runtime_remove_octopus(*owner,",
+      "replace": "if(true)return ESP_OK;\n            const auto removed=amity::consortium::runtime_remove_octopus(*owner,"
+    },
+    {
+      "id": "removal-revocation-unrecorded",
+      "check": "a revoked membership is remembered when the save fails",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "revoked=removed==ESP_OK;return removed;\n        });\n        operation.candidate=*owner;",
+      "replace": "revoked=false;return removed;\n        });\n        operation.candidate=*owner;"
+    },
+    {
+      "id": "revoked-failure-untracked",
+      "check": "a revoked membership with failed cleanup is tracked as failed",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(revoked){operation.status=\"failed\";operation.error=\"Membership was removed, but saved configuration cleanup failed.",
+      "replace": "if(false){operation.status=\"failed\";operation.error=\"Membership was removed, but saved configuration cleanup failed."
+    },
+    {
+      "id": "update-required-unreported",
+      "check": "an old member's removal asks for its update",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "e==ESP_ERR_NOT_SUPPORTED?\"update_required\":\"removal_unavailable\"",
+      "replace": "\"removal_unavailable\""
+    },
+    {
+      "id": "removal-enrollment-forgotten",
+      "check": "an enrolled member's removal follows its reset",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "operation.candidate=*owner;operation.removal_enrolled=enrolled;",
+      "replace": "operation.candidate=*owner;"
+    },
+    {
+      "id": "removal-starts-complete",
+      "check": "a removal is configuring until applied",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "operation.status=\"configuring\";\n        operation.removal_revisions=",
+      "replace": "operation.status=\"complete\";\n        operation.removal_revisions="
+    },
+    {
+      "id": "removal-revisions-forgotten",
+      "check": "a removal waits for its own saved revision",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "operation.removal_revisions={activation.config_revision,activation.presentation_revision};\n        if(amity::consortium::runtime_forget_removed_octopus(*owner)",
+      "replace": "if(amity::consortium::runtime_forget_removed_octopus(*owner)"
+    },
+    {
+      "id": "removal-name-kept",
+      "check": "a removal erases the member's name and settings",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(amity::consortium::runtime_forget_removed_octopus(*owner)!=ESP_OK){",
+      "replace": "if(false){"
+    },
+    {
+      "id": "forget-failure-unreported",
+      "check": "a removal that cannot erase the name is failed",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(amity::consortium::runtime_forget_removed_octopus(*owner)!=ESP_OK){operation.status=\"failed\";",
+      "replace": "if(amity::consortium::runtime_forget_removed_octopus(*owner)!=ESP_OK){"
+    },
+    {
+      "id": "reset-stage-ignored",
+      "check": "completion waits for the member's reset",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "reset_complete=string(status.get(),\"stage\")==\"complete\";",
+      "replace": "reset_complete=true;"
+    },
+    {
+      "id": "reset-unreported",
+      "check": "the member's reset outcome is reported",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "operation.reset=string(status.get(),\"reset\");",
+      "replace": ""
+    },
+    {
+      "id": "saved-only-reset-unreported",
+      "check": "a saved-only removal needs no reset",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "}else operation.reset=\"not_needed\";",
+      "replace": "}"
+    },
+    {
+      "id": "saved-only-never-complete",
+      "check": "a saved-only removal completes without a reset",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "bool reset_complete=!operation.removal_enrolled;",
+      "replace": "bool reset_complete=false;"
+    },
+    {
+      "id": "failed-removal-recovers",
+      "check": "a failed removal stays failed",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(operation.status==\"failed\"||operation.status==\"complete\"||operation.status==\"applied\")return;",
+      "replace": "if(operation.status==\"complete\"||operation.status==\"applied\")return;"
+    },
+    {
+      "id": "applied-revision-ignored",
+      "check": "completion waits for the owner to apply the saved revision",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(applied.applied_config_revision<operation.removal_revisions.config_revision||",
+      "replace": "if(false||"
+    },
+    {
+      "id": "replacement-completes",
+      "check": "a replacement ends applied, a removal complete",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "operation.status=operation.path==\"/api/replacements/apply\"?\"applied\":\"complete\";",
+      "replace": "operation.status=\"complete\";"
+    },
+    {
+      "id": "replacement-not-removing",
+      "check": "a replacement follows the old member's reset",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "const bool removing=operation.path==\"/api/membership/remove\"||(operation.path==\"/api/replacements/apply\"&&operation.candidate);",
+      "replace": "const bool removing=operation.path==\"/api/membership/remove\";"
+    },
+    {
+      "id": "replacement-reset-hidden",
+      "check": "a replacement reports the old member's reset",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(operation.path==\"/api/membership/remove\"||(operation.path==\"/api/replacements/apply\"&&operation.candidate))cJSON_AddStringToObject(result.get(),\"reset\"",
+      "replace": "if(operation.path==\"/api/membership/remove\")cJSON_AddStringToObject(result.get(),\"reset\""
+    },
+    {
+      "id": "replacement-revisions-unchecked",
+      "check": "a replacement reviewed against older revisions is stale",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(!active||!expected_pair(root.get(),expected)||expected!=active->revisions()){result=error(req,\"stale_revision\"",
+      "replace": "if(!active||!expected_pair(root.get(),expected)){result=error(req,\"stale_revision\""
+    },
+    {
+      "id": "main-replacement-accepted",
+      "check": "the main Amity cannot be replaced",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(!previous||!replacement||*previous==control->octopus_id()){",
+      "replace": "if(!previous||!replacement){"
+    },
+    {
+      "id": "replacement-boot-unchecked",
+      "check": "a replacement is reviewed against the old member's boot",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(!reviewed_member(*previous,membership_revision,target_boot,enrolled)){result=error(req,\"stale_revision\"",
+      "replace": "if(false){result=error(req,\"stale_revision\""
+    },
+    {
+      "id": "empty-mapping-accepted",
+      "check": "a replacement maps at least one connector",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(!cJSON_IsArray(ports)||cJSON_GetArraySize(ports)<1||",
+      "replace": "if(!cJSON_IsArray(ports)||"
+    },
+    {
+      "id": "replacement-not-revoked",
+      "check": "a replacement revokes the enrolled old member",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(!enrolled)return ESP_OK;\n            const auto removed=amity::consortium::runtime_remove_octopus(*previous,",
+      "replace": "if(true)return ESP_OK;\n            const auto removed=amity::consortium::runtime_remove_octopus(*previous,"
+    },
+    {
+      "id": "replacement-enrollment-forgotten",
+      "check": "a replacement follows the old member's reset",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "operation.candidate=*previous;operation.removal_enrolled=enrolled;",
+      "replace": "operation.candidate=*previous;"
+    },
+    {
+      "id": "replacement-starts-applied",
+      "check": "a replacement is configuring until applied",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "operation.removal_revisions={activation.config_revision,activation.presentation_revision};operation.status=\"configuring\";",
+      "replace": "operation.removal_revisions={activation.config_revision,activation.presentation_revision};operation.status=\"applied\";"
+    },
+    {
+      "id": "replacement-name-kept",
+      "check": "a replacement erases the old member's name and settings",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(amity::consortium::runtime_forget_removed_octopus(*previous)!=ESP_OK){",
+      "replace": "if(false){"
+    },
+    {
+      "id": "revoke-before-reservation",
+      "check": "the member is revoked only after the owner reserves the save",
+      "file": "components/system_sync/system_sync.cpp",
+      "find": "if(result==ESP_OK)result=control->configure(prepared,[&]{",
+      "replace": "if(result==ESP_OK&&before_commit)result=before_commit();if(result==ESP_OK)result=control->configure(prepared,[&]{"
+    },
+    {
+      "id": "failed-revocation-committed",
+      "check": "a save whose revocation failed is not committed",
+      "file": "components/system_sync/system_sync.cpp",
+      "find": "if(before_commit){const auto admitted=before_commit();if(admitted!=ESP_OK){error=\"The reviewed device removal changed before configuration commit\";return admitted;}}",
+      "replace": "if(before_commit){(void)before_commit();}"
+    }
+  ]
+}
