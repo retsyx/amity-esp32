@@ -111,14 +111,22 @@ bool closed(int fd) {
     return n == 0 || (n < 0 && errno == ECONNRESET);
 }
 // After the server's reply and FIN: whether the connection still ends
-// cleanly, or the server has since reset it.
+// cleanly, or the server has since reset it. Once the FIN has arrived, Linux
+// recv() returns 0 even after a reset and records the reset as EPIPE, so the
+// socket error is read first; macOS records ECONNRESET.
+int socket_error(int fd) {
+    int error = 0;
+    socklen_t size = sizeof(error);
+    CHECK(getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &size) == 0);
+    return error;
+}
 bool ends_cleanly(int fd) {
     char byte;
-    return recv(fd, &byte, 1, MSG_DONTWAIT) == 0;
+    return socket_error(fd) == 0 && recv(fd, &byte, 1, MSG_DONTWAIT) == 0;
 }
 bool was_reset(int fd) {
-    char byte;
-    return recv(fd, &byte, 1, MSG_DONTWAIT) < 0 && errno == ECONNRESET;
+    const int error = socket_error(fd);
+    return error == ECONNRESET || error == EPIPE;
 }
 std::string ask(const std::string &request, bool v6 = false) {
     const int fd = connect_to(v6);
