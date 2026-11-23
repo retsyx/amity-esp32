@@ -25,7 +25,7 @@ if(AMITY_TEST_TIER STREQUAL standalone)
     amity_command_test(update_bundle_fixture "${PYTHON3}" -S "${T}/update_bundle_fixture.py"
         "${CMAKE_BINARY_DIR}/python-update-bundle.bin")
     set_tests_properties(update_bundle_fixture PROPERTIES FIXTURES_SETUP python_update_bundle)
-    amity_test(system_services_test
+    amity_test(system_services_test PTHREAD RACE
         SOURCES "${T}/system_services_test.cpp"
         INCLUDES ${system_services_includes}
         LIBS system_services_fakes core_fakes httpd_fake web_request_seams network_diagnostics_seams
@@ -34,9 +34,9 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         REGISTRY
         SCENARIOS log-capture-start log-capture-without-lock allocation-hook allocation-capacity allocation-names
             allocation-in-interrupt memory-totals console-forwarding console-long-line console-error
-            console-without-sink console-clock-wrap console-clock-anomaly bundle-upload raw-image bundle-corruptions
-            bundle-length receive-failures signed-bundle image-digest header-bounds metadata-trickle image-stall
-            reader-unavailable downgrade upload-rejections python-bundle confirm-pending-image
+            console-without-sink console-clock-wrap console-clock-anomaly console-contention bundle-upload raw-image
+            bundle-corruptions bundle-length receive-failures signed-bundle image-digest header-bounds metadata-trickle
+            image-stall reader-unavailable downgrade upload-rejections python-bundle confirm-pending-image
             confirm-confirmed-image reboot-later log-ring)
     set_tests_properties(system_services_test.python-bundle PROPERTIES FIXTURES_REQUIRED python_update_bundle)
     amity_test(log_download_test PTHREAD RACE

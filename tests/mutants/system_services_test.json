@@ -721,6 +721,13 @@
       "file": "components/system_services/system_services.cpp",
       "find": "xTaskCreate(restart_task,\"restart\",2048,reinterpret_cast<void*>(uintptr_t(delay_ms)),3,nullptr);",
       "replace": "xTaskCreate(restart_task,\"restart\",2048,reinterpret_cast<void*>(uintptr_t(delay_ms)),2,nullptr);"
+    },
+    {
+      "id": "ring-lock-not-awaited",
+      "check": "a console line waits for the ring lock",
+      "file": "components/system_services/system_services.cpp",
+      "find": "xSemaphoreTake(lock,portMAX_DELAY);\n        for (size_t i=0; i<n; ++i)",
+      "replace": "xSemaphoreTake(lock,0);\n        for (size_t i=0; i<n; ++i)"
     }
   ]
 }

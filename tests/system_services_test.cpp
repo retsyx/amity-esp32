@@ -41,6 +41,7 @@ size_t free_size(uint32_t caps);
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <condition_variable>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -48,10 +49,12 @@ size_t free_size(uint32_t caps);
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <mutex>
 #include <new>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -449,6 +452,59 @@ void console_clock_anomaly() {
     console.shift_us = -1'000;
     CHECK(emit("clock anomaly") == 17);
     CHECK((reports == std::vector<Report>{{40, 0}}));
+}
+
+// A line that finds the ring locked by another task waits for the lock: the
+// ring gets it only after the other task releases the lock, 5 ms later, and
+// the console call is timed from then.
+std::mutex handoff;
+std::condition_variable handed;
+bool held = false, release = false, released = false;
+size_t used_at_release = SIZE_MAX;
+
+void console_contention() {
+    start_console();
+    console.delay_us = 2'000;
+    std::thread holder([] {
+        CHECK(xSemaphoreTake(system_services::lock, portMAX_DELAY) == pdTRUE);
+        std::unique_lock<std::mutex> lock(handoff);
+        held = true;
+        handed.notify_all();
+        handed.wait(lock, [] { return release; });
+        CHECK(xSemaphoreGive(system_services::lock) == pdTRUE);
+        released = true;
+        handed.notify_all();
+    });
+    {
+        std::unique_lock<std::mutex> lock(handoff);
+        handed.wait(lock, [] { return held; });
+    }
+    CHECK(ring_locked());
+    // The waiting line advances the clock; at 5 ms the holder releases the lock.
+    esp_timer_create_args_t args{};
+    args.name = "release";
+    args.callback = [](void *) {
+        used_at_release = system_services::used;
+        std::unique_lock<std::mutex> lock(handoff);
+        release = true;
+        handed.notify_all();
+        handed.wait(lock, [] { return released; });
+    };
+    esp_timer_handle_t timer = nullptr;
+    CHECK(esp_timer_create(&args, &timer) == ESP_OK && esp_timer_start_once(timer, 5'000) == ESP_OK);
+    CHECK(emit("contended %d", 7) == 17);
+    bool waited;
+    {
+        std::lock_guard<std::mutex> lock(handoff);
+        waited = release;
+        release = true;
+        handed.notify_all();
+    }
+    holder.join();
+    CHECK(waited && used_at_release == 0 && !ring_locked());
+    CHECK(system_services::logs() == "contended 7" && std::string(console.forwarded) == "contended 7");
+    CHECK((reports == std::vector<Report>{{5, 2}}));
+    CHECK(esp_timer_delete(timer) == ESP_OK);
 }
 
 // Firmware uploads.
@@ -1048,6 +1104,7 @@ int main(int argc, char **argv) {
                             {"console-without-sink", console_without_sink},
                             {"console-clock-wrap", console_clock_wrap},
                             {"console-clock-anomaly", console_clock_anomaly},
+                            {"console-contention", console_contention},
                             {"bundle-upload", bundle_upload},
                             {"raw-image", raw_image},
                             {"bundle-corruptions", bundle_corruptions},
