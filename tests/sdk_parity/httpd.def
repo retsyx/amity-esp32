@@ -1,0 +1,54 @@
+// Copyright 2026.
+// This file is part of Amity-esp32.
+// Amity-esp32 is free software: you can redistribute it and/or modify it under the terms of the
+// GNU General Public License as published by the Free Software Foundation, either version 3 of the
+// License, or (at your option) any later version.
+
+// HTTP server constants and layouts the HTTP server fake reproduces from the
+// pinned ESP-IDF and the Amity build's configuration.
+// fakes: tests/core_fakes tests/web_request_fakes
+// headers: esp_http_server.h
+// target: main/main.cpp
+AMITY_PARITY(err_httpd_base, ESP_ERR_HTTPD_BASE)
+AMITY_PARITY(err_handlers_full, ESP_ERR_HTTPD_HANDLERS_FULL)
+AMITY_PARITY(err_handler_exists, ESP_ERR_HTTPD_HANDLER_EXISTS)
+AMITY_PARITY(err_invalid_req, ESP_ERR_HTTPD_INVALID_REQ)
+AMITY_PARITY(err_result_trunc, ESP_ERR_HTTPD_RESULT_TRUNC)
+AMITY_PARITY(err_resp_hdr, ESP_ERR_HTTPD_RESP_HDR)
+AMITY_PARITY(err_resp_send, ESP_ERR_HTTPD_RESP_SEND)
+AMITY_PARITY(err_alloc_mem, ESP_ERR_HTTPD_ALLOC_MEM)
+AMITY_PARITY(err_task, ESP_ERR_HTTPD_TASK)
+AMITY_PARITY(resp_use_strlen, HTTPD_RESP_USE_STRLEN)
+AMITY_PARITY(sock_err_fail, HTTPD_SOCK_ERR_FAIL)
+AMITY_PARITY(sock_err_invalid, HTTPD_SOCK_ERR_INVALID)
+AMITY_PARITY(sock_err_timeout, HTTPD_SOCK_ERR_TIMEOUT)
+AMITY_PARITY(method_delete, HTTP_DELETE)
+AMITY_PARITY(method_get, HTTP_GET)
+AMITY_PARITY(method_head, HTTP_HEAD)
+AMITY_PARITY(method_post, HTTP_POST)
+AMITY_PARITY(method_put, HTTP_PUT)
+AMITY_PARITY(method_options, HTTP_OPTIONS)
+AMITY_PARITY(method_any, HTTP_ANY)
+AMITY_PARITY(uri_size, sizeof(((httpd_req_t *)0)->uri))
+AMITY_PARITY(req_handle_first, offsetof(httpd_req_t, handle))
+AMITY_PARITY(req_method_after_handle, offsetof(httpd_req_t, method) > offsetof(httpd_req_t, handle))
+AMITY_PARITY(req_uri_after_method, offsetof(httpd_req_t, uri) > offsetof(httpd_req_t, method))
+AMITY_PARITY(req_content_len_after_uri, offsetof(httpd_req_t, content_len) > offsetof(httpd_req_t, uri))
+AMITY_PARITY(req_aux_after_content_len, offsetof(httpd_req_t, aux) > offsetof(httpd_req_t, content_len))
+AMITY_PARITY(req_user_ctx_after_aux, offsetof(httpd_req_t, user_ctx) > offsetof(httpd_req_t, aux))
+AMITY_PARITY(req_sess_ctx_after_user_ctx, offsetof(httpd_req_t, sess_ctx) > offsetof(httpd_req_t, user_ctx))
+AMITY_PARITY(req_free_ctx_after_sess_ctx, offsetof(httpd_req_t, free_ctx) > offsetof(httpd_req_t, sess_ctx))
+AMITY_PARITY(req_ignore_last, offsetof(httpd_req_t, ignore_sess_ctx_changes) > offsetof(httpd_req_t, free_ctx))
+AMITY_PARITY(uri_handler_words, sizeof(httpd_uri_t) / sizeof(void *))
+AMITY_PARITY(uri_handler_handler_third, offsetof(httpd_uri_t, handler) / sizeof(void *))
+AMITY_PARITY(config_priority_first, offsetof(httpd_config_t, task_priority))
+AMITY_PARITY(config_uri_handlers_after_sockets,
+             offsetof(httpd_config_t, max_uri_handlers) > offsetof(httpd_config_t, max_open_sockets))
+AMITY_PARITY(config_resp_headers_after_uri_handlers,
+             offsetof(httpd_config_t, max_resp_headers) > offsetof(httpd_config_t, max_uri_handlers))
+AMITY_PARITY(config_user_ctx_after_send_timeout,
+             offsetof(httpd_config_t, global_user_ctx) > offsetof(httpd_config_t, send_wait_timeout))
+AMITY_PARITY(config_keep_alive_after_linger,
+             offsetof(httpd_config_t, keep_alive_enable) > offsetof(httpd_config_t, linger_timeout))
+AMITY_PARITY(config_match_last,
+             offsetof(httpd_config_t, uri_match_fn) + sizeof(httpd_uri_match_func_t) == sizeof(httpd_config_t))

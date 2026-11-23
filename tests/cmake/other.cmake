@@ -295,4 +295,9 @@ elseif(AMITY_TEST_TIER STREQUAL sdk)
         system_nvs_budget_test.py
         system_peer_record_test.py
     )
+
+    # The shared SDK fakes against the pinned SDK headers
+    amity_python_tests(
+        sdk_fake_parity_test.py
+    )
 endif()

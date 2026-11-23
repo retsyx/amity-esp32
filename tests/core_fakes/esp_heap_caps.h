@@ -18,7 +18,7 @@
 extern "C" {
 #endif
 
-#define MALLOC_CAP_EXEC (1 << 0)
+// The Amity build has no executable heap, so MALLOC_CAP_EXEC does not exist.
 #define MALLOC_CAP_32BIT (1 << 1)
 #define MALLOC_CAP_8BIT (1 << 2)
 #define MALLOC_CAP_DMA (1 << 3)

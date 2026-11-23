@@ -1,0 +1,46 @@
+// Copyright 2026.
+// This file is part of Amity-esp32.
+// Amity-esp32 is free software: you can redistribute it and/or modify it under the terms of the
+// GNU General Public License as published by the Free Software Foundation, either version 3 of the
+// License, or (at your option) any later version.
+
+// PSA Crypto types and constants the crypto fakes reproduce from the pinned
+// TF-PSA-Crypto.
+// fakes: tests/crypto_fakes
+// headers: psa/crypto.h
+// target: main/main.cpp
+AMITY_PARITY(status_size, sizeof(psa_status_t))
+AMITY_PARITY(key_id_size, sizeof(mbedtls_svc_key_id_t))
+AMITY_PARITY(key_type_size, sizeof(psa_key_type_t))
+AMITY_PARITY(ecc_family_size, sizeof(psa_ecc_family_t))
+AMITY_PARITY(algorithm_size, sizeof(psa_algorithm_t))
+AMITY_PARITY(usage_size, sizeof(psa_key_usage_t))
+AMITY_PARITY(derivation_step_size, sizeof(psa_key_derivation_step_t))
+AMITY_PARITY(success, PSA_SUCCESS)
+AMITY_PARITY(error_generic, PSA_ERROR_GENERIC_ERROR)
+AMITY_PARITY(error_not_permitted, PSA_ERROR_NOT_PERMITTED)
+AMITY_PARITY(error_not_supported, PSA_ERROR_NOT_SUPPORTED)
+AMITY_PARITY(error_invalid_argument, PSA_ERROR_INVALID_ARGUMENT)
+AMITY_PARITY(error_invalid_handle, PSA_ERROR_INVALID_HANDLE)
+AMITY_PARITY(error_bad_state, PSA_ERROR_BAD_STATE)
+AMITY_PARITY(error_buffer_too_small, PSA_ERROR_BUFFER_TOO_SMALL)
+AMITY_PARITY(error_insufficient_memory, PSA_ERROR_INSUFFICIENT_MEMORY)
+AMITY_PARITY(error_invalid_signature, PSA_ERROR_INVALID_SIGNATURE)
+AMITY_PARITY(key_id_null, PSA_KEY_ID_NULL)
+AMITY_PARITY(key_type_none, PSA_KEY_TYPE_NONE)
+AMITY_PARITY(key_type_aes, PSA_KEY_TYPE_AES)
+AMITY_PARITY(key_type_ecc_pair_base, PSA_KEY_TYPE_ECC_KEY_PAIR_BASE)
+AMITY_PARITY(key_type_p256_pair, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1))
+AMITY_PARITY(ecc_family_secp_r1, PSA_ECC_FAMILY_SECP_R1)
+AMITY_PARITY(alg_hash_mask, PSA_ALG_HASH_MASK)
+AMITY_PARITY(alg_sha_256, PSA_ALG_SHA_256)
+AMITY_PARITY(alg_gcm, PSA_ALG_GCM)
+AMITY_PARITY(alg_hkdf_base, PSA_ALG_HKDF_BASE)
+AMITY_PARITY(alg_hkdf_sha_256, PSA_ALG_HKDF(PSA_ALG_SHA_256))
+AMITY_PARITY(alg_ecdh, PSA_ALG_ECDH)
+AMITY_PARITY(usage_encrypt, PSA_KEY_USAGE_ENCRYPT)
+AMITY_PARITY(usage_decrypt, PSA_KEY_USAGE_DECRYPT)
+AMITY_PARITY(usage_derive, PSA_KEY_USAGE_DERIVE)
+AMITY_PARITY(input_secret, PSA_KEY_DERIVATION_INPUT_SECRET)
+AMITY_PARITY(input_salt, PSA_KEY_DERIVATION_INPUT_SALT)
+AMITY_PARITY(input_info, PSA_KEY_DERIVATION_INPUT_INFO)

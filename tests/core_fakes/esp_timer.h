@@ -19,9 +19,9 @@ extern "C" {
 
 typedef struct esp_timer *esp_timer_handle_t;
 typedef void (*esp_timer_cb_t)(void *arg);
+// The Amity build has no ISR dispatch.
 typedef enum {
     ESP_TIMER_TASK,
-    ESP_TIMER_ISR,
     ESP_TIMER_MAX,
 } esp_timer_dispatch_t;
 typedef struct {
