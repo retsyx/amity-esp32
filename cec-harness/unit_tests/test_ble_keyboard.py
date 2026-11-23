@@ -16,7 +16,7 @@ from contextlib import redirect_stdout, redirect_stderr
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import CecError, CecSession, DUT
-from amity_harness.ble_keyboard import KeyboardConflict, LocalKeyboard, PairedKeyboard
+from amity_harness.ble_keyboard import KeyboardConflict, LocalKeyboard, PairedKeyboard, PairingFailed
 from amity_harness.ble_keyboard_worker import LINK_DROP_TIMEOUT
 from amity_harness.config import RunConfig
 from amity_harness.dut import AmityHTTPError
@@ -420,8 +420,9 @@ class PairedKeyboardTests(unittest.TestCase):
                 fixture = Fixture()
                 fixture.search_reads, fixture.too_far, fixture.terminal_pair_error = 2, too_far, 13
                 keyboard = PairedKeyboard(fixture.main)
-                with self.assertRaisesRegex(KeyboardConflict, "error 13") as raised:
+                with self.assertRaisesRegex(PairingFailed, "error 13") as raised:
                     keyboard.create()
+                self.assertEqual(raised.exception.last_error, 13)
                 self.assertEqual("signal strength" in str(raised.exception), too_far)
                 keyboard.close()
                 paths = [path for path, _ in fixture.calls]
@@ -612,8 +613,10 @@ class PairedKeyboardTests(unittest.TestCase):
                 fixture.terminal_pair_error = error
                 keyboard = PairedKeyboard(fixture.main)
                 with patch.object(keyboard, "_pause", side_effect=AssertionError("A terminal failure must not poll")):
-                    with self.assertRaisesRegex(KeyboardConflict, "error " + str(error)):
+                    with self.assertRaisesRegex(PairingFailed, "error " + str(error)) as raised:
                         keyboard.create()
+                self.assertEqual(raised.exception.last_error, error)
+                self.assertNotIsInstance(raised.exception, KeyboardConflict)
                 self.assertIsNone(keyboard._pair_pending)
                 self.assertFalse(fixture.state["bonded"])
                 self.assertTrue(fixture.worker.bonded)

@@ -1114,7 +1114,9 @@ main bonds the first nearby supported remote it finds, so the Pi keyboard must
 be the only connectable BLE HID device advertising near the main. A bond with
 another remote fails the run and is left in place. The main must have no saved
 remote. The fixture refuses to replace an existing bond and removes only its own
-new bond during cleanup.
+new bond during cleanup. A Pair that the main ends without a bond raises
+`PairingFailed` with the main's `last_error`; `KeyboardConflict` means the
+pairing changed or a remote would have to be replaced.
 
 The two input cases scan a TV, AVR and two sources, then save both activities before
 sending input. The local case first sends one ten-key HID report: seven

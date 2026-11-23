@@ -45,6 +45,14 @@ class KeyboardConflict(RuntimeError):
     """Pairing changed or an existing remote would need to be replaced."""
 
 
+class PairingFailed(RuntimeError):
+    """The DUT ended its pairing search without a bond; last_error says why."""
+
+    def __init__(self, message, last_error):
+        super().__init__(message)
+        self.last_error = last_error
+
+
 def _identifier(value):
     return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{32}", value) is not None
 
@@ -336,8 +344,9 @@ class PairedKeyboard:
                     self._pair_pending = None
                     self._note("pair_failed", main_boot=self.boot, remote_generation=pending["generation"],
                                last_error=error, bonded=False, connected=False, too_far=too_far)
-                    raise KeyboardConflict("The DUT rejected keyboard connection or discovery (error " + str(error) + ")"
-                                           + (": the keyboard was below its pairing signal strength" if too_far else ""))
+                    raise PairingFailed("The DUT reported a failed pairing (error " + str(error) + ")"
+                                        + (": the keyboard was below its pairing signal strength" if too_far else ""),
+                                        error)
                 if self._paired_link(state, require_ready=not for_cleanup):
                     self._created = True
                     self._pair_generation = pending["generation"]
