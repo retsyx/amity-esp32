@@ -12,6 +12,7 @@ PREFIX=r'''
 #include "amity/consortium/credential_types.hpp"
 #include "amity/consortium/session.hpp"
 #include "amity/consortium/update.hpp"
+#include <atomic>
 #include <cassert>
 #include <cstdio>
 #include <iostream>

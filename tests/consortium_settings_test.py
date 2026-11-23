@@ -11,6 +11,7 @@ PREFIX=r'''
 #include "hostname_registry.hpp"
 #include "runtime_persistence.hpp"
 #include "wifi_signal.hpp"
+#include <atomic>
 #include <cassert>
 #include <deque>
 #include <iostream>
