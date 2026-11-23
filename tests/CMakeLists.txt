@@ -60,13 +60,15 @@ target_link_libraries(amity_model PRIVATE strict)
 
 # The host-compilable consortium codecs. The other consortium sources are
 # ESP_PLATFORM-only; a static library links only the objects a test uses.
+# They call model functions, so amity_model links after them; GNU ld resolves
+# static libraries in command-line order.
 add_library(amity_consortium STATIC
     "${C}/consortium/bootstrap.cpp" "${C}/consortium/enrollment.cpp" "${C}/consortium/hex.cpp"
     "${C}/consortium/json.cpp" "${C}/consortium/owned_intent.cpp" "${C}/consortium/radio.cpp"
     "${C}/consortium/session.cpp" "${C}/consortium/settings.cpp" "${C}/consortium/update.cpp"
     "${C}/consortium/wire.cpp")
 target_include_directories(amity_consortium PRIVATE "${C}/consortium/include" "${C}/amity_system/include")
-target_link_libraries(amity_consortium PRIVATE strict)
+target_link_libraries(amity_consortium PRIVATE strict amity_model)
 
 # Fakes and seams define functions that SDK or firmware headers declare. Each
 # definition must match an earlier declaration, so a changed signature fails
