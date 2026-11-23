@@ -21,6 +21,5 @@ elseif(AMITY_TEST_TIER STREQUAL sdk)
         web_stall_test.py
         web_tls_identity_test.py
     )
-    # Tests that configure and build the one shared host Mbed TLS tree.
-    set_tests_properties(web_tls_identity_test.py PROPERTIES RESOURCE_LOCK host_mbedtls)
+    amity_host_mbedtls_python_tests(web_tls_identity_test.py)
 endif()

@@ -212,6 +212,7 @@ if(AMITY_HOST_TESTS MATCHES "^(all|sdk)$")
     target_include_directories(cjson PRIVATE "${json}")
     target_compile_options(cjson PRIVATE -Wno-deprecated-declarations)
     target_link_libraries(cjson PRIVATE sanitized)
+    include("${T}/cmake/host_mbedtls.cmake")
 endif()
 
 # Each area registers its tests in its own tests/cmake/<area>.cmake, so work on

@@ -45,6 +45,5 @@ elseif(AMITY_TEST_TIER STREQUAL sdk)
         homekit_crypto_test.py
         homekit_notifications_test.py
     )
-    # Tests that configure and build the one shared host Mbed TLS tree.
-    set_tests_properties(homekit_crypto_test.py PROPERTIES RESOURCE_LOCK host_mbedtls)
+    amity_host_mbedtls_python_tests(homekit_crypto_test.py)
 endif()

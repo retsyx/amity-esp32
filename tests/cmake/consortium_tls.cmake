@@ -23,8 +23,6 @@ elseif(AMITY_TEST_TIER STREQUAL sdk)
         consortium_tls_credentials_test.py
         consortium_tls_tcp_test.py
     )
-    # Tests that configure and build the one shared host Mbed TLS tree.
-    set_tests_properties(consortium_tls_credentials_test.py consortium_tls_tcp_test.py PROPERTIES
-        RESOURCE_LOCK host_mbedtls)
+    amity_host_mbedtls_python_tests(consortium_tls_credentials_test.py consortium_tls_tcp_test.py)
 endif()
 include("${T}/cmake/consortium_tls_link.cmake")
