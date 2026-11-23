@@ -223,10 +223,56 @@ static void scan_asks_a_peer_learned_from_a_late_reply_for_its_identity(){
     fixture_finish_discovery(hub,generation);
     assert(peer(hub)&&peer(hub)->name=="Player");
 }
+static size_t pending(uint8_t op,uint8_t destination=8){
+    return static_cast<size_t>(std::count_if(fixture_pending.begin(),fixture_pending.end(),[&](const auto& p){
+        return p.gpio==2&&p.frame.size>=2&&p.frame.data[1]==op&&p.frame.destination()==destination;}));
+}
+static void identity_queries_are_not_activity_work(){
+    reset_fixture();LocalHubService hub;start(hub);
+    // Every TX stays on the wire, as on a busy bus.
+    fixture_async_autocomplete=false;
+    // A new peer reports its physical address and is asked for its identity.
+    receive({{0x8f,0x84,0x20,0,4},5});
+    assert(pending(0x83)==1&&pending(0x46)==1&&pending(0x8c)==1);
+    assert(hub.snapshot().current_activity==-1&&!hub.snapshot().activity_settling);
+    fixture_complete_all();run_idle(4);
+    // More than 1 s later the still nameless peer reports again and is asked
+    // again for its name.
+    fixture_time+=1500000;receive({{0x8f,0x84,0x20,0,4},5});
+    assert(pending(0x46)==1&&pending(0x83)==0&&pending(0x8c)==0);
+    assert(hub.snapshot().current_activity==-1&&!hub.snapshot().activity_settling);
+    fixture_complete_all();fixture_async_autocomplete=true;run_idle(4);
+    assert(peer(hub)&&peer(hub)->name.empty()&&!hub.snapshot().activity_settling);
+}
+static void activity_settles_only_after_its_own_work(){
+    reset_fixture(true);LocalHubService hub;start(hub);
+    assert(fixture_configure(hub,{{"Watch","TV","Source","Source","",0}}));run_one_command();run_idle(4);
+    fixture_async_autocomplete=false;
+    assert(hub.request_activity(0)==ESP_OK);run_one_command();run_idle(2);
+    assert(!fixture_pending.empty()&&hub.snapshot().current_activity==-1&&hub.snapshot().activity_settling);
+    // A new peer reports its physical address while the activity's first
+    // frame is still on the wire. Its identity queries queue behind it.
+    receive({{0x8f,0x84,0x20,0,4},5});
+    assert(pending(0x83)==1&&pending(0x46)==1&&pending(0x8c)==1);
+    // The activity is settling until it has committed and finished,
+    // whichever frames are on the wire meanwhile.
+    for(unsigned pass=0;pass<200;++pass){
+        const auto state=hub.snapshot();
+        if(state.current_activity==0&&!state.activity_settling)break;
+        assert(state.activity_settling);
+        fixture_complete_next();run_idle(2);
+    }
+    assert(hub.snapshot().current_activity==0&&!hub.snapshot().activity_settling&&fixture_pending.empty());
+    // Asking the still nameless peer again later is not activity work.
+    fixture_time+=1500000;receive({{0x8f,0x84,0x20,0,4},5});
+    assert(pending(0x46)==1&&hub.snapshot().current_activity==0&&!hub.snapshot().activity_settling);
+    fixture_complete_all();fixture_async_autocomplete=true;run_idle(4);
+}
 int main(){
     scan_asks_a_peer_learned_from_a_late_reply_for_its_identity();
     active_announcement_without_configuration();metadata_can_introduce_a_device();
     unselected_player_retains_its_observation();foreign_activity_still_caches_local_player();malformed_announcements_are_not_cached();
     known_peer_is_asked_again_for_a_missing_name();refused_name_request_is_asked_again();known_peer_is_asked_again_for_a_missing_type();
-    std::puts("Actual worker caches valid player announcements independently of activities/Standby, accepts targeted metadata, preserves observations for later starts, rejects malformed sources and avoids enumeration");
+    identity_queries_are_not_activity_work();activity_settles_only_after_its_own_work();
+    std::puts("Actual worker caches valid player announcements independently of activities/Standby, accepts targeted metadata, preserves observations for later starts, rejects malformed sources, avoids enumeration and never counts identity queries as activity work");
 }

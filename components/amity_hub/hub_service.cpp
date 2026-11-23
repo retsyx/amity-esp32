@@ -63,7 +63,7 @@ struct HubService::Adapter : Transport {
     std::unique_ptr<WireGuards> guards{new WireGuards};
     std::atomic<uint32_t>& owned_wire_generation=guards->owned;
     std::atomic<uint32_t> (&binding_wire_generation)[2][15]=guards->bindings;
-    struct Flight {cec::TxCompletion completion;bool used=false,activity=false,cleanup=false;int key=-1;uint32_t instance=0;};
+    struct Flight {cec::TxCompletion completion;bool used=false,activity=false,received=false,cleanup=false;int key=-1;uint32_t instance=0;};
     std::array<Flight,32> flights{};cec::TxCompletion discovery_completion;
     cec::Bus front,back;
     Hub hub{*this};
@@ -1234,7 +1234,14 @@ struct HubService::Impl : Adapter {
         if(intent.kind==K::power||intent.kind==K::source_input||intent.kind==K::switch_input||intent.kind==K::announce_active_source||intent.kind==K::query_audio||intent.kind==K::standby_wire)return false;
         return owned_sender&&owned_sender(intent);
     }
-    bool activity_settling(uint64_t){return activity_hub.activity_pending()||step_pending||owner_activity_pending()||key_cleanup_roles;}
+    // Settling reports activity work only. A frame sent for received traffic
+    // while no activity is in flight keeps its pacing but is not activity work.
+    bool activity_transmission_pending()const{
+        for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=const_cast<Impl*>(this)->adapter(id))for(const auto& flight:engine->flights)
+            if(flight.used&&flight.activity&&!flight.received&&flight.completion.result.load(std::memory_order_acquire)==cec::TxResult::Pending)return true;
+        return false;
+    }
+    bool activity_settling(uint64_t){return activity_hub.activity_pending()||step_pending||activity_transmission_pending()||key_cleanup_roles;}
     void save_report(system::OwnedAdapterSnapshot report){
         auto old=std::find_if(owned_reports.begin(),owned_reports.end(),[&](const auto& r){return r.owner==report.owner&&r.adapter==report.adapter;});
         if(old==owned_reports.end())owned_reports.push_back(std::move(report));else *old=std::move(report);
@@ -1499,7 +1506,7 @@ void HubService::Adapter::stop_holds(){owner.stop_holds();}
 void HubService::Adapter::invalidate_binding(BusSide side, uint8_t address) {
         if(address<15)binding_wire_generation[side==BusSide::Front?0:1][address].fetch_add(1);
     }
-HubService::Adapter::Flight* HubService::Adapter::reserve_flight() {for(auto& flight:flights)if(!flight.used){flight.used=true;flight.key=-1;flight.instance=0;flight.activity=flight.cleanup=false;return &flight;}return nullptr;}
+HubService::Adapter::Flight* HubService::Adapter::reserve_flight() {for(auto& flight:flights)if(!flight.used){flight.used=true;flight.key=-1;flight.instance=0;flight.activity=flight.received=flight.cleanup=false;return &flight;}return nullptr;}
 bool HubService::Adapter::complete_transmissions() {
         bool changed=false;auto& root=owner;
         for(auto& flight:flights){if(!flight.used)continue;const auto result=flight.completion.result.load(std::memory_order_acquire);if(result==cec::TxResult::Pending)continue;
@@ -1569,7 +1576,7 @@ bool HubService::Adapter::send(BusSide side, uint8_t destination, const uint8_t 
             "Source policy TX adapter=%u side=%s destination=%u opcode=%02x admitted=%d",
             adapter_id,side==BusSide::Front?"front":"back",destination,data[0],sent);
         if (flight && !sent) flight->used = false;
-        if(sent&&paced){flight->activity=setting_activity||pacing_receive;flight->cleanup=emitting_key_cleanup;}
+        if(sent&&paced){flight->activity=setting_activity||pacing_receive;flight->received=pacing_receive&&!owner.activity_hub.activity_pending()&&!owner.step_pending;flight->cleanup=emitting_key_cleanup;}
         if (!sent) ++dropped_tx;
         return sent;
     }
