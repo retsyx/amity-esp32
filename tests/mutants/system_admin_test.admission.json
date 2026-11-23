@@ -1,0 +1,362 @@
+{
+  "ctest": "^system_admin_test\\.",
+  "targets": [
+    "system_admin_test"
+  ],
+  "baseline": {
+    "ctest": "^membership_admission_api_test\\.py$",
+    "targets": []
+  },
+  "mutants": [
+    {
+      "id": "stub-normalize_hostname-false",
+      "check": "stub: early return from normalize_hostname()",
+      "file": "components/device_settings/device_settings.cpp",
+      "find": "bool normalize_hostname(std::string &value) {",
+      "replace": "bool normalize_hostname(std::string &value) { return false;"
+    },
+    {
+      "id": "stub-normalize_hostname-true",
+      "check": "stub: early return from normalize_hostname()",
+      "file": "components/device_settings/device_settings.cpp",
+      "find": "bool normalize_hostname(std::string &value) {",
+      "replace": "bool normalize_hostname(std::string &value) { return true;"
+    },
+    {
+      "id": "stub-string-empty",
+      "check": "stub: early return from string()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "std::string string(cJSON* root,const char* key){",
+      "replace": "std::string string(cJSON* root,const char* key){ return {};"
+    },
+    {
+      "id": "stub-unique_keys-false",
+      "check": "stub: early return from unique_keys()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "bool unique_keys(const cJSON* value,unsigned depth=0){",
+      "replace": "bool unique_keys(const cJSON* value,unsigned depth=0){ return false;"
+    },
+    {
+      "id": "stub-unique_keys-true",
+      "check": "stub: early return from unique_keys()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "bool unique_keys(const cJSON* value,unsigned depth=0){",
+      "replace": "bool unique_keys(const cJSON* value,unsigned depth=0){ return true;"
+    },
+    {
+      "id": "stub-object_fields-false",
+      "check": "stub: early return from object_fields()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "bool object_fields(cJSON* value,std::initializer_list<const char*> required,std::initializer_list<const char*> optional={}){",
+      "replace": "bool object_fields(cJSON* value,std::initializer_list<const char*> required,std::initializer_list<const char*> optional={}){ return false;"
+    },
+    {
+      "id": "stub-object_fields-true",
+      "check": "stub: early return from object_fields()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "bool object_fields(cJSON* value,std::initializer_list<const char*> required,std::initializer_list<const char*> optional={}){",
+      "replace": "bool object_fields(cJSON* value,std::initializer_list<const char*> required,std::initializer_list<const char*> optional={}){ return true;"
+    },
+    {
+      "id": "stub-admission_selection-false",
+      "check": "stub: early return from admission_selection()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "bool admission_selection(cJSON* root,AdmissionSelection& out,std::string& message){",
+      "replace": "bool admission_selection(cJSON* root,AdmissionSelection& out,std::string& message){ return false;"
+    },
+    {
+      "id": "stub-admission_selection-true",
+      "check": "stub: early return from admission_selection()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "bool admission_selection(cJSON* root,AdmissionSelection& out,std::string& message){",
+      "replace": "bool admission_selection(cJSON* root,AdmissionSelection& out,std::string& message){ return true;"
+    },
+    {
+      "id": "stub-admission_response-fail",
+      "check": "stub: early return from admission_response()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "esp_err_t admission_response(httpd_req_t* req){",
+      "replace": "esp_err_t admission_response(httpd_req_t* req){ return ESP_FAIL;"
+    },
+    {
+      "id": "stub-update_operation-return",
+      "check": "stub: early return from update_operation()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "void update_operation(Tracked& operation){",
+      "replace": "void update_operation(Tracked& operation){ return;"
+    },
+    {
+      "id": "unique-keys-not-compared",
+      "check": "duplicate keys are refused",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(b->string&&!strcmp(a->string,b->string))return false;",
+      "replace": "if(false)return false;"
+    },
+    {
+      "id": "admission-fields-open",
+      "check": "an addition names exactly its four fields",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(!object_fields(root,{\"request_id\",\"scan_id\",\"candidate_token\",\"name\"}))",
+      "replace": "if(!cJSON_IsObject(root))"
+    },
+    {
+      "id": "token-129-accepted",
+      "check": "a candidate token is at most 128 bytes",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "value.candidate_token.size()>128",
+      "replace": "value.candidate_token.size()>129"
+    },
+    {
+      "id": "token-empty-accepted",
+      "check": "a candidate token is not empty",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(!scan||value.candidate_token.empty()||",
+      "replace": "if(!scan||"
+    },
+    {
+      "id": "token-control-accepted",
+      "check": "a candidate token has no control bytes",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "return byte<32||byte==127;",
+      "replace": "return byte==127;"
+    },
+    {
+      "id": "token-delete-accepted",
+      "check": "a candidate token has no DEL byte",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "return byte<32||byte==127;",
+      "replace": "return byte<32;"
+    },
+    {
+      "id": "scan-unchecked",
+      "check": "an addition names a valid search",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(!scan||value.candidate_token.empty()||",
+      "replace": "if(value.candidate_token.empty()||"
+    },
+    {
+      "id": "name-untrimmed",
+      "check": "the name is trimmed",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "value.name=first==std::string::npos?std::string{}:value.name.substr(first,value.name.find_last_not_of(\" \\t\\r\\n\")-first+1);",
+      "replace": "(void)first;"
+    },
+    {
+      "id": "name-not-normalized",
+      "check": "the name is a valid hostname",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(!device_settings::normalize_hostname(value.name))",
+      "replace": "if(value.name.empty())"
+    },
+    {
+      "id": "selection-not-returned",
+      "check": "an accepted selection is returned",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "value.scan_id=*scan;out=value;message.clear();return true;",
+      "replace": "value.scan_id=*scan;(void)out;message.clear();return true;"
+    },
+    {
+      "id": "stale-scan-accepted",
+      "check": "an addition for another search is refused",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(state.scan_id!=selection.scan_id){result=error(req,\"stale_scan\"",
+      "replace": "if(false){result=error(req,\"stale_scan\""
+    },
+    {
+      "id": "own-name-accepted",
+      "check": "this Amity's own name is refused",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(selection.name==device_settings::hostname()){",
+      "replace": "if(false){"
+    },
+    {
+      "id": "enrolled-name-accepted",
+      "check": "an added Amity's name is refused",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if((peer.enrolled||peer.provisional)&&peer.hostname==selection.name)",
+      "replace": "if(peer.provisional&&peer.hostname==selection.name)"
+    },
+    {
+      "id": "provisional-name-accepted",
+      "check": "an Amity being added keeps its name",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if((peer.enrolled||peer.provisional)&&peer.hostname==selection.name)",
+      "replace": "if(peer.enrolled&&peer.hostname==selection.name)"
+    },
+    {
+      "id": "start-failure-tracked",
+      "check": "an addition that cannot start is not tracked",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(e!=ESP_OK){result=error(req,\"enrollment_unavailable\"",
+      "replace": "if(((void)e,false)){result=error(req,\"enrollment_unavailable\""
+    },
+    {
+      "id": "start-failure-not-retryable",
+      "check": "an addition that cannot start may be retried",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "its setup window, then try again.\",\"409 Conflict\",true);",
+      "replace": "its setup window, then try again.\",\"409 Conflict\",false);"
+    },
+    {
+      "id": "operation-scan-dropped",
+      "check": "an addition follows its own search",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "operation.scan_id=selection.scan_id;operation.name=selection.name;operation.status=\"admitted\";finish();",
+      "replace": "operation.name=selection.name;operation.status=\"admitted\";finish();"
+    },
+    {
+      "id": "operation-name-dropped",
+      "check": "an addition remembers its requested name",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "operation.scan_id=selection.scan_id;operation.name=selection.name;operation.status=\"admitted\";finish();",
+      "replace": "operation.scan_id=selection.scan_id;operation.status=\"admitted\";finish();"
+    },
+    {
+      "id": "operation-starts-complete",
+      "check": "an addition starts admitted",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "operation.scan_id=selection.scan_id;operation.name=selection.name;operation.status=\"admitted\";finish();",
+      "replace": "operation.scan_id=selection.scan_id;operation.name=selection.name;finish();"
+    },
+    {
+      "id": "terminal-operations-updated",
+      "check": "a finished operation keeps its result",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(!operation_pending(operation)&&!removing)return;",
+      "replace": "if(false)return;"
+    },
+    {
+      "id": "scan-change-ignored",
+      "check": "a changed search ends tracking of the old one",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(state.scan_id!=operation.scan_id){",
+      "replace": "if(false){"
+    },
+    {
+      "id": "scan-change-ignores-name",
+      "check": "after a search change the candidate must hold the requested name",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "peer.enrolled&&peer.ready&&!peer.provisional&&peer.hostname==operation.name;});",
+      "replace": "peer.enrolled&&peer.ready&&!peer.provisional;});"
+    },
+    {
+      "id": "scan-change-unconfirmed-complete",
+      "check": "an unconfirmed addition is unknown after a search change",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "operation.status=peer!=peers.end()?\"complete\":\"unknown\";",
+      "replace": "operation.status=((void)peer,\"complete\");"
+    },
+    {
+      "id": "scan-change-silent",
+      "check": "an unknown result explains what to check",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "\"The search changed before the result was confirmed. Check the Amity devices list before trying again.\":std::string{}",
+      "replace": "std::string{}:std::string{}"
+    },
+    {
+      "id": "candidate-not-learned",
+      "check": "an addition learns its candidate from the search",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(state.candidate_id)operation.candidate=state.candidate_id;",
+      "replace": ""
+    },
+    {
+      "id": "cancel-not-propagated",
+      "check": "a cancelled search cancels its addition",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(state.phase==\"failed\"||state.phase==\"cancelled\"){operation.status=state.phase;",
+      "replace": "if(state.phase==\"failed\"){operation.status=state.phase;"
+    },
+    {
+      "id": "failure-message-dropped",
+      "check": "a failed search reports its error",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "operation.status=state.phase;operation.error=state.error;return;",
+      "replace": "operation.status=state.phase;return;"
+    },
+    {
+      "id": "complete-before-search",
+      "check": "an addition completes only after the search does",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(state.phase!=\"complete\")return;",
+      "replace": ""
+    },
+    {
+      "id": "unready-candidate-complete",
+      "check": "only a ready candidate completes an addition",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "return operation.candidate&&peer.id==operation.candidate&&peer.enrolled&&peer.ready&&!peer.provisional;});\n        if(peer!=peers.end()){",
+      "replace": "return operation.candidate&&peer.id==operation.candidate&&peer.enrolled&&!peer.provisional;});\n        if(peer!=peers.end()){"
+    },
+    {
+      "id": "provisional-candidate-complete",
+      "check": "a provisional candidate does not complete an addition",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "return operation.candidate&&peer.id==operation.candidate&&peer.enrolled&&peer.ready&&!peer.provisional;});\n        if(peer!=peers.end()){",
+      "replace": "return operation.candidate&&peer.id==operation.candidate&&peer.enrolled&&peer.ready;});\n        if(peer!=peers.end()){"
+    },
+    {
+      "id": "wrong-name-complete",
+      "check": "a candidate under another name fails the addition",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(peer->hostname!=operation.name){operation.status=\"failed\";",
+      "replace": "if(false){operation.status=\"failed\";"
+    },
+    {
+      "id": "status-scan-null",
+      "check": "the status names the current search",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(state.scan_id)cJSON_AddStringToObject(result.get(),\"scan_id\",state.scan_id.str().c_str());",
+      "replace": "if(false)cJSON_AddStringToObject(result.get(),\"scan_id\",state.scan_id.str().c_str());"
+    },
+    {
+      "id": "status-phase-dropped",
+      "check": "the status reports the phase",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "cJSON_AddStringToObject(result.get(),\"phase\",state.phase.c_str());",
+      "replace": "cJSON_AddStringToObject(result.get(),\"phase\",\"idle\");"
+    },
+    {
+      "id": "status-error-dropped",
+      "check": "the status reports the error",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "cJSON_AddStringToObject(result.get(),\"error\",state.error.c_str());\n    if(state.candidate_id)",
+      "replace": "cJSON_AddStringToObject(result.get(),\"error\",\"\");\n    if(state.candidate_id)"
+    },
+    {
+      "id": "status-candidate-null",
+      "check": "the status names the candidate",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(state.candidate_id)cJSON_AddStringToObject(result.get(),\"candidate_id\",state.candidate_id.str().c_str());",
+      "replace": "if(false)cJSON_AddStringToObject(result.get(),\"candidate_id\",state.candidate_id.str().c_str());"
+    },
+    {
+      "id": "status-token-as-label",
+      "check": "each candidate is listed with its public token",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "cJSON_AddStringToObject(item,\"token\",candidate.token.c_str());",
+      "replace": "cJSON_AddStringToObject(item,\"token\",candidate.label.c_str());"
+    },
+    {
+      "id": "status-label-as-token",
+      "check": "each candidate is listed with its label",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "cJSON_AddStringToObject(item,\"label\",candidate.label.c_str());",
+      "replace": "cJSON_AddStringToObject(item,\"label\",candidate.token.c_str());"
+    },
+    {
+      "id": "hostname-unbounded",
+      "check": "a hostname longer than 32 characters is refused before it is copied",
+      "file": "components/device_settings/device_settings.cpp",
+      "find": "if (value.empty() || value.size() > 32) return false;",
+      "replace": "if (value.empty()) return false;"
+    },
+    {
+      "id": "hostname-not-lowercased",
+      "check": "a hostname is lowercased",
+      "file": "components/device_settings/device_settings.cpp",
+      "find": "for (auto &c : value) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';",
+      "replace": ""
+    }
+  ]
+}

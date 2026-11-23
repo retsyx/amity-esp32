@@ -47,7 +47,6 @@ matter_auto_commissioning_test.py pending:I
 matter_input_names_test.py pending:Z
 matter_state_publication_test.py pending:Z
 mdns_delegate_remove_test.py sdk-slice
-membership_admission_api_test.py pending:E1
 membership_capacity_api_test.py pending:Z
 membership_removal_api_test.py pending:E1
 network_diagnostics_test.py sdk-slice

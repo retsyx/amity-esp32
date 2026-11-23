@@ -36,10 +36,10 @@ if(AMITY_TEST_TIER STREQUAL sdk)
         REGISTRY
         SCENARIOS error-response rejection-before-body retained retained-pending-image hardware-change
             initial-configuration pending-image reservation-failure commit-failure read-failure foreign-controller
-            deferred-load passive-states config-read config-unavailable sanity)
+            deferred-load passive-states config-read config-unavailable admission-contract admission-start
+            admission-completes admission-wrong-name admission-scan-change admission-failure admission-status sanity)
     amity_python_tests(
         configuration_snapshot_web_test.py
-        membership_admission_api_test.py
         membership_removal_api_test.py
     )
 endif()

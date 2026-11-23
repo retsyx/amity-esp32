@@ -19,6 +19,7 @@
 #include "intent_configuration_fixture.hpp"
 #include "seams.hpp"
 #include "stall.hpp"
+#include <tuple>
 
 namespace {
 namespace m = amity::system;
@@ -509,6 +510,245 @@ void config_unavailable() {
     CHECK(rejected(reply, "configuration_unavailable", "409 Conflict"));
 }
 
+// Adding an Amity found by a search
+
+std::string operation_path(unsigned request) { return "/api/operations/" + id<m::MessageId>(request).str(); }
+
+std::string addition(unsigned request, const std::string &name = "office", const std::string &extra = "") {
+    return "{\"request_id\":\"" + id<m::MessageId>(request).str() + "\",\"scan_id\":\"" + id<m::MessageId>(2).str() +
+           "\",\"candidate_token\":\"opaque-public-token\",\"name\":\"" + name + "\"" + extra + "}";
+}
+
+std::string print(const Json &root) {
+    char *text = cJSON_PrintUnformatted(root.get());
+    std::string out = text;
+    cJSON_free(text);
+    return out;
+}
+
+// The request with one field replaced, or removed when value is null.
+std::string addition_with(const char *field, cJSON *value) {
+    Json root(cJSON_Parse(addition(1).c_str()), cJSON_Delete);
+    if (value) cJSON_ReplaceItemInObjectCaseSensitive(root.get(), field, value);
+    else cJSON_DeleteItemFromObjectCaseSensitive(root.get(), field);
+    return print(root);
+}
+
+// Reads an addition as the router does: bounded parsing, unique keys and the
+// admission contract.
+bool parse_addition(const std::string &raw, web_admin::AdmissionSelection &selection) {
+    Json root(web_admin::parse_json_input(raw), cJSON_Delete);
+    std::string message = "unset";
+    if (!root || !web_admin::unique_keys(root.get())) return false;
+    const bool accepted = web_admin::admission_selection(root.get(), selection, message);
+    CHECK(accepted ? message.empty() : !message.empty() && message != "unset");
+    return accepted;
+}
+bool addition_accepted(const std::string &raw) {
+    web_admin::AdmissionSelection selection;
+    return parse_addition(raw, selection);
+}
+
+c::RuntimePeerStatus member(unsigned owner, unsigned boot, const std::string &hostname = {}) {
+    c::RuntimePeerStatus value;
+    value.id = id<m::OctopusId>(owner);
+    value.boot_id = id<m::BootId>(boot);
+    value.supported_tentacles = 1;
+    value.configured_tentacles_mask = 1;
+    value.ready = value.enrolled = true;
+    value.hostname = hostname;
+    return value;
+}
+
+// The original main with a search in progress, recording each addition it starts.
+struct Search : System {
+    std::vector<std::tuple<m::MessageId, std::string, std::string>> started;
+    esp_err_t start_result = ESP_OK;
+    Search() {
+        save(direct_configuration());
+        boot();
+        admission.scan_id = id<m::MessageId>(2);
+        admission.phase = "found";
+        install<&c::runtime_add_octopus>([this](m::MessageId scan, const std::string &token, const std::string &name) {
+            started.emplace_back(scan, token, name);
+            return start_result;
+        });
+    }
+    Reply add(unsigned request, const std::string &name = "office") {
+        return send(HTTP_POST, "/api/membership/add", addition(request, name));
+    }
+    Reply progress(unsigned request) { return send(HTTP_GET, operation_path(request)); }
+    web_admin::Tracked &operation(unsigned request) {
+        for (auto &operation : web_admin::operations)
+            if (operation.id == id<m::MessageId>(request).str()) return operation;
+        amity_test::fail(__FILE__, __LINE__, "no such operation");
+    }
+};
+
+// The request names exactly the current search, a public candidate token of
+// 1-128 printable bytes and a hostname, trimmed and normalized.
+void admission_contract() {
+    System system;
+    web_admin::AdmissionSelection selection;
+    CHECK(parse_addition(addition(1, "  AMITY-OFFICE  "), selection) && selection.name == "amity-office");
+    CHECK(selection.candidate_token == "opaque-public-token" && selection.scan_id == id<m::MessageId>(2));
+    CHECK(parse_addition(addition(1, "a"), selection) && selection.name == "a");
+    CHECK(addition_accepted(addition(1, std::string(32, 'n'))));
+    for (const auto *name : {"", "bad name", "-bad", "bad-", "amity.room", "caf\xc3\xa9"}) CHECK(!addition_accepted(addition(1, name)));
+    CHECK(!addition_accepted(addition(1, std::string(33, 'n'))) && !addition_accepted(addition(1, std::string(80, 'n'))));
+    CHECK(!addition_accepted(addition(1, "office", ",\"extra\":true")));
+    CHECK(!addition_accepted(addition(1, "office", ",\"name\":\"other\"")));
+    CHECK(!addition_accepted(addition(1) + " trailing"));
+    CHECK(!addition_accepted(addition(1, "office", ",\"setup_code\":\"12345678\"")));
+    for (const auto *field : {"scan_id", "candidate_token", "name"}) {
+        CHECK(!addition_accepted(addition_with(field, cJSON_CreateNumber(1))));
+        CHECK(!addition_accepted(addition_with(field, nullptr)));
+    }
+    for (const auto &token : {std::string{}, std::string(129, 'x'), std::string("bad") + char(1) + "token",
+                              std::string("bad") + char(127) + "token"})
+        CHECK(!addition_accepted(addition_with("candidate_token", cJSON_CreateString(token.c_str()))));
+    CHECK(addition_accepted(addition_with("candidate_token", cJSON_CreateString(std::string(128, 'x').c_str()))));
+    CHECK(!addition_accepted(addition_with("scan_id", cJSON_CreateString(std::string(32, '0').c_str()))));
+}
+
+// An addition starts only after the router and the contract accept it, for
+// the current search and an unused name.
+void admission_start() {
+    Search search;
+    auto reply = search.add(10, "bad name");
+    CHECK(rejected(reply, "invalid_addition", "400 Bad Request") && reply.text("message").find("1–32") != std::string::npos);
+    CHECK(rejected(send(HTTP_POST, "/api/membership/add", addition(10, "office", ",\"extra\":true")), "invalid_json",
+                   "400 Bad Request"));
+    CHECK(rejected(send(HTTP_POST, "/api/membership/add", addition(10, "office", ",\"name\":\"other\"")), "invalid_json",
+                   "400 Bad Request"));
+    CHECK(rejected(send(HTTP_POST, "/api/membership/add", addition(10) + " trailing"), "invalid_json", "400 Bad Request"));
+    search.admission.scan_id = id<m::MessageId>(3);
+    CHECK(rejected(search.add(10), "stale_scan", "409 Conflict"));
+    search.admission.scan_id = id<m::MessageId>(2);
+    CHECK(rejected(search.add(10, "AMITY"), "name_in_use", "409 Conflict"));
+    search.peers = {member(8, 18, "office")};
+    CHECK(rejected(search.add(10), "name_in_use", "409 Conflict"));
+    search.peers[0].enrolled = false;
+    search.peers[0].provisional = true;
+    CHECK(rejected(search.add(10), "name_in_use", "409 Conflict"));
+    CHECK(search.started.empty() && web_admin::operations.empty());
+    // A peer that is neither enrolled nor provisional does not hold its name.
+    search.peers[0].provisional = false;
+    reply = search.add(10);
+    CHECK(tracked(reply, id<m::MessageId>(10).str(), "admitted") && reply.offset == reply.content_len);
+    CHECK(search.started.size() == 1 && std::get<0>(search.started[0]) == id<m::MessageId>(2));
+    CHECK(std::get<1>(search.started[0]) == "opaque-public-token" && std::get<2>(search.started[0]) == "office");
+    const auto &operation = search.operation(10);
+    CHECK(operation.scan_id == id<m::MessageId>(2) && operation.name == "office" && !operation.candidate);
+    // An addition that cannot start is not tracked, and an ID is used once.
+    search.start_result = ESP_FAIL;
+    CHECK(rejected(search.add(11, "den"), "enrollment_unavailable", "409 Conflict", true));
+    CHECK(rejected(search.add(10, "den"), "request_conflict", "409 Conflict"));
+    CHECK(search.started.size() == 2 && web_admin::operations.size() == 1);
+}
+
+// Progress follows the search to its exact candidate, ready under the
+// requested name; a finished addition keeps its result.
+void admission_completes() {
+    Search search;
+    CHECK(tracked(search.add(10), id<m::MessageId>(10).str(), "admitted"));
+    search.admission.phase = "connecting";
+    CHECK(tracked(search.progress(10), id<m::MessageId>(10).str(), "admitted") && !search.operation(10).candidate);
+    search.admission.candidate_id = id<m::OctopusId>(9);
+    search.peers = {member(9, 19, "office")};
+    search.admission.phase = "finishing";
+    CHECK(tracked(search.progress(10), id<m::MessageId>(10).str(), "admitted"));
+    CHECK(search.operation(10).candidate == id<m::OctopusId>(9));
+    search.admission.phase = "complete";
+    search.peers[0].ready = false;
+    CHECK(tracked(search.progress(10), id<m::MessageId>(10).str(), "admitted"));
+    search.peers[0].ready = true;
+    search.peers[0].provisional = true;
+    CHECK(tracked(search.progress(10), id<m::MessageId>(10).str(), "admitted"));
+    search.peers[0].provisional = false;
+    auto reply = search.progress(10);
+    CHECK(tracked(reply, id<m::MessageId>(10).str(), "complete") && reply.text("message").empty());
+    CHECK(!reply.item("reset"));
+    search.admission.phase = "failed";
+    search.admission.error = "Could not connect";
+    CHECK(tracked(search.progress(10), id<m::MessageId>(10).str(), "complete"));
+}
+
+// A candidate that finishes under another name fails the addition.
+void admission_wrong_name() {
+    Search search;
+    CHECK(tracked(search.add(10, "den"), id<m::MessageId>(10).str(), "admitted"));
+    search.admission.candidate_id = id<m::OctopusId>(9);
+    search.admission.phase = "complete";
+    search.peers = {member(9, 19, "office")};
+    const auto reply = search.progress(10);
+    CHECK(tracked(reply, id<m::MessageId>(10).str(), "failed"));
+    CHECK(reply.text("message") == "The added Amity did not confirm its requested name.");
+}
+
+// After the search changes, an addition completes only when its candidate is
+// confirmed ready under its name, and is unknown otherwise.
+void admission_scan_change() {
+    Search search;
+    CHECK(tracked(search.add(10), id<m::MessageId>(10).str(), "admitted"));
+    CHECK(tracked(search.add(11), id<m::MessageId>(11).str(), "admitted"));
+    CHECK(tracked(search.add(12, "den"), id<m::MessageId>(12).str(), "admitted"));
+    // Additions 10 and 12 learn the candidate; 11 is not asked again.
+    search.admission.candidate_id = id<m::OctopusId>(9);
+    search.admission.phase = "connecting";
+    for (unsigned request : {10u, 12u}) CHECK(tracked(search.progress(request), id<m::MessageId>(request).str(), "admitted"));
+    CHECK(search.operation(10).candidate == id<m::OctopusId>(9) && !search.operation(11).candidate);
+    CHECK(search.operation(12).candidate == id<m::OctopusId>(9));
+    search.admission = {};
+    search.admission.scan_id = id<m::MessageId>(3);
+    search.peers = {member(9, 19, "office")};
+    auto reply = search.progress(10);
+    CHECK(tracked(reply, id<m::MessageId>(10).str(), "complete") && reply.text("message").empty());
+    for (unsigned unconfirmed : {11u, 12u}) {
+        reply = search.progress(unconfirmed);
+        CHECK(tracked(reply, id<m::MessageId>(unconfirmed).str(), "unknown"));
+        CHECK(reply.text("message").find("Check the Amity devices list") != std::string::npos);
+    }
+}
+
+// A failed or cancelled search ends its additions with its own result.
+void admission_failure() {
+    Search search;
+    CHECK(tracked(search.add(10), id<m::MessageId>(10).str(), "admitted"));
+    CHECK(tracked(search.add(11), id<m::MessageId>(11).str(), "admitted"));
+    search.admission.phase = "failed";
+    search.admission.error = "Could not connect";
+    auto reply = search.progress(10);
+    CHECK(tracked(reply, id<m::MessageId>(10).str(), "failed") && reply.text("message") == "Could not connect");
+    search.admission.phase = "cancelled";
+    search.admission.error.clear();
+    reply = search.progress(11);
+    CHECK(tracked(reply, id<m::MessageId>(11).str(), "cancelled") && reply.text("message").empty());
+}
+
+// GET /api/membership/admission reports the search with each candidate's
+// public token and label, and nothing about setup codes.
+void admission_status() {
+    Search search;
+    search.admission.candidates = {{"token", "Amity <nearby>"}};
+    auto reply = send(HTTP_GET, "/api/membership/admission");
+    CHECK(reply.handled && reply.result == ESP_OK && reply.response.status == "200 OK");
+    CHECK(reply.text("scan_id") == id<m::MessageId>(2).str() && reply.text("phase") == "found");
+    CHECK(reply.text("error").empty() && cJSON_IsNull(reply.item("candidate_id")) && !reply.item("requires_setup_code"));
+    const auto *candidates = reply.item("candidates");
+    CHECK(cJSON_IsArray(candidates) && cJSON_GetArraySize(candidates) == 1);
+    auto *candidate = cJSON_GetArrayItem(candidates, 0);
+    CHECK(web_admin::string(candidate, "token") == "token" && web_admin::string(candidate, "label") == "Amity <nearby>");
+    CHECK(cJSON_GetArraySize(candidate) == 2);
+    search.admission = {};
+    search.admission.phase = "failed";
+    search.admission.error = "Could not connect";
+    search.admission.candidate_id = id<m::OctopusId>(9);
+    reply = send(HTTP_GET, "/api/membership/admission");
+    CHECK(cJSON_IsNull(reply.item("scan_id")) && reply.text("phase") == "failed" && reply.text("error") == "Could not connect");
+    CHECK(reply.text("candidate_id") == id<m::OctopusId>(9).str() && cJSON_GetArraySize(reply.item("candidates")) == 0);
+}
+
 // The harness consumes what it scripts: a request body read to its end
 // under its deadline, the saved record loaded and published, the
 // synchronization task created and one response sent.
@@ -556,6 +796,13 @@ int main(int argc, char **argv) {
                                {"passive-states", passive_states},
                                {"config-read", config_read},
                                {"config-unavailable", config_unavailable},
+                               {"admission-contract", admission_contract},
+                               {"admission-start", admission_start},
+                               {"admission-completes", admission_completes},
+                               {"admission-wrong-name", admission_wrong_name},
+                               {"admission-scan-change", admission_scan_change},
+                               {"admission-failure", admission_failure},
+                               {"admission-status", admission_status},
                                {"sanity", sanity},
                            });
 }
