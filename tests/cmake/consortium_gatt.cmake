@@ -17,6 +17,23 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         SCENARIOS round-trip replay key-generation-failure reflected-direction skipped-sequence tampered-ciphertext
             tampered-tag malformed-header cross-session edited-transcript tampered-confirmation invalid-server-id
             one-handshake record-size-limit repeated-finish)
+
+    # The fake NimBLE host and CHIP BLE manager that gatt_transport.cpp builds
+    # on, and strict seams for the admission server it drives.
+    set(gatt_includes "${T}/consortium_gatt_fakes" "${T}/core_fakes" "${T}/crypto_fakes" "${C}/consortium"
+        "${C}/consortium/include" "${C}/amity_system/include")
+    add_library(consortium_gatt_fakes OBJECT "${T}/consortium_gatt_fakes/gatt_fakes.cpp")
+    target_include_directories(consortium_gatt_fakes PRIVATE "${T}/consortium_gatt_fakes" "${T}/core_fakes" "${T}")
+    target_compile_options(consortium_gatt_fakes PRIVATE ${amity_seam_warnings})
+    target_link_libraries(consortium_gatt_fakes PRIVATE strict)
+    add_library(consortium_admission_server_seams OBJECT "${T}/consortium_gatt_fakes/admission_server_seams.cpp")
+    target_include_directories(consortium_admission_server_seams PRIVATE "${C}/consortium" "${T}")
+    target_compile_options(consortium_admission_server_seams PRIVATE ${amity_seam_warnings})
+    target_link_libraries(consortium_admission_server_seams PRIVATE strict)
+    amity_host_compile(consortium_gatt_transport
+        SOURCES "${C}/consortium/gatt_transport.cpp"
+        INCLUDES ${gatt_includes})
+    unset(gatt_includes)
     amity_python_tests(
         consortium_gatt_admission_test.py
         consortium_gatt_callback_test.py

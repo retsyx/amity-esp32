@@ -1,0 +1,233 @@
+// Copyright 2026.
+// This file is part of Amity-esp32.
+// Amity-esp32 is free software: you can redistribute it and/or modify it under the terms of the
+// GNU General Public License as published by the Free Software Foundation, either version 3 of the
+// License, or (at your option) any later version.
+
+// NimBLE constants, field types, layouts and function signatures the GATT
+// fakes reproduce from the pinned ESP-IDF. Layouts with pointers differ on the
+// host, so for those only the field order is compared. A signature entry
+// compiles only when the declaration has exactly that type.
+// fakes: tests/consortium_gatt_fakes
+// headers: host/ble_hs.h
+// target: components/consortium/gatt_transport.cpp
+AMITY_PARITY(addr_size, sizeof(ble_addr_t))
+AMITY_PARITY(addr_public, BLE_ADDR_PUBLIC)
+AMITY_PARITY(addr_random, BLE_ADDR_RANDOM)
+AMITY_PARITY(own_addr_public, BLE_OWN_ADDR_PUBLIC)
+AMITY_PARITY(err_rem_user_conn_term, BLE_ERR_REM_USER_CONN_TERM)
+AMITY_PARITY(err_conn_term_local, BLE_ERR_CONN_TERM_LOCAL)
+
+AMITY_PARITY(uuid_type_16, BLE_UUID_TYPE_16)
+AMITY_PARITY(uuid_type_32, BLE_UUID_TYPE_32)
+AMITY_PARITY(uuid_type_128, BLE_UUID_TYPE_128)
+AMITY_PARITY(uuid128_size, sizeof(ble_uuid128_t))
+AMITY_PARITY(uuid128_value, offsetof(ble_uuid128_t, value))
+AMITY_PARITY(uuid_any_size, sizeof(ble_uuid_any_t))
+
+AMITY_PARITY(conn_handle_none, BLE_HS_CONN_HANDLE_NONE)
+AMITY_PARITY(hs_forever, BLE_HS_FOREVER)
+AMITY_PARITY(hs_eagain, BLE_HS_EAGAIN)
+AMITY_PARITY(hs_ealready, BLE_HS_EALREADY)
+AMITY_PARITY(hs_einval, BLE_HS_EINVAL)
+AMITY_PARITY(hs_emsgsize, BLE_HS_EMSGSIZE)
+AMITY_PARITY(hs_enoent, BLE_HS_ENOENT)
+AMITY_PARITY(hs_enomem, BLE_HS_ENOMEM)
+AMITY_PARITY(hs_enotconn, BLE_HS_ENOTCONN)
+AMITY_PARITY(hs_enotsup, BLE_HS_ENOTSUP)
+AMITY_PARITY(hs_eapp, BLE_HS_EAPP)
+AMITY_PARITY(hs_ebaddata, BLE_HS_EBADDATA)
+AMITY_PARITY(hs_eos, BLE_HS_EOS)
+AMITY_PARITY(hs_econtroller, BLE_HS_ECONTROLLER)
+AMITY_PARITY(hs_etimeout, BLE_HS_ETIMEOUT)
+AMITY_PARITY(hs_edone, BLE_HS_EDONE)
+AMITY_PARITY(hs_ebusy, BLE_HS_EBUSY)
+AMITY_PARITY(hs_err_att_base, BLE_HS_ERR_ATT_BASE)
+AMITY_PARITY(hs_err_hci_base, BLE_HS_ERR_HCI_BASE)
+AMITY_PARITY(hs_att_err, BLE_HS_ATT_ERR(BLE_ATT_ERR_UNLIKELY))
+AMITY_PARITY(hs_hci_err, BLE_HS_HCI_ERR(BLE_ERR_REM_USER_CONN_TERM))
+
+AMITY_PARITY(att_err_invalid_handle, BLE_ATT_ERR_INVALID_HANDLE)
+AMITY_PARITY(att_err_insufficient_authen, BLE_ATT_ERR_INSUFFICIENT_AUTHEN)
+AMITY_PARITY(att_err_invalid_offset, BLE_ATT_ERR_INVALID_OFFSET)
+AMITY_PARITY(att_err_invalid_attr_value_len, BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN)
+AMITY_PARITY(att_err_unlikely, BLE_ATT_ERR_UNLIKELY)
+AMITY_PARITY(att_err_insufficient_res, BLE_ATT_ERR_INSUFFICIENT_RES)
+AMITY_PARITY(att_attr_max_len, BLE_ATT_ATTR_MAX_LEN)
+AMITY_PARITY(att_mtu_dflt, BLE_ATT_MTU_DFLT)
+AMITY_PARITY(l2cap_cid_att, BLE_L2CAP_CID_ATT)
+
+AMITY_PARITY(gap_event_connect, BLE_GAP_EVENT_CONNECT)
+AMITY_PARITY(gap_event_disconnect, BLE_GAP_EVENT_DISCONNECT)
+AMITY_PARITY(gap_event_disc, BLE_GAP_EVENT_DISC)
+AMITY_PARITY(gap_event_disc_complete, BLE_GAP_EVENT_DISC_COMPLETE)
+AMITY_PARITY(gap_event_adv_complete, BLE_GAP_EVENT_ADV_COMPLETE)
+AMITY_PARITY(gap_event_mtu, BLE_GAP_EVENT_MTU)
+AMITY_PARITY(gap_conn_mode_non, BLE_GAP_CONN_MODE_NON)
+AMITY_PARITY(gap_conn_mode_dir, BLE_GAP_CONN_MODE_DIR)
+AMITY_PARITY(gap_conn_mode_und, BLE_GAP_CONN_MODE_UND)
+AMITY_PARITY(gap_disc_mode_non, BLE_GAP_DISC_MODE_NON)
+AMITY_PARITY(gap_disc_mode_ltd, BLE_GAP_DISC_MODE_LTD)
+AMITY_PARITY(gap_disc_mode_gen, BLE_GAP_DISC_MODE_GEN)
+AMITY_PARITY(gap_event_type_size, sizeof(((struct ble_gap_event *)0)->type))
+AMITY_PARITY(gap_connect_status_size, sizeof(((struct ble_gap_event *)0)->connect.status))
+AMITY_PARITY(gap_connect_status_signed, (decltype(((struct ble_gap_event *)0)->connect.status))(-1) < 0)
+AMITY_PARITY(gap_connect_handle_size, sizeof(((struct ble_gap_event *)0)->connect.conn_handle))
+AMITY_PARITY(gap_connect_handle_after_status,
+             offsetof(struct ble_gap_event, connect.conn_handle) > offsetof(struct ble_gap_event, connect.status))
+AMITY_PARITY(gap_disconnect_reason_size, sizeof(((struct ble_gap_event *)0)->disconnect.reason))
+AMITY_PARITY(gap_disconnect_conn_after_reason,
+             offsetof(struct ble_gap_event, disconnect.conn) > offsetof(struct ble_gap_event, disconnect.reason))
+AMITY_PARITY(gap_disc_complete_reason_size, sizeof(((struct ble_gap_event *)0)->disc_complete.reason))
+AMITY_PARITY(gap_mtu_size, sizeof(((struct ble_gap_event *)0)->mtu))
+AMITY_PARITY(gap_mtu_channel, offsetof(struct ble_gap_event, mtu.channel_id) - offsetof(struct ble_gap_event, mtu))
+AMITY_PARITY(gap_mtu_value, offsetof(struct ble_gap_event, mtu.value) - offsetof(struct ble_gap_event, mtu))
+AMITY_PARITY(gap_union_after_type, offsetof(struct ble_gap_event, connect) > offsetof(struct ble_gap_event, type))
+AMITY_PARITY(disc_desc_length_size, sizeof(((struct ble_gap_disc_desc *)0)->length_data))
+AMITY_PARITY(disc_desc_length_after_type,
+             offsetof(struct ble_gap_disc_desc, length_data) > offsetof(struct ble_gap_disc_desc, event_type))
+AMITY_PARITY(disc_desc_addr_after_length,
+             offsetof(struct ble_gap_disc_desc, addr) > offsetof(struct ble_gap_disc_desc, length_data))
+AMITY_PARITY(disc_desc_rssi_after_addr, offsetof(struct ble_gap_disc_desc, rssi) > offsetof(struct ble_gap_disc_desc, addr))
+AMITY_PARITY(disc_desc_data_after_rssi, offsetof(struct ble_gap_disc_desc, data) > offsetof(struct ble_gap_disc_desc, rssi))
+AMITY_PARITY(disc_desc_direct_after_data,
+             offsetof(struct ble_gap_disc_desc, direct_addr) > offsetof(struct ble_gap_disc_desc, data))
+AMITY_PARITY(adv_params_size, sizeof(struct ble_gap_adv_params))
+AMITY_PARITY(adv_params_disc_mode, offsetof(struct ble_gap_adv_params, disc_mode))
+AMITY_PARITY(adv_params_itvl_min, offsetof(struct ble_gap_adv_params, itvl_min))
+AMITY_PARITY(adv_params_filter_policy, offsetof(struct ble_gap_adv_params, filter_policy))
+AMITY_PARITY(conn_params_size, sizeof(struct ble_gap_conn_params))
+AMITY_PARITY(conn_params_itvl_max, offsetof(struct ble_gap_conn_params, itvl_max))
+AMITY_PARITY(conn_params_supervision_timeout, offsetof(struct ble_gap_conn_params, supervision_timeout))
+AMITY_PARITY(disc_params_size, sizeof(struct ble_gap_disc_params))
+AMITY_PARITY(disc_params_filter_policy, offsetof(struct ble_gap_disc_params, filter_policy))
+AMITY_PARITY(conn_desc_size, sizeof(struct ble_gap_conn_desc))
+AMITY_PARITY(conn_desc_handle, offsetof(struct ble_gap_conn_desc, conn_handle))
+AMITY_PARITY(conn_desc_itvl, offsetof(struct ble_gap_conn_desc, conn_itvl))
+AMITY_PARITY(conn_desc_latency, offsetof(struct ble_gap_conn_desc, conn_latency))
+AMITY_PARITY(conn_desc_role, offsetof(struct ble_gap_conn_desc, role))
+
+AMITY_PARITY(gatt_access_op_read_chr, BLE_GATT_ACCESS_OP_READ_CHR)
+AMITY_PARITY(gatt_access_op_write_chr, BLE_GATT_ACCESS_OP_WRITE_CHR)
+AMITY_PARITY(gatt_chr_f_read, BLE_GATT_CHR_F_READ)
+AMITY_PARITY(gatt_chr_f_write, BLE_GATT_CHR_F_WRITE)
+AMITY_PARITY(gatt_svc_type_end, BLE_GATT_SVC_TYPE_END)
+AMITY_PARITY(gatt_svc_type_primary, BLE_GATT_SVC_TYPE_PRIMARY)
+AMITY_PARITY(gatt_chr_flags_size, sizeof(ble_gatt_chr_flags))
+AMITY_PARITY(gatt_error_size, sizeof(struct ble_gatt_error))
+AMITY_PARITY(gatt_error_att_handle, offsetof(struct ble_gatt_error, att_handle))
+AMITY_PARITY(gatt_svc_size, sizeof(struct ble_gatt_svc))
+AMITY_PARITY(gatt_svc_end_handle, offsetof(struct ble_gatt_svc, end_handle))
+AMITY_PARITY(gatt_svc_uuid, offsetof(struct ble_gatt_svc, uuid))
+AMITY_PARITY(gatt_chr_size, sizeof(struct ble_gatt_chr))
+AMITY_PARITY(gatt_chr_val_handle, offsetof(struct ble_gatt_chr, val_handle))
+AMITY_PARITY(gatt_chr_uuid, offsetof(struct ble_gatt_chr, uuid))
+AMITY_PARITY(gatt_attr_offset_after_handle, offsetof(struct ble_gatt_attr, offset) > offsetof(struct ble_gatt_attr, handle))
+AMITY_PARITY(gatt_attr_om_after_offset, offsetof(struct ble_gatt_attr, om) > offsetof(struct ble_gatt_attr, offset))
+AMITY_PARITY(gatt_access_op_size, sizeof(((struct ble_gatt_access_ctxt *)0)->op))
+AMITY_PARITY(gatt_access_om_after_op, offsetof(struct ble_gatt_access_ctxt, om) > offsetof(struct ble_gatt_access_ctxt, op))
+AMITY_PARITY(gatt_access_chr_after_om, offsetof(struct ble_gatt_access_ctxt, chr) > offsetof(struct ble_gatt_access_ctxt, om))
+AMITY_PARITY(gatt_access_offset_after_chr,
+             offsetof(struct ble_gatt_access_ctxt, offset) > offsetof(struct ble_gatt_access_ctxt, chr))
+AMITY_PARITY(gatt_chr_def_access_after_uuid,
+             offsetof(struct ble_gatt_chr_def, access_cb) > offsetof(struct ble_gatt_chr_def, uuid))
+AMITY_PARITY(gatt_chr_def_arg_after_access, offsetof(struct ble_gatt_chr_def, arg) > offsetof(struct ble_gatt_chr_def, access_cb))
+AMITY_PARITY(gatt_chr_def_descriptors_after_arg,
+             offsetof(struct ble_gatt_chr_def, descriptors) > offsetof(struct ble_gatt_chr_def, arg))
+AMITY_PARITY(gatt_chr_def_flags_after_descriptors,
+             offsetof(struct ble_gatt_chr_def, flags) > offsetof(struct ble_gatt_chr_def, descriptors))
+AMITY_PARITY(gatt_chr_def_key_after_flags,
+             offsetof(struct ble_gatt_chr_def, min_key_size) > offsetof(struct ble_gatt_chr_def, flags))
+AMITY_PARITY(gatt_chr_def_handle_after_key,
+             offsetof(struct ble_gatt_chr_def, val_handle) > offsetof(struct ble_gatt_chr_def, min_key_size))
+AMITY_PARITY(gatt_chr_def_cpfd_after_handle,
+             offsetof(struct ble_gatt_chr_def, cpfd) > offsetof(struct ble_gatt_chr_def, val_handle))
+AMITY_PARITY(gatt_svc_def_uuid_after_type, offsetof(struct ble_gatt_svc_def, uuid) > offsetof(struct ble_gatt_svc_def, type))
+AMITY_PARITY(gatt_svc_def_includes_after_uuid,
+             offsetof(struct ble_gatt_svc_def, includes) > offsetof(struct ble_gatt_svc_def, uuid))
+AMITY_PARITY(gatt_svc_def_characteristics_after_includes,
+             offsetof(struct ble_gatt_svc_def, characteristics) > offsetof(struct ble_gatt_svc_def, includes))
+
+AMITY_PARITY(adv_max_sz, BLE_HS_ADV_MAX_SZ)
+AMITY_PARITY(adv_max_field_sz, BLE_HS_ADV_MAX_FIELD_SZ)
+AMITY_PARITY(adv_type_flags, BLE_HS_ADV_TYPE_FLAGS)
+AMITY_PARITY(adv_type_incomp_uuids128, BLE_HS_ADV_TYPE_INCOMP_UUIDS128)
+AMITY_PARITY(adv_type_comp_uuids128, BLE_HS_ADV_TYPE_COMP_UUIDS128)
+AMITY_PARITY(adv_type_incomp_name, BLE_HS_ADV_TYPE_INCOMP_NAME)
+AMITY_PARITY(adv_type_comp_name, BLE_HS_ADV_TYPE_COMP_NAME)
+AMITY_PARITY(adv_f_disc_gen, BLE_HS_ADV_F_DISC_GEN)
+AMITY_PARITY(adv_f_bredr_unsup, BLE_HS_ADV_F_BREDR_UNSUP)
+AMITY_PARITY(adv_fields_uuids16_after_flags,
+             offsetof(struct ble_hs_adv_fields, uuids16) > offsetof(struct ble_hs_adv_fields, flags))
+AMITY_PARITY(adv_fields_num_uuids16_after_uuids16,
+             offsetof(struct ble_hs_adv_fields, num_uuids16) > offsetof(struct ble_hs_adv_fields, uuids16))
+AMITY_PARITY(adv_fields_uuids32_after_num_uuids16,
+             offsetof(struct ble_hs_adv_fields, uuids32) > offsetof(struct ble_hs_adv_fields, num_uuids16))
+AMITY_PARITY(adv_fields_uuids128_after_uuids32,
+             offsetof(struct ble_hs_adv_fields, uuids128) > offsetof(struct ble_hs_adv_fields, uuids32))
+AMITY_PARITY(adv_fields_num_uuids128_after_uuids128,
+             offsetof(struct ble_hs_adv_fields, num_uuids128) > offsetof(struct ble_hs_adv_fields, uuids128))
+AMITY_PARITY(adv_fields_name_after_num_uuids128,
+             offsetof(struct ble_hs_adv_fields, name) > offsetof(struct ble_hs_adv_fields, num_uuids128))
+AMITY_PARITY(adv_fields_name_len_after_name,
+             offsetof(struct ble_hs_adv_fields, name_len) > offsetof(struct ble_hs_adv_fields, name))
+AMITY_PARITY(adv_fields_name_len_size, sizeof(((struct ble_hs_adv_fields *)0)->name_len))
+AMITY_PARITY(adv_fields_num_uuids128_size, sizeof(((struct ble_hs_adv_fields *)0)->num_uuids128))
+
+AMITY_PARITY(mbuf_pktlen_size, sizeof(OS_MBUF_PKTLEN((struct os_mbuf *)0)))
+
+AMITY_PARITY(sig_gap_adv_start,
+             sizeof(static_cast<int (*)(uint8_t, const ble_addr_t *, int32_t, const struct ble_gap_adv_params *,
+                                        ble_gap_event_fn *, void *)>(&ble_gap_adv_start)) > 0)
+AMITY_PARITY(sig_gap_adv_stop, sizeof(static_cast<int (*)(void)>(&ble_gap_adv_stop)) > 0)
+AMITY_PARITY(sig_gap_adv_active, sizeof(static_cast<int (*)(void)>(&ble_gap_adv_active)) > 0)
+AMITY_PARITY(sig_gap_adv_set_fields,
+             sizeof(static_cast<int (*)(const struct ble_hs_adv_fields *)>(&ble_gap_adv_set_fields)) > 0)
+AMITY_PARITY(sig_gap_disc, sizeof(static_cast<int (*)(uint8_t, int32_t, const struct ble_gap_disc_params *,
+                                                      ble_gap_event_fn *, void *)>(&ble_gap_disc)) > 0)
+AMITY_PARITY(sig_gap_disc_cancel, sizeof(static_cast<int (*)(void)>(&ble_gap_disc_cancel)) > 0)
+AMITY_PARITY(sig_gap_disc_active, sizeof(static_cast<int (*)(void)>(&ble_gap_disc_active)) > 0)
+AMITY_PARITY(sig_gap_connect,
+             sizeof(static_cast<int (*)(uint8_t, const ble_addr_t *, int32_t, const struct ble_gap_conn_params *,
+                                        ble_gap_event_fn *, void *)>(&ble_gap_connect)) > 0)
+AMITY_PARITY(sig_gap_conn_cancel, sizeof(static_cast<int (*)(void)>(&ble_gap_conn_cancel)) > 0)
+AMITY_PARITY(sig_gap_conn_active, sizeof(static_cast<int (*)(void)>(&ble_gap_conn_active)) > 0)
+AMITY_PARITY(sig_gap_terminate, sizeof(static_cast<int (*)(uint16_t, uint8_t)>(&ble_gap_terminate)) > 0)
+AMITY_PARITY(sig_gap_conn_find,
+             sizeof(static_cast<int (*)(uint16_t, struct ble_gap_conn_desc *)>(&ble_gap_conn_find)) > 0)
+AMITY_PARITY(sig_gattc_exchange_mtu,
+             sizeof(static_cast<int (*)(uint16_t, ble_gatt_mtu_fn *, void *)>(&ble_gattc_exchange_mtu)) > 0)
+AMITY_PARITY(sig_gattc_disc_svc_by_uuid,
+             sizeof(static_cast<int (*)(uint16_t, const ble_uuid_t *, ble_gatt_disc_svc_fn *, void *)>(
+                 &ble_gattc_disc_svc_by_uuid)) > 0)
+AMITY_PARITY(sig_gattc_disc_chrs_by_uuid,
+             sizeof(static_cast<int (*)(uint16_t, uint16_t, uint16_t, const ble_uuid_t *, ble_gatt_chr_fn *, void *)>(
+                 &ble_gattc_disc_chrs_by_uuid)) > 0)
+AMITY_PARITY(sig_gattc_read,
+             sizeof(static_cast<int (*)(uint16_t, uint16_t, ble_gatt_attr_fn *, void *)>(&ble_gattc_read)) > 0)
+AMITY_PARITY(sig_gattc_write_flat,
+             sizeof(static_cast<int (*)(uint16_t, uint16_t, const void *, uint16_t, ble_gatt_attr_fn *, void *)>(
+                 &ble_gattc_write_flat)) > 0)
+AMITY_PARITY(sig_att_mtu, sizeof(static_cast<uint16_t (*)(uint16_t)>(&ble_att_mtu)) > 0)
+AMITY_PARITY(sig_adv_parse_fields,
+             sizeof(static_cast<int (*)(struct ble_hs_adv_fields *, const uint8_t *, uint8_t)>(&ble_hs_adv_parse_fields)) > 0)
+AMITY_PARITY(sig_uuid_cmp, sizeof(static_cast<int (*)(const ble_uuid_t *, const ble_uuid_t *)>(&ble_uuid_cmp)) > 0)
+AMITY_PARITY(sig_mbuf_copydata,
+             sizeof(static_cast<int (*)(const struct os_mbuf *, int, int, void *)>(&os_mbuf_copydata)) > 0)
+AMITY_PARITY(sig_mbuf_append, sizeof(static_cast<int (*)(struct os_mbuf *, const void *, uint16_t)>(&os_mbuf_append)) > 0)
+AMITY_PARITY(sig_gap_event_fn,
+             sizeof(static_cast<ble_gap_event_fn *>(static_cast<int (*)(struct ble_gap_event *, void *)>(nullptr))) > 0)
+AMITY_PARITY(sig_gatt_access_fn,
+             sizeof(static_cast<ble_gatt_access_fn *>(
+                 static_cast<int (*)(uint16_t, uint16_t, struct ble_gatt_access_ctxt *, void *)>(nullptr))) > 0)
+AMITY_PARITY(sig_gatt_mtu_fn, sizeof(static_cast<ble_gatt_mtu_fn *>(
+                                   static_cast<int (*)(uint16_t, const struct ble_gatt_error *, uint16_t, void *)>(nullptr))) > 0)
+AMITY_PARITY(sig_gatt_disc_svc_fn,
+             sizeof(static_cast<ble_gatt_disc_svc_fn *>(static_cast<int (*)(
+                        uint16_t, const struct ble_gatt_error *, const struct ble_gatt_svc *, void *)>(nullptr))) > 0)
+AMITY_PARITY(sig_gatt_chr_fn,
+             sizeof(static_cast<ble_gatt_chr_fn *>(static_cast<int (*)(
+                        uint16_t, const struct ble_gatt_error *, const struct ble_gatt_chr *, void *)>(nullptr))) > 0)
+AMITY_PARITY(sig_gatt_attr_fn,
+             sizeof(static_cast<ble_gatt_attr_fn *>(
+                 static_cast<int (*)(uint16_t, const struct ble_gatt_error *, struct ble_gatt_attr *, void *)>(nullptr))) > 0)
