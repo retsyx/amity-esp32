@@ -32,6 +32,16 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         LIBS web_stall core_fakes web_server_fakes
         REGISTRY
         SCENARIOS before-prepare request-head unread-body handler-response other-server handshake)
+    amity_host_compile(web_redirect
+        SOURCES "${C}/web/redirect.cpp"
+        INCLUDES "${T}/core_fakes" "${T}/web_server_fakes" "${T}/web_request_fakes" "${C}/web/include")
+    amity_test(web_redirect_test PTHREAD RACE
+        SOURCES "${T}/web_redirect_test.cpp"
+        INCLUDES "${T}/core_fakes" "${T}/web_request_fakes" "${C}/web/include"
+        LIBS web_redirect core_fakes
+        REGISTRY
+        SCENARIOS location start-once task-failure head-in-pieces oversized-head unread-body drained-body
+            stalled-client replacement stop-and-restart)
     amity_python_tests(
         web_redirect_test.py
         web_session_tcp_test.py

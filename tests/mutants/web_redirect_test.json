@@ -1,0 +1,313 @@
+{
+  "ctest": "^web_redirect_test\\.",
+  "targets": [
+    "web_redirect_test"
+  ],
+  "baseline": {
+    "ctest": "^web_redirect_test\\.py$",
+    "targets": []
+  },
+  "mutants": [
+    {
+      "id": "client-slots-three",
+      "check": "two client slots; a third client replaces one",
+      "file": "components/web/redirect.cpp",
+      "find": "constexpr size_t client_slots=2;",
+      "replace": "constexpr size_t client_slots=3;"
+    },
+    {
+      "id": "client-slots-one",
+      "check": "two clients are served at once",
+      "file": "components/web/redirect.cpp",
+      "find": "constexpr size_t client_slots=2;",
+      "replace": "constexpr size_t client_slots=1;"
+    },
+    {
+      "id": "head-limit-larger",
+      "check": "an oversized head is rejected without waiting for its end",
+      "file": "components/web/redirect.cpp",
+      "find": "constexpr size_t head_limit=2048;",
+      "replace": "constexpr size_t head_limit=4096;"
+    },
+    {
+      "id": "head-limit-smaller",
+      "check": "a head below 2048 bytes is still awaited",
+      "file": "components/web/redirect.cpp",
+      "find": "constexpr size_t head_limit=2048;",
+      "replace": "constexpr size_t head_limit=2047;"
+    },
+    {
+      "id": "head-deadline-shorter",
+      "check": "a stalled head is closed at 3 s",
+      "file": "components/web/redirect.cpp",
+      "find": "constexpr int64_t head_us=3000000;",
+      "replace": "constexpr int64_t head_us=2000000;"
+    },
+    {
+      "id": "head-deadline-longer",
+      "check": "a stalled head is closed at 3 s",
+      "file": "components/web/redirect.cpp",
+      "find": "constexpr int64_t head_us=3000000;",
+      "replace": "constexpr int64_t head_us=3000001;"
+    },
+    {
+      "id": "linger-none",
+      "check": "an unread body cannot reset the connection before the response is read",
+      "file": "components/web/redirect.cpp",
+      "find": "constexpr int64_t linger_us=1000000;",
+      "replace": "constexpr int64_t linger_us=0;"
+    },
+    {
+      "id": "poll-slower",
+      "check": "stop is prompt",
+      "file": "components/web/redirect.cpp",
+      "find": "constexpr int64_t poll_us=250000;",
+      "replace": "constexpr int64_t poll_us=2000000;"
+    },
+    {
+      "id": "stop-wait-none",
+      "check": "stop waits for the task to end",
+      "file": "components/web/redirect.cpp",
+      "find": "constexpr auto stop_wait=std::chrono::seconds(2);",
+      "replace": "constexpr auto stop_wait=std::chrono::seconds(0);"
+    },
+    {
+      "id": "stub-visible-false",
+      "check": "stub: early return from visible()",
+      "file": "components/web/redirect.cpp",
+      "find": "bool visible(std::string_view text) {",
+      "replace": "bool visible(std::string_view text) {return false;"
+    },
+    {
+      "id": "stub-visible-true",
+      "check": "stub: early return from visible()",
+      "file": "components/web/redirect.cpp",
+      "find": "bool visible(std::string_view text) {",
+      "replace": "bool visible(std::string_view text) {return true;"
+    },
+    {
+      "id": "stub-same-false",
+      "check": "stub: early return from same()",
+      "file": "components/web/redirect.cpp",
+      "find": "bool same(std::string_view a,std::string_view b) {",
+      "replace": "bool same(std::string_view a,std::string_view b) {return false;"
+    },
+    {
+      "id": "stub-same-true",
+      "check": "stub: early return from same()",
+      "file": "components/web/redirect.cpp",
+      "find": "bool same(std::string_view a,std::string_view b) {",
+      "replace": "bool same(std::string_view a,std::string_view b) {return true;"
+    },
+    {
+      "id": "stub-trim-empty",
+      "check": "stub: early return from trim()",
+      "file": "components/web/redirect.cpp",
+      "find": "std::string_view trim(std::string_view text) {",
+      "replace": "std::string_view trim(std::string_view text) {return {};"
+    },
+    {
+      "id": "stub-head_end-empty",
+      "check": "stub: early return from head_end()",
+      "file": "components/web/redirect.cpp",
+      "find": "size_t head_end(std::string_view data) {",
+      "replace": "size_t head_end(std::string_view data) {return {};"
+    },
+    {
+      "id": "stub-drop-return",
+      "check": "stub: early return from drop()",
+      "file": "components/web/redirect.cpp",
+      "find": "void drop(Client &client) {",
+      "replace": "void drop(Client &client) {return;"
+    },
+    {
+      "id": "stub-reply-return",
+      "check": "stub: early return from reply()",
+      "file": "components/web/redirect.cpp",
+      "find": "void reply(Client &client,int64_t now) {",
+      "replace": "void reply(Client &client,int64_t now) {return;"
+    },
+    {
+      "id": "reply-keeps-sending-side",
+      "check": "the reply ends the response with a FIN",
+      "file": "components/web/redirect.cpp",
+      "find": "shutdown(client.fd,SHUT_WR)!=0) {drop(client);return;}",
+      "replace": "false) {drop(client);return;}"
+    },
+    {
+      "id": "reply-not-answered",
+      "check": "an answered client is replaced first",
+      "file": "components/web/redirect.cpp",
+      "find": "client.answered=true;client.deadline=now+linger_us;",
+      "replace": "client.deadline=now+linger_us;"
+    },
+    {
+      "id": "stub-receive-return",
+      "check": "stub: early return from receive()",
+      "file": "components/web/redirect.cpp",
+      "find": "void receive(Client &client,int64_t now) {",
+      "replace": "void receive(Client &client,int64_t now) {return;"
+    },
+    {
+      "id": "receive-after-answer",
+      "check": "an unread body is discarded after the reply",
+      "file": "components/web/redirect.cpp",
+      "find": "if(client.answered)return;",
+      "replace": ""
+    },
+    {
+      "id": "stub-admit-return",
+      "check": "stub: early return from admit()",
+      "file": "components/web/redirect.cpp",
+      "find": "void admit(int listener,std::array<Client,client_slots> &clients,int64_t now) {",
+      "replace": "void admit(int listener,std::array<Client,client_slots> &clients,int64_t now) {return;"
+    },
+    {
+      "id": "admit-replace-newest",
+      "check": "the oldest unanswered client is replaced",
+      "file": "components/web/redirect.cpp",
+      "find": "return a.answered!=b.answered?a.answered:a.accepted<b.accepted;",
+      "replace": "return a.answered!=b.answered?a.answered:a.accepted>b.accepted;"
+    },
+    {
+      "id": "admit-ignore-answered",
+      "check": "an answered client is replaced before an older unanswered one",
+      "file": "components/web/redirect.cpp",
+      "find": "return a.answered!=b.answered?a.answered:a.accepted<b.accepted;",
+      "replace": "return a.accepted<b.accepted;"
+    },
+    {
+      "id": "admit-deadline-doubled",
+      "check": "the head deadline starts at accept",
+      "file": "components/web/redirect.cpp",
+      "find": "slot->fd=fd;slot->accepted=now;slot->deadline=now+head_us;",
+      "replace": "slot->fd=fd;slot->accepted=now;slot->deadline=now+2*head_us;"
+    },
+    {
+      "id": "deadline-after-expiry",
+      "check": "a client is dropped when its deadline is reached",
+      "file": "components/web/redirect.cpp",
+      "find": "for(auto &client:clients)if(client.fd>=0&&now>=client.deadline)drop(client);",
+      "replace": "for(auto &client:clients)if(client.fd>=0&&now>client.deadline)drop(client);"
+    },
+    {
+      "id": "stub-redirect_location-empty",
+      "check": "stub: early return from redirect_location()",
+      "file": "components/web/redirect.cpp",
+      "find": "std::string redirect_location(std::string_view head) {",
+      "replace": "std::string redirect_location(std::string_view head) {return {};"
+    },
+    {
+      "id": "location-no-absolute-form",
+      "check": "an absolute-form target names the host",
+      "file": "components/web/redirect.cpp",
+      "find": "if(target.size()>7&&same(target.substr(0,7),\"http://\"))",
+      "replace": "if(false&&target.size()>7&&same(target.substr(0,7),\"http://\"))"
+    },
+    {
+      "id": "location-repeated-host",
+      "check": "a repeated Host cannot be redirected",
+      "file": "components/web/redirect.cpp",
+      "find": "if(hosts)return {};",
+      "replace": "if(hosts&&false)return {};"
+    },
+    {
+      "id": "location-any-version",
+      "check": "a request line names an HTTP version",
+      "file": "components/web/redirect.cpp",
+      "find": "||line.substr(last+1,5)!=\"HTTP/\")return {};",
+      "replace": ")return {};"
+    },
+    {
+      "id": "location-userinfo-host",
+      "check": "a Host with userinfo cannot be redirected",
+      "file": "components/web/redirect.cpp",
+      "find": "host.find_first_of(\"/?#@\\\\\")",
+      "replace": "host.find_first_of(\"/?#\\\\\")"
+    },
+    {
+      "id": "location-any-target",
+      "check": "only a path target is redirected",
+      "file": "components/web/redirect.cpp",
+      "find": "if(target.front()!='/'||!visible(host)",
+      "replace": "if(!visible(host)"
+    },
+    {
+      "id": "stub-start_redirect-fail",
+      "check": "stub: early return from start_redirect()",
+      "file": "components/web/redirect.cpp",
+      "find": "esp_err_t start_redirect(uint16_t port) {",
+      "replace": "esp_err_t start_redirect(uint16_t port) {return ESP_FAIL;"
+    },
+    {
+      "id": "start-twice",
+      "check": "a running server does not start again",
+      "file": "components/web/redirect.cpp",
+      "find": "if(running)return ESP_ERR_INVALID_STATE;",
+      "replace": ""
+    },
+    {
+      "id": "start-ipv4-only",
+      "check": "IPv4 and IPv6 clients share the listener",
+      "file": "components/web/redirect.cpp",
+      "find": "#if CONFIG_LWIP_IPV6",
+      "replace": "#if 0"
+    },
+    {
+      "id": "start-no-reuse",
+      "check": "a restart binds the port again",
+      "file": "components/web/redirect.cpp",
+      "find": "const int reuse=1;setsockopt(listener,SOL_SOCKET,SO_REUSEADDR,&reuse,sizeof(reuse));",
+      "replace": "const int reuse=1;(void)reuse;"
+    },
+    {
+      "id": "start-internal-stack",
+      "check": "the server task runs in PSRAM",
+      "file": "components/web/redirect.cpp",
+      "find": "MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS)",
+      "replace": "MALLOC_CAP_8BIT)!=pdPASS)"
+    },
+    {
+      "id": "start-failure-keeps-listener",
+      "check": "a failed start frees the port",
+      "file": "components/web/redirect.cpp",
+      "find": "!=pdPASS) {close(listener);return ESP_ERR_NO_MEM;}",
+      "replace": "!=pdPASS) {return ESP_ERR_NO_MEM;}"
+    },
+    {
+      "id": "stub-stop_redirect-fail",
+      "check": "stub: early return from stop_redirect()",
+      "file": "components/web/redirect.cpp",
+      "find": "esp_err_t stop_redirect() {",
+      "replace": "esp_err_t stop_redirect() {return ESP_FAIL;"
+    },
+    {
+      "id": "stop-without-flag",
+      "check": "stop ends the task",
+      "file": "components/web/redirect.cpp",
+      "find": "stopping.store(true);",
+      "replace": ""
+    },
+    {
+      "id": "default-port",
+      "check": "the redirect server listens on port 80 by default",
+      "file": "components/web/include/web.hpp",
+      "find": "esp_err_t start_redirect(uint16_t port=80);",
+      "replace": "esp_err_t start_redirect(uint16_t port=8080);"
+    },
+    {
+      "id": "https-sockets-over-budget",
+      "check": "every server fits the lwIP socket pool",
+      "file": "components/web/web.cpp",
+      "find": "cfg.httpd.max_open_sockets=8;",
+      "replace": "cfg.httpd.max_open_sockets=10;"
+    },
+    {
+      "id": "redirect-sockets-over-budget",
+      "check": "every server fits the lwIP socket pool",
+      "file": "components/web/redirect.cpp",
+      "find": "constexpr size_t client_slots=2;",
+      "replace": "constexpr size_t client_slots=4;"
+    }
+  ]
+}
