@@ -4,7 +4,7 @@
     "consortium_tls_sdk_test"
   ],
   "baseline": {
-    "ctest": "^consortium_(tls_credentials|tls_tcp)_test\\.py$",
+    "ctest": "^consortium_(tls_credentials|tls_tcp|group_storage)_test\\.py$",
     "targets": []
   },
   "mutants": [
@@ -829,6 +829,97 @@
       "file": "components/consortium/credentials.cpp",
       "find": "if(!count||count>32)return {};",
       "replace": "if(!count||count>33)return {};"
+    },
+    {
+      "id": "stub-load_group-invalid-state",
+      "check": "stub: load_group refuses every stored state",
+      "file": "components/consortium/credentials.cpp",
+      "find": "esp_err_t load_group(Group &out){",
+      "replace": "esp_err_t load_group(Group &out){ return ESP_ERR_INVALID_STATE;"
+    },
+    {
+      "id": "stub-save_group-invalid-arg",
+      "check": "stub: save_group refuses every group",
+      "file": "components/consortium/credentials.cpp",
+      "find": "esp_err_t save_group(const Group &g){",
+      "replace": "esp_err_t save_group(const Group &g){ return ESP_ERR_INVALID_ARG;"
+    },
+    {
+      "id": "group-state-key",
+      "check": "save_group writes the one state record",
+      "file": "components/consortium/credentials.cpp",
+      "find": "return write_record(\"amity_group\",\"state\",json);}",
+      "replace": "return write_record(\"amity_group\",\"state2\",json);}"
+    },
+    {
+      "id": "group-hostname-dropped",
+      "check": "save_group stores the hostname a board joined under",
+      "file": "components/consortium/credentials.cpp",
+      "find": "if(!g.join_hostname.empty())json+=\",\\\"join_hostname\\\":\\\"\"+g.join_hostname+\"\\\"\";",
+      "replace": ""
+    },
+    {
+      "id": "group-hostname-unvalidated",
+      "check": "a stored hostname must be a valid hostname",
+      "file": "components/consortium/credentials.cpp",
+      "find": "||!valid_hostname(g.join_hostname)))return ESP_ERR_INVALID_STATE;",
+      "replace": "))return ESP_ERR_INVALID_STATE;"
+    },
+    {
+      "id": "group-save-hostname-unvalidated",
+      "check": "save_group refuses an invalid hostname",
+      "file": "components/consortium/credentials.cpp",
+      "find": "(!g.join_id||!valid_hostname(g.join_hostname))",
+      "replace": "(!g.join_id)"
+    },
+    {
+      "id": "group-load-four-peers",
+      "check": "a stored roster of four peers is refused",
+      "file": "components/consortium/credentials.cpp",
+      "find": "peers->array.size()>maximum_roster_peers)return ESP_ERR_INVALID_STATE;",
+      "replace": "peers->array.size()>maximum_roster_peers+1)return ESP_ERR_INVALID_STATE;"
+    },
+    {
+      "id": "group-leaf-cap-1023",
+      "check": "a stored leaf may be 1024 bytes",
+      "file": "components/consortium/credentials.cpp",
+      "find": "unhex(p.get(\"leaf\")->string,peer.der,1024)",
+      "replace": "unhex(p.get(\"leaf\")->string,peer.der,1023)"
+    },
+    {
+      "id": "pinned-leaf-size-1023",
+      "check": "a pinned leaf may be 1024 bytes",
+      "file": "components/consortium/credentials.cpp",
+      "find": "const bool valid=der.size()<=1024&&",
+      "replace": "const bool valid=der.size()<=1023&&"
+    },
+    {
+      "id": "group-absent-error",
+      "check": "nothing stored means no group, not an error",
+      "file": "components/consortium/credentials.cpp",
+      "find": "if(e==ESP_ERR_NVS_NOT_FOUND){out={};return ESP_OK;}",
+      "replace": "if(e==ESP_ERR_NVS_NOT_FOUND){out={};return e;}"
+    },
+    {
+      "id": "group-absent-stale",
+      "check": "nothing stored clears the caller's group",
+      "file": "components/consortium/credentials.cpp",
+      "find": "if(e==ESP_ERR_NVS_NOT_FOUND){out={};return ESP_OK;}",
+      "replace": "if(e==ESP_ERR_NVS_NOT_FOUND){return ESP_OK;}"
+    },
+    {
+      "id": "group-state-size-unbounded",
+      "check": "a state record over 8192 bytes is refused",
+      "file": "components/consortium/credentials.cpp",
+      "find": "if(json.size()>8192)return ESP_ERR_INVALID_SIZE;",
+      "replace": "if(json.size()>81920)return ESP_ERR_INVALID_SIZE;"
+    },
+    {
+      "id": "group-peer-active-flipped",
+      "check": "a peer keeps its active flag",
+      "file": "components/consortium/credentials.cpp",
+      "find": "\"\\\",\\\"active\\\":\"+(p.active?\"true\":\"false\")+\"}\";",
+      "replace": "\"\\\",\\\"active\\\":\"+(p.active?\"false\":\"true\")+\"}\";"
     }
   ]
 }

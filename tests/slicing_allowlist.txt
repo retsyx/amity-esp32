@@ -13,7 +13,7 @@ console_latency_observer_test.py pending:F
 consortium_admission_startup_test.py pending:A1
 consortium_enrollment_restart_test.py pending:A2
 consortium_firmware_identity_test.py pending:A2
-consortium_group_storage_test.py pending:D
+consortium_group_storage_test.py pending:A2
 consortium_hostname_test.py pending:A2
 consortium_live_configuration_test.py pending:A4
 consortium_logs_runtime_test.py pending:A2

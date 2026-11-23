@@ -877,6 +877,87 @@ void record_storage() {
     CHECK(amity_tls_fake::writes().size() == writes && amity_tls_fake::scripts_used());
 }
 
+bool same_group(const Group &a, const Group &b) {
+    if (a.role != b.role || a.consortium != b.consortium || a.authority != b.authority || a.revision != b.revision ||
+        a.authority_host != b.authority_host || a.join_id != b.join_id || a.joining_id != b.joining_id ||
+        a.join_digest != b.join_digest || a.join_hostname != b.join_hostname || a.join_revision != b.join_revision ||
+        a.peers.size() != b.peers.size())
+        return false;
+    for (std::size_t n = 0; n < a.peers.size(); ++n) {
+        const auto &x = a.peers[n], &y = b.peers[n];
+        if (x.id != y.id || x.der != y.der || x.pin != y.pin || x.active != y.active) return false;
+    }
+    return true;
+}
+
+// Nothing stored means no group. A member's state round-trips, with the
+// hostname it joined under, in the one state record; an invalid stored or
+// saved hostname, a hostname without a join and a state over 8192 bytes are
+// refused.
+void group_storage() {
+    start();
+    const auto coordinator = generate(3);
+    Group loaded = coordinator_group(coordinator);
+    amity_tls_fake::erase_partition();
+    CHECK(platform::load_group(loaded) == ESP_OK && same_group(loaded, Group{}));
+    Group group;
+    group.role = Group::member;
+    group.consortium = id<model::ConsortiumId>(1);
+    group.authority = coordinator.id;
+    group.revision = 1;
+    group.authority_host = "192.0.2.1";
+    group.join_id = id<model::JoinId>(10);
+    group.joining_id = id<model::OctopusId>(5);
+    group.join_digest = std::string(64, 'e');
+    group.join_revision = 1;
+    group.join_hostname = "living-room";
+    group.peers.push_back(peer(coordinator));
+    amity_tls_fake::writes().clear();
+    CHECK(platform::save_group(group) == ESP_OK);
+    CHECK(amity_tls_fake::writes() == std::vector<std::string>{"amity_group/state"});
+    const auto stored = amity_tls_fake::blobs().at("amity_group/state");
+    CHECK(stored.find("\"join_hostname\":\"living-room\"") != std::string::npos);
+    CHECK(platform::load_group(loaded) == ESP_OK && same_group(loaded, group));
+    amity_tls_fake::blobs()["amity_group/state"] = replace(stored, "living-room", "Living Room");
+    CHECK(platform::load_group(loaded) == ESP_ERR_INVALID_STATE);
+    auto refused = group;
+    refused.join_hostname = "Living Room";
+    CHECK(platform::save_group(refused) == ESP_ERR_INVALID_ARG);
+    refused = group;
+    refused.join_id = {};
+    CHECK(platform::save_group(refused) == ESP_ERR_INVALID_ARG);
+    refused = group;
+    refused.authority_host = std::string(8192, 'h');
+    CHECK(platform::save_group(refused) == ESP_ERR_INVALID_SIZE);
+    CHECK(amity_tls_fake::writes().size() == 1);
+}
+
+// Three peers with 1024-byte leaves, a state above 6 KiB, round-trip
+// exactly. save_group refuses a fourth, leaving the committed roster, and
+// load_group refuses a stored roster of four valid peers.
+void group_capacity() {
+    start();
+    auto group = coordinator_group(generate(3));
+    LeafSpec largest;
+    largest.size = 1024;
+    std::vector<Identity> leaves;
+    for (unsigned n = 0; n < 4; ++n) leaves.push_back(write_leaf(id<model::OctopusId>(20 + n), largest));
+    for (unsigned n = 0; n < 3; ++n) group.peers.push_back(peer(leaves[n]));
+    group.peers[1].active = false;
+    amity_tls_fake::erase_partition();
+    CHECK(platform::save_group(group) == ESP_OK);
+    const auto full = amity_tls_fake::blobs().at("amity_group/state");
+    Group loaded;
+    CHECK(full.size() > 6144 && platform::load_group(loaded) == ESP_OK && same_group(loaded, group));
+    group.peers.push_back(peer(leaves[3]));
+    CHECK(platform::save_group(group) == ESP_ERR_INVALID_ARG && amity_tls_fake::blobs().at("amity_group/state") ==
+          full);
+    const auto fourth = ",{\"id\":\"" + leaves[3].id.str() + "\",\"leaf\":\"" + to_hex(leaves[3].der) +
+                        "\",\"pin\":\"" + leaves[3].spki + "\",\"active\":true}";
+    amity_tls_fake::blobs()["amity_group/state"] = replace(full, "}]}", "}" + fourth + "]}");
+    CHECK(platform::load_group(loaded) == ESP_ERR_INVALID_STATE);
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -895,5 +976,7 @@ int main(int argc, char **argv) {
                             {"non-tcp-socket", non_tcp_socket},
                             {"tcp-frames", tcp_frames},
                             {"primitives", primitives},
-                            {"record-storage", record_storage}});
+                            {"record-storage", record_storage},
+                            {"group-storage", group_storage},
+                            {"group-capacity", group_capacity}});
 }

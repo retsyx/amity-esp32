@@ -26,5 +26,5 @@ amity_test(consortium_tls_sdk_test
     REGISTRY
     SCENARIOS identity-generation identity-record certificate profile-binding verify-callback stored-roster
         setup-peers roster-capacity connection-admission mutual-tls socket-options non-tcp-socket tcp-frames
-        primitives record-storage)
+        primitives record-storage group-storage group-capacity)
 unset(tls_includes)
