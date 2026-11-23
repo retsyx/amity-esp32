@@ -1,0 +1,110 @@
+{
+  "ctest": "^system_admin_test\\.",
+  "targets": [
+    "system_admin_test"
+  ],
+  "baseline": {
+    "ctest": "^admin_rejection_test\\.py$",
+    "targets": []
+  },
+  "mutants": [
+    {
+      "id": "stub-json-empty",
+      "check": "stub: early return from json()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "std::string json(cJSON* root){",
+      "replace": "std::string json(cJSON* root){ return {};"
+    },
+    {
+      "id": "stub-error-fail",
+      "check": "stub: early return from error()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "esp_err_t error(httpd_req_t* req,const char* code,const std::string& text,const char* status=\"400 Bad Request\",bool retry=false){",
+      "replace": "esp_err_t error(httpd_req_t* req,const char* code,const std::string& text,const char* status=\"400 Bad Request\",bool retry=false){ return ESP_FAIL;"
+    },
+    {
+      "id": "error-returns-ok",
+      "check": "a rejection returns ESP_FAIL so HTTPD closes instead of draining the body",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "// response while preventing HTTPD from draining an untrusted Content-Length.\n    return ESP_FAIL;",
+      "replace": "// response while preventing HTTPD from draining an untrusted Content-Length.\n    return ESP_OK;"
+    },
+    {
+      "id": "error-keeps-connection",
+      "check": "a rejection closes the connection",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "httpd_resp_set_hdr(req,\"Connection\",\"close\");\n    web::json(req,json(out.get()),status);",
+      "replace": "web::json(req,json(out.get()),status);"
+    },
+    {
+      "id": "error-default-status",
+      "check": "a rejection passes its status line through",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "web::json(req,json(out.get()),status);",
+      "replace": "web::json(req,json(out.get()),((void)status,\"200 OK\"));"
+    },
+    {
+      "id": "error-code-dropped",
+      "check": "a rejection names its code",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "cJSON_AddStringToObject(out.get(),\"code\",code);",
+      "replace": "cJSON_AddStringToObject(out.get(),\"code\",((void)code,\"error\"));"
+    },
+    {
+      "id": "error-message-dropped",
+      "check": "a rejection carries its message",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "cJSON_AddStringToObject(out.get(),\"message\",text.c_str());",
+      "replace": "cJSON_AddStringToObject(out.get(),\"message\",\"\");"
+    },
+    {
+      "id": "error-message-unescaped",
+      "check": "a message with quotes and a newline survives as JSON",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "cJSON_AddStringToObject(out.get(),\"message\",text.c_str());",
+      "replace": "cJSON_AddRawToObject(out.get(),\"message\",(\"\\\"\"+text+\"\\\"\").c_str());"
+    },
+    {
+      "id": "error-error-dropped",
+      "check": "a rejection repeats its message as error",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "cJSON_AddStringToObject(out.get(),\"error\",text.c_str());",
+      "replace": "cJSON_AddStringToObject(out.get(),\"error\",code);"
+    },
+    {
+      "id": "error-never-retryable",
+      "check": "a retryable rejection says so",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "cJSON_AddBoolToObject(out.get(),\"retryable\",retry);",
+      "replace": "cJSON_AddBoolToObject(out.get(),\"retryable\",((void)retry,false));"
+    },
+    {
+      "id": "error-always-retryable",
+      "check": "a rejection is not retryable unless the caller says so",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "cJSON_AddBoolToObject(out.get(),\"retryable\",retry);",
+      "replace": "cJSON_AddBoolToObject(out.get(),\"retryable\",((void)retry,true));"
+    },
+    {
+      "id": "error-affected-object",
+      "check": "a rejection lists no affected IDs, as an array",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "cJSON_AddArrayToObject(out.get(),\"affected_ids\");",
+      "replace": "cJSON_AddObjectToObject(out.get(),\"affected_ids\");"
+    },
+    {
+      "id": "not-ready-not-retryable",
+      "check": "a request before startup loads the configuration may be retried",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "\"System configuration is not ready.\",\"503 Service Unavailable\",true);",
+      "replace": "\"System configuration is not ready.\",\"503 Service Unavailable\",false);"
+    },
+    {
+      "id": "body-read-before-passive-check",
+      "check": "a change refused while passive is refused before its body is read",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(configuration_is_passive()){\n        result=error(req,\"coordinator_required\"",
+      "replace": "{std::string early;if(!web::body(req,early)){result=ESP_FAIL;return true;}}if(configuration_is_passive()){\n        result=error(req,\"coordinator_required\""
+    }
+  ]
+}

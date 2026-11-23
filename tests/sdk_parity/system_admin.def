@@ -1,0 +1,20 @@
+// Copyright 2026.
+// This file is part of Amity-esp32.
+// Amity-esp32 is free software: you can redistribute it and/or modify it under the terms of the
+// GNU General Public License as published by the Free Software Foundation, either version 3 of the
+// License, or (at your option) any later version.
+
+// The OTA image states and the NVS result the system administration fakes
+// reproduce from the pinned ESP-IDF.
+// fakes: tests/core_fakes tests/system_admin_fakes tests/device_settings_fakes
+// headers: esp_ota_ops.h nvs.h
+// target: components/web_admin/system_admin.cpp
+AMITY_PARITY(ota_img_states_size, sizeof(esp_ota_img_states_t))
+AMITY_PARITY(ota_img_new, ESP_OTA_IMG_NEW)
+AMITY_PARITY(ota_img_pending_verify, ESP_OTA_IMG_PENDING_VERIFY)
+AMITY_PARITY(ota_img_valid, ESP_OTA_IMG_VALID)
+AMITY_PARITY(ota_img_invalid, ESP_OTA_IMG_INVALID)
+AMITY_PARITY(ota_img_aborted, ESP_OTA_IMG_ABORTED)
+AMITY_PARITY(ota_img_undefined, ESP_OTA_IMG_UNDEFINED)
+AMITY_PARITY(nvs_base, ESP_ERR_NVS_BASE)
+AMITY_PARITY(nvs_not_found, ESP_ERR_NVS_NOT_FOUND)

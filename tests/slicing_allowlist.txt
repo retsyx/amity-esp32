@@ -4,7 +4,6 @@
 # lint             text checks of firmware files that no host build can observe
 # sdk-slice        slices of SDK or HomeKit SDK code that stay
 # whole-file       compiles whole firmware files from Python without slicing them
-admin_rejection_test.py pending:E1
 admission_workflow_test.py pending:A2
 allocation_failure_diagnostics_test.py pending:F
 board_profile_config_test.py whole-file
