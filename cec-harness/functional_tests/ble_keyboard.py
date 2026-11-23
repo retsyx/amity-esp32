@@ -134,7 +134,7 @@ def _ble_keyboard(*, remote):
                         activity.assert_active()
                         if not remote:
                             with BLEFIFOEvidence(main, scan, *components) as evidence:
-                                evidence.assert_saturated(keyboard, source=player, volume=avr)
+                                evidence.assert_ten_key_admission(keyboard, source=player, volume=avr)
                         with BLEInputEvidence(main, scan, *components) as evidence:
                             evidence.assert_tap(keyboard, player)
                             evidence.assert_overlapping_buttons(keyboard, volume=avr, navigation=player)

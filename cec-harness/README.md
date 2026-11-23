@@ -1083,14 +1083,22 @@ remote. The fixture refuses to replace an existing bond and removes only its own
 new bond during cleanup.
 
 The two input cases scan a TV, AVR and two sources, then save both activities before
-sending input. The local case first saturates the CEC FIFO with one ten-key HID
-report: seven navigation keys, Mute and both volume keys. It requires eight
-physical frames in admission order and fresh main-owner logs for the two dropped
-volume presses. Releasing two admitted navigation holds leaves capacity for
-pressing Down again and the final recipient releases, while the rejected volume
-keys stay held. Neither capacity becoming free nor matching button-up may replay
-dropped work. Already admitted presses may
-finish before the final release. Fresh Select and Mute must then work.
+sending input. The local case first sends one ten-key HID report: seven
+navigation keys, Mute and both volume keys. A report carries at most ten keys,
+so the 24-slot CEC FIFO admits every press: the first ten physical frames must
+be those presses in report order, and fresh main-owner logs must show no FIFO
+drop. The firmware host tests cover full-FIFO drops and their logs. Two
+navigation holds are then released while the other eight, including both volume
+keys, stay held. Pressing Down again must reach the wire, and neither released
+hold may restart after it, apart from a Down repeat admitted before Down's up.
+Both volume streams must still be running at the final all-up: each must
+transmit a press after the window for that repeat and before the AVR's final
+release. The first eight presses get the ordinary CEC budget. Volume Up and
+Down add two presses to the prefix and two repeating streams ahead of the fresh
+Down, its repeat and both final releases, so the tenth press and those waits get
+two press periods more, measured in the prefix. Already admitted presses may
+finish before each recipient's final release, and no old press or release may
+follow it. Fresh Select and Mute must then work.
 Both cases check a fresh Select press/release, independent volume and
 navigation holds, and two navigation buttons sharing one recipient. Real CEC
 NACKs on the first press and on a later repeat must stop the affected stream;
