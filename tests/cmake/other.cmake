@@ -226,6 +226,7 @@ if(AMITY_TEST_TIER STREQUAL standalone)
             "${C}/system_services/include" "${C}/network_diagnostics/include" "${C}/web/include"
             "${C}/config_store/include" "${C}/amity_hub/include" "${C}/cec/include" "${C}/amity_matter/include"
             "${C}/amity_homekit/include" "${C}/ble_remote/include" "${C}/radio_control/include"
+            "${C}/web_admin/include"
         LIBS ${amity_component_seams} core_fakes crypto_fakes httpd_fake amity_model amity_consortium
         REGISTRY
         SCENARIOS complete strict runtime credentials services settings web system-control radios)

@@ -7,6 +7,7 @@
  */
 
 // Every component seam links, records its calls and fails without a behaviour.
+#include "activity_editor.hpp"
 #include "adapter_settings.hpp"
 #include "amity/consortium/runtime.hpp"
 #include "amity/system_control.hpp"
@@ -23,9 +24,11 @@
 #include "platform.hpp"
 #include "radio_control.hpp"
 #include "seams.hpp"
+#include "system_admin.hpp"
 #include "system_identity.hpp"
 #include "system_services.hpp"
 #include "web.hpp"
+#include "web_admin.hpp"
 #include "wifi_signal.hpp"
 #include <cstdio>
 #include <cstring>
@@ -139,6 +142,9 @@ void complete() {
                 &HubService::update_owned_snapshot, &HubService::forget_owned_snapshots, &HubService::refresh_owned_context,
                 &HubService::owned_snapshots, &HubService::fence_owned, &HubService::discover_owned,
                 &HubService::executing_configuration_revision) == 41);
+    CHECK(seams(&web_admin::load_configuration, &web_admin::configuration_is_passive,
+                &web_admin::finish_configuration_activation, &web_admin::admin_request,
+                &web_admin::activity_editor_request) == 5);
     CHECK(seams(&amity_matter_set_controller_enabled, &amity_matter_start, &amity_matter_controller_enrollment_complete,
                 &amity_matter_update_state, &amity_matter_flush_state, &amity_matter_update_remote,
                 &amity_matter_get_status, &amity_matter_open_commissioning, &amity_matter_close_commissioning,

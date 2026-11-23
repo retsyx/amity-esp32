@@ -47,6 +47,8 @@ amity_seams(config_store_nvs INCLUDES "${C}/config_store/include" ${seams_system
 amity_seams(system_identity INCLUDES "${C}/config_store/include" ${seams_system})
 amity_seams(system_control INCLUDES ${seams_hub})
 amity_seams(hub_service INCLUDES ${seams_hub})
+amity_seams(web_system_admin INCLUDES "${C}/web_admin/include" ${seams_hub})
+amity_seams(activity_editor INCLUDES "${C}/web_admin/include" ${seams_hub})
 amity_seams(amity_matter INCLUDES "${C}/amity_matter/include")
 amity_seams(homekit INCLUDES "${C}/amity_homekit/include" "${C}/amity_matter/include" ${seams_hub})
 amity_seams(ble_remote INCLUDES "${C}/ble_remote/include")
