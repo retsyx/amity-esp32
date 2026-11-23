@@ -370,6 +370,34 @@ void open_pairing() {
     CHECK(state().loop_passes == 9 && count("config_store::write") == 1);
 }
 
+// A command that finds the queue full is refused at once with
+// ESP_ERR_NO_MEM, without waiting for the worker, and leaves HomeKit free to
+// take the next one.
+void full_command_queue() {
+    install_defaults();
+    amity::SystemControl hub;
+    install_hub(hub);
+    std::deque<std::function<void()>> passes;
+    passes.push_back([] {});
+    passes.push_back([] {
+        const auto queued = amity_homekit::Command::Close;
+        CHECK(xQueueSend(amity_homekit::commands, &queued, 0) == pdTRUE);
+        const int64_t before = amity_fake::now_us();
+        CHECK(amity_homekit::open_pairing() == ESP_ERR_NO_MEM && amity_fake::now_us() == before);
+        const auto status = amity_homekit::status();
+        CHECK(!status.busy && !status.pairing && status.error == ESP_OK);
+    });
+    // This pass's wait took the queued Close, so there is room again.
+    passes.push_back([] { CHECK(amity_homekit::open_pairing() == ESP_OK && amity_homekit::status().busy); });
+    passes.push_back([] {});
+    passes.push_back([] {
+        const auto status = amity_homekit::status();
+        CHECK(status.pairing && !status.busy && status.error == ESP_OK);
+    });
+    CHECK(start(hub, callbacks(), std::move(passes)) == ESP_OK);
+    CHECK(state().loop_passes == 6);
+}
+
 // The pairing window ends when its 300 seconds are up: status() hides it at
 // once, and the worker's next pass closes it and refreshes discovery.
 void pairing_expiry() {
@@ -777,6 +805,7 @@ int main(int argc, char **argv) {
                             {"restore-saved-setup", restore_saved_setup},
                             {"accessory", accessory},
                             {"open-pairing", open_pairing},
+                            {"full-command-queue", full_command_queue},
                             {"pairing-expiry", pairing_expiry},
                             {"paired-closes-window", paired_closes_window},
                             {"open-while-paired", open_while_paired},

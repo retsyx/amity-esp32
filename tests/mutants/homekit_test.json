@@ -979,6 +979,13 @@
       "file": "components/amity_homekit/homekit.cpp",
       "find": "worker_loop();\n    vTaskDeleteWithCaps(nullptr);",
       "replace": "vTaskDeleteWithCaps(nullptr);\n    worker_loop();"
+    },
+    {
+      "id": "submit-blocks",
+      "check": "a HomeKit command is queued without waiting",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(xQueueSend(commands,&command,0)!=pdTRUE)",
+      "replace": "if(xQueueSend(commands,&command,portMAX_DELAY)!=pdTRUE)"
     }
   ]
 }

@@ -36,8 +36,8 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         REGISTRY
         SCENARIOS start-worker init-failure task-creation-failure startup-timeout startup-error
             startup-initialize-error stop-before-start stop-during-start restore-saved-setup accessory open-pairing
-            pairing-expiry paired-closes-window open-while-paired open-refused open-failures reopen-with-saved-setup
-            stop-clears-pairing stop-ignores-queued-open failed-stop remote-battery
+            full-command-queue pairing-expiry paired-closes-window open-while-paired open-refused open-failures
+            reopen-with-saved-setup stop-clears-pairing stop-ignores-queued-open failed-stop remote-battery
             read-values write-dispatch disabled-callbacks rename-hostname)
 
     # amity_hap.c, the Amity side of the HomeKit SDK fork, compiled whole as C11
