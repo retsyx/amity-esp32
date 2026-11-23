@@ -19,6 +19,7 @@
 #include "intent_configuration_fixture.hpp"
 #include "seams.hpp"
 #include "stall.hpp"
+#include <map>
 #include <tuple>
 
 namespace {
@@ -1057,6 +1058,109 @@ void replacement_review() {
     CHECK(removal.events.empty() && removal.active() == before && web_admin::operations.empty());
 }
 
+// The administration API surface
+
+using Fields = std::vector<std::string>;
+const std::string settings_path = "/api/devices/0123456789abcdef0123456789abcdef/settings";
+
+// Each change names a closed set of fields, request_id among them once.
+void request_fields() {
+    System system;
+    const std::map<std::string, Fields> routes = {
+        {"/api/membership/scan", {"request_id"}},
+        {"/api/membership/cancel", {"request_id", "scan_id"}},
+        {"/api/membership/add", {"request_id", "scan_id", "candidate_token", "name"}},
+        {"/api/membership/remove",
+         {"request_id", "octopus_id", "confirm", "expected_membership_revision", "expected_target_boot_id",
+          "expected_config_revision", "expected_presentation_revision", "affected_activity_ids"}},
+        {"/api/replacements/apply",
+         {"request_id", "expected_config_revision", "expected_presentation_revision", "expected_membership_revision",
+          "expected_target_boot_id", "previous_octopus_id", "replacement_octopus_id", "old_hardware_isolated", "ports",
+          "equipment"}},
+        {settings_path,
+         {"request_id", "expected_boot_id", "expected_settings_revision", "expected_hostname_revision", "hostname",
+          "changes"}},
+    };
+    for (const auto &[path, expected] : routes) {
+        const auto fields = web_admin::request_fields(path);
+        CHECK(fields && *fields == expected && std::count(fields->begin(), fields->end(), "request_id") == 1);
+    }
+    CHECK(web_admin::device_settings_target(settings_path) == std::optional<std::string>("0123456789abcdef0123456789abcdef"));
+    for (const auto *path : {"/api/devices/00000000000000000000000000000000/settings",
+                             "/api/devices/0123456789ABCDEF0123456789abcdef/settings",
+                             "/api/devices/0123456789abcdef0123456789abcdef/settings/extra",
+                             "/api/devices/0123456789abcdef0123456789abcdef/settingz",
+                             "/api/devicez/0123456789abcdef0123456789abcdef/settings",
+                             "/api/devices/0123456789abcdef0123456789abcdeg/settings",
+                             "/api/devices/0123456789abcdef/settings", "/api/unknown", "/api/system"}) {
+        CHECK(!web_admin::request_fields(path) && !web_admin::device_settings_target(path));
+    }
+}
+
+// The router owns exactly the administration paths; any other path is left
+// to the caller untouched.
+void administrative_paths() {
+    System system;
+    for (const auto *path : {"/api/setup", "/api/login", "/api/logout", "/api/password", "/api/reboot",
+                             "/api/factory-reset", "/api/firmware", "/api/remotes", "/api/remotes/pair", "/api/matter",
+                             "/api/matter/open", "/api/homekit", "/api/logs", "/api/activities", "/api/systems",
+                             "/api/configuration", "/api/update", "/api/membership"}) {
+        CHECK(!web_admin::administrative_path(path));
+        const auto reply = send(HTTP_POST, path, "{}");
+        CHECK(!reply.handled && !reply.response.head_sent && reply.unread());
+    }
+    for (const auto *path : {"/api/system", "/api/config", "/api/updates/cohort", "/api/membership/admission",
+                             "/api/operations/0123456789abcdef0123456789abcdef", "/api/replacements/apply",
+                             "/api/devices/0123456789abcdef0123456789abcdef/settings"})
+        CHECK(web_admin::administrative_path(path));
+}
+
+// An unknown change, or another method, is refused before its body is read.
+void unknown_change() {
+    System system;
+    system.save(direct_configuration());
+    system.boot();
+    for (const auto *path : {"/api/membership/unknown", "/api/system", "/api/devices/0123456789abcdef/settings"}) {
+        const auto reply = send(HTTP_POST, path, "{}", 16000000);
+        CHECK(rejected(reply, "not_found", "404 Not Found") && reply.unread());
+    }
+    auto reply = send(HTTP_PUT, "/api/membership/scan", "{}", 16000000);
+    CHECK(rejected(reply, "method_not_allowed", "405 Method Not Allowed") && reply.unread());
+    reply = send(HTTP_GET, "/api/membership/unknown");
+    CHECK(rejected(reply, "not_found", "404 Not Found"));
+}
+
+// Update status is read with GET only.
+void update_cohort() {
+    System system;
+    system.save(direct_configuration());
+    system.boot();
+    install<&system_services::updates::cohort_status_json>([] { return std::string("{\"phase\":\"idle\"}"); });
+    auto reply = send(HTTP_GET, "/api/updates/cohort");
+    CHECK(reply.handled && reply.result == ESP_OK && reply.response.status == "200 OK");
+    CHECK(reply.response.body == "{\"phase\":\"idle\"}" && reply.response.type == "application/json");
+    reply = send(HTTP_POST, "/api/updates/cohort", "{}", 16000000);
+    CHECK(rejected(reply, "not_found", "404 Not Found") && reply.unread());
+    CHECK(calls("system_services::updates::cohort_status_json") == 1);
+}
+
+// GET /api/system describes this Amity, including how many Amity devices a
+// system supports: the main and its roster.
+void system_snapshot() {
+    System system;
+    system.save(direct_configuration());
+    system.boot();
+    const auto reply = send(HTTP_GET, "/api/system");
+    CHECK(reply.handled && reply.result == ESP_OK && reply.response.status == "200 OK");
+    const auto *capabilities = reply.item("capabilities");
+    const auto *supported = cJSON_GetObjectItemCaseSensitive(capabilities, "supported_octopuses");
+    CHECK(cJSON_IsNumber(supported) && supported->valuedouble == 4);
+    CHECK(supported->valuedouble == amity::consortium::maximum_roster_peers + 1);
+    CHECK(reply.text("mode") == "coordinator" && reply.text("octopus_id") == id<m::OctopusId>(2).str());
+    CHECK(reply.text("consortium_id") == id<m::ConsortiumId>(1).str() && reply.text("boot_id") == boot_identity);
+    CHECK(reply.text("hostname") == "amity");
+}
+
 // The harness consumes what it scripts: a request body read to its end
 // under its deadline, the saved record loaded and published, the
 // synchronization task created and one response sent.
@@ -1121,6 +1225,11 @@ int main(int argc, char **argv) {
                                {"removal-metadata-only", removal_metadata_only},
                                {"replacement", replacement},
                                {"replacement-review", replacement_review},
+                               {"request-fields", request_fields},
+                               {"administrative-paths", administrative_paths},
+                               {"unknown-change", unknown_change},
+                               {"update-cohort", update_cohort},
+                               {"system-snapshot", system_snapshot},
                                {"sanity", sanity},
                            });
 }

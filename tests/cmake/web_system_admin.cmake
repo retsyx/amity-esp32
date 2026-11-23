@@ -40,7 +40,8 @@ if(AMITY_TEST_TIER STREQUAL sdk)
             admission-completes admission-wrong-name admission-scan-change admission-failure admission-status
             removal-review removal-reservation-failure removal-update-required removal-marker-failure
             removal-success removal-forget-failure removal-saved-only removal-metadata-only replacement
-            replacement-review sanity)
+            replacement-review request-fields administrative-paths unknown-change update-cohort system-snapshot
+            sanity)
     amity_python_tests(
         configuration_snapshot_web_test.py
     )

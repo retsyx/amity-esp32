@@ -1,0 +1,229 @@
+{
+  "ctest": "^system_admin_test\\.",
+  "targets": [
+    "system_admin_test"
+  ],
+  "baseline": {
+    "ctest": "^controller_api_surface_test\\.py$",
+    "targets": []
+  },
+  "mutants": [
+    {
+      "id": "stub-device_settings_target-empty",
+      "check": "stub: early return from device_settings_target()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "std::optional<std::string> device_settings_target(const std::string& path){",
+      "replace": "std::optional<std::string> device_settings_target(const std::string& path){ return {};"
+    },
+    {
+      "id": "stub-request_fields-empty",
+      "check": "stub: early return from request_fields()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "std::optional<std::vector<std::string>> request_fields(const std::string& path){",
+      "replace": "std::optional<std::vector<std::string>> request_fields(const std::string& path){ return {};"
+    },
+    {
+      "id": "stub-administrative_path-false",
+      "check": "stub: early return from administrative_path()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "bool administrative_path(const std::string& path){",
+      "replace": "bool administrative_path(const std::string& path){ return false;"
+    },
+    {
+      "id": "stub-administrative_path-true",
+      "check": "stub: early return from administrative_path()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "bool administrative_path(const std::string& path){",
+      "replace": "bool administrative_path(const std::string& path){ return true;"
+    },
+    {
+      "id": "stub-admin_request-false",
+      "check": "stub: early return from admin_request()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){",
+      "replace": "bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){ return false;"
+    },
+    {
+      "id": "stub-admin_request-true",
+      "check": "stub: early return from admin_request()",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){",
+      "replace": "bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){ return true;"
+    },
+    {
+      "id": "request-id-twice",
+      "check": "request_id is allowed once",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "std::vector<std::string> allowed{\"request_id\"};",
+      "replace": "std::vector<std::string> allowed{\"request_id\",\"request_id\"};"
+    },
+    {
+      "id": "scan-takes-scan-id",
+      "check": "a scan names no field but request_id",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "else if(path==\"/api/membership/scan\"){}",
+      "replace": "else if(path==\"/api/membership/scan\")allowed.push_back(\"scan_id\");"
+    },
+    {
+      "id": "cancel-without-scan",
+      "check": "a cancellation names its search",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "else if(path==\"/api/membership/cancel\")allowed.push_back(\"scan_id\");",
+      "replace": "else if(path==\"/api/membership/cancel\"){}"
+    },
+    {
+      "id": "addition-without-name",
+      "check": "an addition names its hostname",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "allowed.insert(allowed.end(),{\"scan_id\",\"candidate_token\",\"name\"});",
+      "replace": "allowed.insert(allowed.end(),{\"scan_id\",\"candidate_token\"});"
+    },
+    {
+      "id": "removal-without-affected",
+      "check": "a removal lists the activities it deletes",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "\"expected_config_revision\",\"expected_presentation_revision\",\"affected_activity_ids\"});",
+      "replace": "\"expected_config_revision\",\"expected_presentation_revision\"});"
+    },
+    {
+      "id": "replacement-without-equipment",
+      "check": "a replacement maps equipment",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "\"old_hardware_isolated\",\"ports\",\"equipment\"});",
+      "replace": "\"old_hardware_isolated\",\"ports\"});"
+    },
+    {
+      "id": "settings-without-hostname",
+      "check": "device settings may change the hostname",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "\"expected_hostname_revision\",\"hostname\",\"changes\"});",
+      "replace": "\"expected_hostname_revision\",\"changes\"});"
+    },
+    {
+      "id": "settings-without-hostname-revision",
+      "check": "device settings name the hostname revision",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "{\"expected_boot_id\",\"expected_settings_revision\",\"expected_hostname_revision\",",
+      "replace": "{\"expected_boot_id\",\"expected_settings_revision\","
+    },
+    {
+      "id": "unknown-route-fields",
+      "check": "an unknown route has no fields",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "    else return {};\n    return allowed;",
+      "replace": "    return allowed;"
+    },
+    {
+      "id": "settings-path-length",
+      "check": "a device settings path holds exactly a 32-digit ID",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(path.size()!=prefix.size()+32+suffix.size()||",
+      "replace": "if(path.size()!=prefix.size()+33+suffix.size()||"
+    },
+    {
+      "id": "settings-path-suffix",
+      "check": "a device settings path ends in /settings",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "||path.compare(path.size()-suffix.size(),suffix.size(),suffix))return {};",
+      "replace": ")return {};"
+    },
+    {
+      "id": "settings-path-uppercase",
+      "check": "a device ID is lowercase hexadecimal",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "return (c>='0'&&c<='9')||(c>='a'&&c<='f');",
+      "replace": "return (c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F');"
+    },
+    {
+      "id": "settings-path-hex",
+      "check": "a device ID is hexadecimal",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "return (c>='0'&&c<='9')||(c>='a'&&c<='f');",
+      "replace": "return (c>='0'&&c<='9')||(c>='a'&&c<='z');"
+    },
+    {
+      "id": "settings-path-zero",
+      "check": "a device ID is not zero",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "||id==std::string(32,'0'))return {};",
+      "replace": ")return {};"
+    },
+    {
+      "id": "cohort-not-administrative",
+      "check": "update status is an administration path",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "for(const auto* exact:{\"/api/system\",\"/api/config\",\"/api/updates/cohort\"})",
+      "replace": "for(const auto* exact:{\"/api/system\",\"/api/config\"})"
+    },
+    {
+      "id": "operations-not-administrative",
+      "check": "operations are administration paths",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "\"/api/membership/\",\"/api/operations/\",\"/api/replacements/\"",
+      "replace": "\"/api/membership/\",\"/api/replacements/\""
+    },
+    {
+      "id": "api-prefix-administrative",
+      "check": "only administration prefixes are administration paths",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "for(const auto* prefix:{\"/api/devices/\",",
+      "replace": "for(const auto* prefix:{\"/api/\","
+    },
+    {
+      "id": "prefix-matched-anywhere",
+      "check": "an administration prefix starts the path",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(path.rfind(prefix,0)==0)return true;",
+      "replace": "if(path.find(prefix)!=std::string::npos)return true;"
+    },
+    {
+      "id": "exact-path-prefix",
+      "check": "administration exact paths match exactly",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "for(const auto* exact:{\"/api/system\",\"/api/config\",\"/api/updates/cohort\"})if(path==exact)return true;",
+      "replace": "for(const auto* exact:{\"/api/system\",\"/api/config\",\"/api/updates/cohort\"})if(path.rfind(exact,0)==0)return true;"
+    },
+    {
+      "id": "body-before-route",
+      "check": "an unknown change is refused before its body is read",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "const auto fields=request_fields(path);if(!fields){result=error(req,\"not_found\",\"Unknown operation.\",\"404 Not Found\");return true;}\n    std::string data;if(!web::body(req,data)){result=ESP_FAIL;return true;}",
+      "replace": "std::string data;if(!web::body(req,data)){result=ESP_FAIL;return true;}\n    const auto fields=request_fields(path);if(!fields){result=error(req,\"not_found\",\"Unknown operation.\",\"404 Not Found\");return true;}"
+    },
+    {
+      "id": "other-methods-as-post",
+      "check": "only GET and POST are served",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(req->method!=HTTP_POST){result=error(req,\"method_not_allowed\"",
+      "replace": "if(false){result=error(req,\"method_not_allowed\""
+    },
+    {
+      "id": "cohort-not-read",
+      "check": "GET /api/updates/cohort reports update status",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "if(path==\"/api/updates/cohort\"){result=web::json(req,system_services::updates::cohort_status_json());return true;}",
+      "replace": ""
+    },
+    {
+      "id": "unknown-read-ok",
+      "check": "an unknown read is not found",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "result=error(req,\"not_found\",\"Unknown operation.\",\"404 Not Found\");return true;\n    }\n    if(req->method!=HTTP_POST)",
+      "replace": "result=web::json(req,\"{}\");return true;\n    }\n    if(req->method!=HTTP_POST)"
+    },
+    {
+      "id": "roster-without-main",
+      "check": "the main counts among the supported Amity devices",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "cJSON_AddNumberToObject(capabilities,\"supported_octopuses\",amity::consortium::maximum_roster_peers+1);",
+      "replace": "cJSON_AddNumberToObject(capabilities,\"supported_octopuses\",amity::consortium::maximum_roster_peers);"
+    },
+    {
+      "id": "snapshot-mode",
+      "check": "a loaded coordinator reports coordinator mode",
+      "file": "components/web_admin/system_admin.cpp",
+      "find": "configuration_is_passive()?\"passive\":active?\"coordinator\":\"configuration_pending\"",
+      "replace": "configuration_is_passive()?\"passive\":\"configuration_pending\""
+    }
+  ]
+}
