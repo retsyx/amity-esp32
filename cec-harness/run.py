@@ -27,6 +27,7 @@ from functional_tests.hdmi_scan import test_hdmi_scan
 from functional_tests.usb_reboot import test_usb_reboot
 from functional_tests.http_redirect import test_http_redirect
 from functional_tests.member_reboot import test_activity_member_reboot
+from functional_tests.main_reboot import test_activity_main_reboot
 from functional_tests.hostname import test_hostname_local, test_hostname_consortium
 from functional_tests.firmware_upgrade import test_firmware_upgrade, test_firmware_upgrade_main4
 from functional_tests.source_theft import test_source_theft, test_source_theft_isolated
@@ -45,6 +46,7 @@ if __name__ == "__main__":
                            "matter": (test_matter_accessory_local, test_matter_accessory_remote),
                            "homekit": (test_homekit_accessory_local, test_homekit_accessory_remote),
                            "activity_member_reboot": test_activity_member_reboot,
+                           "activity_main_reboot": test_activity_main_reboot,
                            "activity": (test_activity, test_activity_without_status_replies, test_activity_no_display,
                                         test_activity_without_receiver, test_activity_without_receiver_secondary,
                                         test_activity_nondefault_inputs,

@@ -74,6 +74,10 @@ explicitly; see [Run functional tests](#run-functional-tests) and
 - `functional_tests/member_reboot.py` (`--test activity_member_reboot`): reboots
   a member during playback, checks uninterrupted selection, equipment power and
   routing, then verifies fresh member key commands without restarting the activity.
+- `functional_tests/main_reboot.py` (`--test activity_main_reboot`): reboots only
+  the main during playback whose AVR and source a member controls. The member
+  must send nothing and every member adapter must then act on no current
+  activity; see [Main reboot during playback](#main-reboot-during-playback).
 - `functional_tests/activity.py`: creates an activity from that scan, starts it,
   repairs the same activity after a power/input disturbance, then verifies
   standby using physical component power commands. It checks that the selected
@@ -868,6 +872,34 @@ player at playback address 4, and the second player at tuner address 3 on the
 same back wire, with distinct physical addresses `1.1.0.0` and `1.2.0.0`.
 Claim failures remain explicit; the backend does not retry using another type.
 
+## Main reboot during playback
+
+`functional_tests/main_reboot.py` adds `amity-dut-4` to the original main
+`amity-dut`. The TV connects to the main's tentacle 0/front; the AVR's output
+reaches that tentacle's back without CEC. AVR inputs 2 and 3 attach to the
+member's tentacles 0 and 1, selected as `1.2.0.0` and `1.3.0.0` through the
+adapter settings, with a game console and a movie player behind them. The
+member controls the AVR and both sources; the main owns only the TV. Every
+other wired member adapter holds a TV and a player that no activity uses.
+
+The movie activity must deliver fresh power and routing, and its player's own
+Active Source must cause no Standby. `MainReboot` then resets only the main
+over USB. The main must return on a new boot with nothing current, the same
+roster and member boot, and unchanged configuration, activities and adapter
+settings. From the reset until three seconds after those checks, original
+frames on every member wire must contain nothing from the member, and the
+booting main must not command its TV. Every device keeps its power and input.
+Only then does a fresh scan move the fixture's main boot proofs.
+
+With nothing current, a source announcing itself on each member adapter,
+including the movie's player, must receive Standby broadcast on both wires of
+that adapter, and then nothing else from any Amity for three seconds. The new
+boot's first selection, the game activity, starts from no activity: it powers
+on and routes all of its equipment and sends nothing to the movie player's
+adapter. Selecting the movie again must complete the console's Standby before
+the player's power-on and routing, with no power command to the shared AVR or
+TV. Select `--test activity_main_reboot`; it also runs in `--test all`.
+
 ## Dual-display activity scenario
 
 `functional_tests/dual_display.py` uses `amity-dut` as the original main and
@@ -1283,7 +1315,8 @@ From the checkout root **on the Pi**:
 
 The default remains `hdmi_scan`. Select `--test usb_reboot` for a quick main-board
 USB reboot and persistence check, `--test activity_member_reboot` for playback
-continuity through a member reboot, or `--test activity` for the activity
+continuity through a member reboot, `--test activity_main_reboot` for members
+adopting no activity when only the main reboots, or `--test activity` for the activity
 power-cycle/repair, receiver-free TV audio, nondefault HDMI inputs, passive standby
 discovery, explicit switch-input, two manual-component,
 same-name devices across owners and adapters,
