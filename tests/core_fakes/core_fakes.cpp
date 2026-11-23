@@ -332,6 +332,24 @@ esp_app_desc_t description = [] {
 std::mutex shutdown_mutex;
 std::vector<shutdown_handler_t> shutdown_list;
 
+// A scripted failure that nothing used means the scenario never took the
+// path it meant to fail, so its checks could pass without it.
+const amity_test::Finisher scripted_failures_used([] {
+    std::string unused;
+    {
+        std::lock_guard<std::mutex> lock(state);
+        if (task_failures) unused += " task creations";
+        if (queue_failures) unused += " queue creations";
+        if (timer_creation_failures) unused += " timer creations";
+        if (timer_start_failures) unused += " timer starts";
+    }
+    {
+        std::lock_guard<std::mutex> lock(heap().mutex);
+        if (heap().failures) unused += " allocations";
+    }
+    if (!unused.empty()) fail("scripted failures were never used:" + unused);
+});
+
 }  // namespace
 
 namespace amity_fake {

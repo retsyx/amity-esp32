@@ -36,6 +36,17 @@ void threads() {
 
 void no_checks() {}
 
+bool unused_input = false;
+const amity_test::Finisher input_used([] {
+    if (unused_input) amity_test::fail(__FILE__, __LINE__, "a finisher found unused input");
+});
+
+// A finisher fails a scenario whose own CHECKs passed.
+void finisher_failure() {
+    CHECK(true);
+    unused_input = true;
+}
+
 // Had the failed CHECK not ended the process, the scenario would pass with one CHECK.
 void failed_check() {
     const int value = 2;
@@ -52,5 +63,6 @@ int main(int argc, char **argv) {
         {"threads", threads},
         {"no-checks", no_checks},
         {"failed-check", failed_check},
+        {"finisher-failure", finisher_failure},
     });
 }

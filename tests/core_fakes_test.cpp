@@ -358,6 +358,13 @@ void critical_sections() {
     CHECK(xPortInIsrContext() == pdTRUE);
 }
 
+// A scripted failure that nothing used fails the scenario once it returns.
+void unused_failure() {
+    amity_fake::fail_task_creations(1);
+    amity_fake::fail_allocations(2);
+    CHECK(heap_caps_malloc(8, MALLOC_CAP_8BIT) == nullptr);
+}
+
 // Inside a critical section a FreeRTOS call that need not wait still works,
 // but one that may wait fails the scenario, even when it would not have to.
 void wait_in_critical_section() {
@@ -408,5 +415,6 @@ int main(int argc, char **argv) {
                             {"seam-behaviour", seam_behaviour},
                             {"critical-sections", critical_sections},
                             {"wait-in-critical-section", wait_in_critical_section},
+                            {"unused-failure", unused_failure},
                             {"app-description", app_description}});
 }

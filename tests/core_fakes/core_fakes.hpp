@@ -35,7 +35,8 @@ void advance_ms(int64_t milliseconds);
 unsigned clock_reads();
 
 // The next count esp_timer_create calls fail with ESP_ERR_NO_MEM, or
-// esp_timer_start calls with ESP_FAIL.
+// esp_timer_start calls with ESP_FAIL. A scenario fails if any scripted failure
+// here or below is left unused when it returns.
 void fail_timer_creations(unsigned count);
 void fail_timer_starts(unsigned count);
 // Timers created and not yet deleted.

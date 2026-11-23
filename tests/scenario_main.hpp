@@ -20,11 +20,14 @@
 // the CMake list and the table name the same scenarios. `<name> --list` prints
 // the table. A scenario fails when it is unknown, when a CHECK fails, and when
 // it ran no CHECK at all, so a scenario that dispatches nowhere cannot pass.
+// After a scenario returns, each registered Finisher runs; a fake registers one
+// to fail a scenario that left scripted input unused.
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <vector>
 
 namespace amity_test {
 
@@ -37,6 +40,19 @@ struct Scenario {
 inline std::atomic<unsigned long> checks{0};
 
 inline void checked() { checks.fetch_add(1, std::memory_order_relaxed); }
+
+// Checks that run, in the order they were registered, after each scenario
+// that returns. A check ends the scenario with fail(); it does not CHECK, so it
+// cannot make a scenario that ran no CHECK pass.
+using Finish = void (*)();
+inline std::vector<Finish> &finishers() {
+    static std::vector<Finish> list;
+    return list;
+}
+// Registers a check from a namespace-scope object.
+struct Finisher {
+    explicit Finisher(Finish check) { finishers().push_back(check); }
+};
 
 // Reports a failure and ends the process at once, from any thread: destructors
 // and exit handlers would run on state the failure left inconsistent.
@@ -105,6 +121,7 @@ inline int run(int argc, char **argv, std::initializer_list<Scenario> scenarios)
         std::fprintf(stderr, "scenario '%s' ran no CHECK\n", scenario->name);
         return 1;
     }
+    for (const Finish finish : finishers()) finish();
     return 0;
 }
 

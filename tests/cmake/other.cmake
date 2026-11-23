@@ -178,15 +178,17 @@ if(AMITY_TEST_TIER STREQUAL standalone)
     amity_test(scenario_main_test PTHREAD RACE
         SOURCES "${T}/scenario_main_test.cpp"
         REGISTRY
-        SCENARIOS checks threads no-checks failed-check)
+        SCENARIOS checks threads no-checks failed-check finisher-failure)
     amity_command_test(scenario_main_test.unknown-scenario scenario_main_test unknown)
     amity_command_test(scenario_main_test.unregistered-scenario
-        scenario_main_test --verify-scenarios checks threads no-checks)
+        scenario_main_test --verify-scenarios checks threads no-checks failed-check)
     amity_command_test(scenario_main_test.missing-scenario
-        scenario_main_test --verify-scenarios checks threads no-checks failed-check missing)
+        scenario_main_test --verify-scenarios checks threads no-checks failed-check finisher-failure missing)
     set_tests_properties(scenario_main_test.no-checks scenario_main_test.failed-check
         scenario_main_test.unknown-scenario scenario_main_test.unregistered-scenario
         scenario_main_test.missing-scenario PROPERTIES WILL_FAIL TRUE)
+    set_tests_properties(scenario_main_test.finisher-failure PROPERTIES
+        PASS_REGULAR_EXPRESSION "a finisher found unused input")
 
     # Shared SDK fakes. The scenarios with a pass expression are the cases that must fail.
     amity_test(core_fakes_test PTHREAD RACE
@@ -197,7 +199,7 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         SCENARIOS clock-timers periodic-timer timer-failures delay-leave task-records task-return
             task-caps-mismatch static-queue queue-timeouts semaphores mutex-ownership timer-wakes-wait
             blocking-threads endless-wait notifications logs restart-and-checks heap strict-seam
-            seam-behaviour critical-sections wait-in-critical-section app-description)
+            seam-behaviour critical-sections wait-in-critical-section unused-failure app-description)
     set_tests_properties(core_fakes_test.task-return PROPERTIES
         PASS_REGULAR_EXPRESSION "task returns returned from its function without deleting itself")
     set_tests_properties(core_fakes_test.task-caps-mismatch PROPERTIES
@@ -208,6 +210,8 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         PASS_REGULAR_EXPRESSION "seam heap_caps_get_free_size was called without a behaviour")
     set_tests_properties(core_fakes_test.wait-in-critical-section PROPERTIES
         PASS_REGULAR_EXPRESSION "xSemaphoreTake with a wait inside a critical section")
+    set_tests_properties(core_fakes_test.unused-failure PROPERTIES
+        PASS_REGULAR_EXPRESSION "scripted failures were never used: task creations allocations")
     amity_test(httpd_fake_test
         SOURCES "${T}/httpd_fake_test.cpp"
         INCLUDES "${T}/core_fakes" "${T}/web_request_fakes"
