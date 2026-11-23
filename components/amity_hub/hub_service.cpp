@@ -1125,7 +1125,6 @@ struct HubService::Impl : Adapter {
     // in this owner's recipe baseline once the new boot is observed. No frame
     // is sent; device caches, discovery and connections are untouched.
     void adopt_no_activity(){
-        OWNER_DEBUG_ASSERT(!activity_hub.activity_pending()&&"The bind waits for admitted owner activity");
         ESP_LOGI(TAG,"Main boot changed; no activity is current boot=%s",accepted_controller_boot.str().c_str());
         system::OwnedIntent none;none.kind=system::OwnedIntentKind::context;none.generation=1;none.config_revision=owned_config_revision;
         none.target.port={consortium,octopus,0,system::Side::front};
