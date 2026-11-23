@@ -206,6 +206,17 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         PASS_REGULAR_EXPRESSION "an endless wait on a semaphore that nothing in this thread can end")
     set_tests_properties(core_fakes_test.strict-seam PROPERTIES
         PASS_REGULAR_EXPRESSION "seam heap_caps_get_free_size was called without a behaviour")
+    amity_test(httpd_fake_test
+        SOURCES "${T}/httpd_fake_test.cpp"
+        INCLUDES "${T}/core_fakes" "${T}/web_request_fakes"
+        LIBS httpd_fake
+        REGISTRY
+        SCENARIOS request-reads header-lookup response-head chunked send-after-send asynchronous
+            complete-original handlers wildcard-seam)
+    set_tests_properties(httpd_fake_test.send-after-send PROPERTIES
+        PASS_REGULAR_EXPRESSION "httpd_resp_send after the response head was sent")
+    set_tests_properties(httpd_fake_test.complete-original PROPERTIES
+        PASS_REGULAR_EXPRESSION "httpd_req_async_handler_complete of a request that is not an asynchronous copy")
 
     # Python tests that read code from several areas
     amity_python_tests(
