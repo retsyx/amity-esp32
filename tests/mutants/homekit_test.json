@@ -1,0 +1,984 @@
+{
+  "ctest": "^(homekit_test\\.|homekit_worker_test\\.py$)",
+  "targets": [
+    "homekit_test"
+  ],
+  "baseline": {
+    "ctest": "^(homekit_worker_test|controller_integration_test)\\.py$"
+  },
+  "mutants": [
+    {
+      "id": "stub-worker_loop-return",
+      "check": "stub: early return from worker_loop()",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "void worker_loop(){",
+      "replace": "void worker_loop(){ return;"
+    },
+    {
+      "id": "stub-worker-return",
+      "check": "stub: early return from worker()",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "void worker(void *){",
+      "replace": "void worker(void *){ return;"
+    },
+    {
+      "id": "stub-submit-fail",
+      "check": "stub: early return from submit()",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "esp_err_t submit(Command command){",
+      "replace": "esp_err_t submit(Command command){ return ESP_FAIL;"
+    },
+    {
+      "id": "stub-start-fail",
+      "check": "stub: early return from start()",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "esp_err_t start(amity::SystemControl &service,const amity_matter_callbacks_t &handlers){",
+      "replace": "esp_err_t start(amity::SystemControl &service,const amity_matter_callbacks_t &handlers){ return ESP_FAIL;"
+    },
+    {
+      "id": "stub-stop-fail",
+      "check": "stub: early return from stop()",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "esp_err_t stop(){",
+      "replace": "esp_err_t stop(){ return ESP_FAIL;"
+    },
+    {
+      "id": "stub-open_pairing-fail",
+      "check": "stub: early return from open_pairing()",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "esp_err_t open_pairing(){",
+      "replace": "esp_err_t open_pairing(){ return ESP_FAIL;"
+    },
+    {
+      "id": "stub-close_pairing-fail",
+      "check": "stub: early return from close_pairing()",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "esp_err_t close_pairing(){",
+      "replace": "esp_err_t close_pairing(){ return ESP_FAIL;"
+    },
+    {
+      "id": "stub-remove_pairings-fail",
+      "check": "stub: early return from remove_pairings()",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "esp_err_t remove_pairings(){",
+      "replace": "esp_err_t remove_pairings(){ return ESP_FAIL;"
+    },
+    {
+      "id": "stub-refresh_remote_battery-return",
+      "check": "stub: early return from refresh_remote_battery()",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "void refresh_remote_battery(){",
+      "replace": "void refresh_remote_battery(){ return;"
+    },
+    {
+      "id": "start-second-allowed",
+      "check": "a second start is refused",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(disabled.load()||status_lock)return ESP_ERR_INVALID_STATE;",
+      "replace": "if(disabled.load())return ESP_ERR_INVALID_STATE;"
+    },
+    {
+      "id": "start-after-stop",
+      "check": "stop() before start() disables HomeKit for good",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(disabled.load()||status_lock)return ESP_ERR_INVALID_STATE;",
+      "replace": "if(status_lock)return ESP_ERR_INVALID_STATE;"
+    },
+    {
+      "id": "start-hub-dropped",
+      "check": "the worker uses the hub start() was given",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "hub=&service;callbacks=handlers;",
+      "replace": "hub=nullptr;(void)service;callbacks=handlers;"
+    },
+    {
+      "id": "start-callbacks-dropped",
+      "check": "writes reach the callbacks start() was given",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "hub=&service;callbacks=handlers;",
+      "replace": "hub=&service;callbacks={};(void)handlers;"
+    },
+    {
+      "id": "start-queue-two",
+      "check": "the command queue holds one command",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "commands=xQueueCreate(1,sizeof(Command));",
+      "replace": "commands=xQueueCreate(2,sizeof(Command));"
+    },
+    {
+      "id": "start-init-error",
+      "check": "a failed hap_amity_init fails start() with ESP_ERR_NO_MEM",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "hap_amity_init(device_settings::hostname())!=HAP_SUCCESS)return ESP_ERR_NO_MEM;",
+      "replace": "hap_amity_init(device_settings::hostname())!=HAP_SUCCESS)return ESP_FAIL;"
+    },
+    {
+      "id": "start-task-name",
+      "check": "the task is named homekit",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "xTaskCreateWithCaps(worker,\"homekit\",8192",
+      "replace": "xTaskCreateWithCaps(worker,\"hap\",8192"
+    },
+    {
+      "id": "start-stack-8191",
+      "check": "the task has an 8192-byte stack",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "\"homekit\",8192,nullptr,3",
+      "replace": "\"homekit\",8191,nullptr,3"
+    },
+    {
+      "id": "start-priority-2",
+      "check": "the task runs at priority 3",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "\"homekit\",8192,nullptr,3",
+      "replace": "\"homekit\",8192,nullptr,2"
+    },
+    {
+      "id": "start-stack-internal",
+      "check": "the stack is in PSRAM",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "nullptr,3,nullptr,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)",
+      "replace": "nullptr,3,nullptr,MALLOC_CAP_8BIT)"
+    },
+    {
+      "id": "start-task-error",
+      "check": "a task that cannot be created fails start() with ESP_ERR_NO_MEM",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS)return ESP_ERR_NO_MEM;",
+      "replace": "MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS)return ESP_FAIL;"
+    },
+    {
+      "id": "start-wait-29990",
+      "check": "start() waits 30 seconds for the worker",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "pdMS_TO_TICKS(30000)",
+      "replace": "pdMS_TO_TICKS(29990)"
+    },
+    {
+      "id": "start-no-wait",
+      "check": "start() returns only after the worker started",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(xSemaphoreTake(startup_ready,pdMS_TO_TICKS(30000))!=pdTRUE)return ESP_ERR_TIMEOUT;",
+      "replace": ""
+    },
+    {
+      "id": "start-timeout-error",
+      "check": "a worker that never starts fails start() with ESP_ERR_TIMEOUT",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "!=pdTRUE)return ESP_ERR_TIMEOUT;",
+      "replace": "!=pdTRUE)return ESP_FAIL;"
+    },
+    {
+      "id": "start-result-dropped",
+      "check": "start() returns the worker's startup result",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "return startup_result;\n}",
+      "replace": "return ESP_OK;\n}"
+    },
+    {
+      "id": "stop-not-fenced",
+      "check": "stop() disables HomeKit",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "disabled.store(true); // fence",
+      "replace": "disabled.store(false); // fence"
+    },
+    {
+      "id": "stop-before-start",
+      "check": "stop() before start() does not touch the SDK",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(!status_lock)return ESP_OK;\n    const auto result=hap_amity_stop()",
+      "replace": "const auto result=hap_amity_stop()"
+    },
+    {
+      "id": "stop-result-ignored",
+      "check": "a failed SDK stop is reported",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "hap_amity_stop()==HAP_SUCCESS?ESP_OK:ESP_FAIL;",
+      "replace": "hap_amity_stop()==HAP_SUCCESS?ESP_OK:ESP_OK;"
+    },
+    {
+      "id": "stop-always-stopped",
+      "check": "a failed SDK stop leaves HomeKit running",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "{HapLock lock;deadline=0;if(result==ESP_OK)running=false;}",
+      "replace": "{HapLock lock;deadline=0;running=false;}"
+    },
+    {
+      "id": "stop-never-stopped",
+      "check": "a successful SDK stop ends running",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "{HapLock lock;deadline=0;if(result==ESP_OK)running=false;}",
+      "replace": "{HapLock lock;deadline=0;}"
+    },
+    {
+      "id": "stop-under-hap-lock",
+      "check": "the SDK stop runs without the HAP lock",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "const auto result=hap_amity_stop()==HAP_SUCCESS?ESP_OK:ESP_FAIL;",
+      "replace": "HapLock held;const auto result=hap_amity_stop()==HAP_SUCCESS?ESP_OK:ESP_FAIL;"
+    },
+    {
+      "id": "stop-keeps-busy",
+      "check": "stop() clears busy",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "current_status.started=current_status.available=current_status.pairing=current_status.busy=false;",
+      "replace": "current_status.started=current_status.available=current_status.pairing=false;"
+    },
+    {
+      "id": "stop-error-dropped",
+      "check": "stop() publishes its result",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "current_status.error=result;published_deadline=0;",
+      "replace": "published_deadline=0;"
+    },
+    {
+      "id": "stop-keeps-codes",
+      "check": "stop() clears the published codes",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "published_deadline=0;memset(current_status.manual_code,0,sizeof(current_status.manual_code));memset(current_status.qr_payload,0,sizeof(current_status.qr_payload));}",
+      "replace": "published_deadline=0;}"
+    },
+    {
+      "id": "submit-after-stop",
+      "check": "commands are refused after stop()",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(disabled.load()||!status_lock||!commands)return ESP_ERR_INVALID_STATE;",
+      "replace": "if(!status_lock||!commands)return ESP_ERR_INVALID_STATE;"
+    },
+    {
+      "id": "submit-while-busy",
+      "check": "a command is refused while another is pending",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "StatusLock lock;if(current_status.busy)return ESP_ERR_INVALID_STATE;",
+      "replace": "StatusLock lock;"
+    },
+    {
+      "id": "submit-open-unavailable",
+      "check": "Open needs the network",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "(!current_status.available||current_status.paired))return ESP_ERR_INVALID_STATE;",
+      "replace": "(current_status.paired))return ESP_ERR_INVALID_STATE;"
+    },
+    {
+      "id": "submit-open-paired",
+      "check": "Open is refused once a controller is paired",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "(!current_status.available||current_status.paired))return ESP_ERR_INVALID_STATE;",
+      "replace": "(!current_status.available))return ESP_ERR_INVALID_STATE;"
+    },
+    {
+      "id": "submit-not-busy",
+      "check": "a submitted command marks HomeKit busy",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "current_status.busy=true;current_status.error=ESP_OK;",
+      "replace": "current_status.busy=false;current_status.error=ESP_OK;"
+    },
+    {
+      "id": "submit-keeps-error",
+      "check": "a new command clears the previous error",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "current_status.busy=true;current_status.error=ESP_OK;",
+      "replace": "current_status.busy=true;"
+    },
+    {
+      "id": "open-sends-close",
+      "check": "open_pairing() submits Open",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "return submit(Command::Open);",
+      "replace": "return submit(Command::Close);"
+    },
+    {
+      "id": "close-sends-remove",
+      "check": "close_pairing() submits Close",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "return submit(Command::Close);",
+      "replace": "return submit(Command::Remove);"
+    },
+    {
+      "id": "remove-sends-close",
+      "check": "remove_pairings() submits Remove",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "return submit(Command::Remove);",
+      "replace": "return submit(Command::Close);"
+    },
+    {
+      "id": "loop-restore-inverted",
+      "check": "a saved setup is restored at startup",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(saved==ESP_OK){HapLock lock;startup_result=initialize(record);",
+      "replace": "if(saved!=ESP_OK){HapLock lock;startup_result=initialize(record);"
+    },
+    {
+      "id": "loop-restore-result-dropped",
+      "check": "a saved setup HomeKit cannot start with fails start()",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "startup_result=initialize(record);",
+      "replace": "initialize(record);"
+    },
+    {
+      "id": "loop-read-error-dropped",
+      "check": "a failed read of the saved setup fails start()",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "else if(saved!=ESP_ERR_NVS_NOT_FOUND)startup_result=saved;",
+      "replace": "else if(false)startup_result=saved;"
+    },
+    {
+      "id": "loop-no-startup-signal",
+      "check": "the worker signals its startup",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "xSemaphoreGive(startup_ready);",
+      "replace": ""
+    },
+    {
+      "id": "loop-wait-2000",
+      "check": "a pass waits a second for a command",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "pdMS_TO_TICKS(1000)",
+      "replace": "pdMS_TO_TICKS(2000)"
+    },
+    {
+      "id": "loop-disabled-ignored",
+      "check": "after stop() a queued command is ignored",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(disabled.load()){publish_status(false);",
+      "replace": "if(false){publish_status(false);"
+    },
+    {
+      "id": "loop-open-unavailable",
+      "check": "an Open without the network is refused",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(!available)error=ESP_ERR_INVALID_STATE;",
+      "replace": "if(false)error=ESP_ERR_INVALID_STATE;"
+    },
+    {
+      "id": "loop-open-paired",
+      "check": "an Open once a controller is paired is refused",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "else if(initialized&&hap_get_paired_controller_count()>0)error=ESP_ERR_INVALID_STATE;",
+      "replace": "else if(false)error=ESP_ERR_INVALID_STATE;"
+    },
+    {
+      "id": "loop-deadline-short",
+      "check": "pairing stays open 300 seconds",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "deadline=esp_timer_get_time()+pairing_duration;",
+      "replace": "deadline=esp_timer_get_time()+pairing_duration-1;"
+    },
+    {
+      "id": "pairing-duration-299",
+      "check": "pairing stays open 300 seconds",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "pairing_duration=300LL*1000000;",
+      "replace": "pairing_duration=299LL*1000000;"
+    },
+    {
+      "id": "loop-deadline-not-shared",
+      "check": "the pairing deadline goes to the SDK",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "hap_amity_set_pairing_deadline(deadline);error=initialize(setup);",
+      "replace": "error=initialize(setup);"
+    },
+    {
+      "id": "loop-payload-wac",
+      "check": "the setup payload has no Wi-Fi accessory configuration",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "esp_hap_get_setup_payload(code,id,false,television_category);",
+      "replace": "esp_hap_get_setup_payload(code,id,true,television_category);"
+    },
+    {
+      "id": "loop-payload-failure-ignored",
+      "check": "a failed setup payload is reported",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(!qr)error=ESP_ERR_NO_MEM;",
+      "replace": "if(false)error=ESP_ERR_NO_MEM;"
+    },
+    {
+      "id": "loop-code-not-published",
+      "check": "the setup code is published",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "sizeof(current_status.manual_code),\"%s\",code);",
+      "replace": "sizeof(current_status.manual_code),\"%s\",\"\");"
+    },
+    {
+      "id": "loop-qr-not-published",
+      "check": "the setup payload is published",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "sizeof(current_status.qr_payload),\"%s\",qr);",
+      "replace": "sizeof(current_status.qr_payload),\"%s\",\"\");"
+    },
+    {
+      "id": "loop-open-no-refresh",
+      "check": "Open refreshes discovery",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(error==ESP_OK&&hap_amity_refresh_mdns()!=HAP_SUCCESS)error=ESP_FAIL;",
+      "replace": "if(false&&hap_amity_refresh_mdns()!=HAP_SUCCESS)error=ESP_FAIL;"
+    },
+    {
+      "id": "loop-refresh-failure-ignored",
+      "check": "a failed discovery refresh is reported",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "hap_amity_refresh_mdns()!=HAP_SUCCESS)error=ESP_FAIL;",
+      "replace": "hap_amity_refresh_mdns()!=HAP_SUCCESS)error=ESP_OK;"
+    },
+    {
+      "id": "loop-close-keeps-deadline",
+      "check": "Close and Remove end the pairing window",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "} else {\n                    deadline=0;hap_amity_set_pairing_deadline(0);",
+      "replace": "} else {\n                    hap_amity_set_pairing_deadline(0);"
+    },
+    {
+      "id": "loop-close-deadline-not-shared",
+      "check": "Close and Remove clear the SDK deadline",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "} else {\n                    deadline=0;hap_amity_set_pairing_deadline(0);",
+      "replace": "} else {\n                    deadline=0;"
+    },
+    {
+      "id": "loop-remove-as-close",
+      "check": "Remove removes the pairings",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(command==Command::Remove)error=hap_amity_remove_pairings()",
+      "replace": "if(command==Command::Close)error=hap_amity_remove_pairings()"
+    },
+    {
+      "id": "loop-close-no-refresh",
+      "check": "Close refreshes discovery",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "else error=hap_amity_refresh_mdns()==HAP_SUCCESS?ESP_OK:ESP_FAIL;",
+      "replace": "else error=ESP_OK;"
+    },
+    {
+      "id": "loop-expiry-boundary",
+      "check": "the window closes when its deadline is reached",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(deadline&&(deadline<=esp_timer_get_time()||",
+      "replace": "if(deadline&&(deadline<esp_timer_get_time()||"
+    },
+    {
+      "id": "loop-expiry-paired-ignored",
+      "check": "a paired controller closes the window",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "(initialized&&hap_get_paired_controller_count()>0)||error!=ESP_OK)){",
+      "replace": "(false)||error!=ESP_OK)){"
+    },
+    {
+      "id": "loop-expiry-error-ignored",
+      "check": "a failed Open closes the window it opened",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "(initialized&&hap_get_paired_controller_count()>0)||error!=ESP_OK)){",
+      "replace": "(initialized&&hap_get_paired_controller_count()>0))){"
+    },
+    {
+      "id": "loop-expiry-no-refresh",
+      "check": "a closed window refreshes discovery",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "deadline=0;hap_amity_set_pairing_deadline(0);hap_amity_refresh_mdns();",
+      "replace": "deadline=0;hap_amity_set_pairing_deadline(0);"
+    },
+    {
+      "id": "loop-no-refresh-while-running",
+      "check": "each pass refreshes the published values while HomeKit runs",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(running){\n                refresh_values();",
+      "replace": "if(!running){\n                refresh_values();"
+    },
+    {
+      "id": "loop-busy-kept",
+      "check": "a processed command clears busy",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "publish_status(available,error);\n            if(requested){StatusLock status;current_status.busy=false;}",
+      "replace": "publish_status(available,error);"
+    },
+    {
+      "id": "loop-error-not-logged",
+      "check": "a failed operation is logged",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(error!=ESP_OK)ESP_LOGW(tag,\"HomeKit operation: %s\",esp_err_to_name(error));",
+      "replace": "if(false)ESP_LOGW(tag,\"HomeKit operation: %s\",esp_err_to_name(error));"
+    },
+    {
+      "id": "publish-started-when-disabled",
+      "check": "nothing is published as started after stop()",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "current_status.started=running&&!disabled.load();",
+      "replace": "current_status.started=running;"
+    },
+    {
+      "id": "publish-available-when-disabled",
+      "check": "nothing is published as available after stop()",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "current_status.available=available&&!disabled.load();",
+      "replace": "current_status.available=available;"
+    },
+    {
+      "id": "publish-controllers-before-init",
+      "check": "the paired count is read only after HomeKit started",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "current_status.controllers=initialized?hap_get_paired_controller_count():0;",
+      "replace": "current_status.controllers=hap_get_paired_controller_count();"
+    },
+    {
+      "id": "publish-paired-two",
+      "check": "one paired controller counts as paired",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "current_status.paired=current_status.controllers>0;",
+      "replace": "current_status.paired=current_status.controllers>1;"
+    },
+    {
+      "id": "publish-deadline-late",
+      "check": "status() hides the window at its deadline",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "published_deadline=deadline;",
+      "replace": "published_deadline=deadline+1;"
+    },
+    {
+      "id": "publish-error-not-sticky",
+      "check": "an error stays published until the next command",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(error!=ESP_OK)current_status.error=error;",
+      "replace": "current_status.error=error;"
+    },
+    {
+      "id": "publish-keeps-codes",
+      "check": "codes are cleared when the window closes",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(!current_status.pairing){memset(current_status.manual_code",
+      "replace": "if(false){memset(current_status.manual_code"
+    },
+    {
+      "id": "status-expiry-boundary",
+      "check": "status() hides the window at its deadline",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "result.pairing&&published_deadline<=esp_timer_get_time()",
+      "replace": "result.pairing&&published_deadline<esp_timer_get_time()"
+    },
+    {
+      "id": "status-before-start",
+      "check": "status() before start() needs no lock",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(!status_lock)return {};",
+      "replace": ""
+    },
+    {
+      "id": "rename-before-start",
+      "check": "a rename before start() does not reach HomeKit",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(disabled.load()||!status_lock)return ESP_OK;",
+      "replace": "if(disabled.load())return ESP_OK;"
+    },
+    {
+      "id": "rename-after-stop",
+      "check": "a rename after stop() does not reach HomeKit",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(disabled.load()||!status_lock)return ESP_OK;",
+      "replace": "if(!status_lock)return ESP_OK;"
+    },
+    {
+      "id": "rename-result-ignored",
+      "check": "a failed rename is reported",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "hap_amity_rename_hostname(hostname)==HAP_SUCCESS?ESP_OK:ESP_FAIL;",
+      "replace": "hap_amity_rename_hostname(hostname)==HAP_SUCCESS?ESP_OK:ESP_OK;"
+    },
+    {
+      "id": "battery-known-without-connection",
+      "check": "a disconnected remote has no battery level",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "battery_known=!remote.bonded||(remote.connected&&",
+      "replace": "battery_known=!remote.bonded||(true&&"
+    },
+    {
+      "id": "battery-zero-unknown",
+      "check": "zero percent is a level",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "remote.battery_percent>=0",
+      "replace": "remote.battery_percent>0"
+    },
+    {
+      "id": "charging-known-without-connection",
+      "check": "a disconnected remote has no charging state",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "charging_known=!remote.bonded||(remote.connected&&",
+      "replace": "charging_known=!remote.bonded||(true&&"
+    },
+    {
+      "id": "charging-zero-unknown",
+      "check": "not charging is a charging state",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "remote.charging>=0",
+      "replace": "remote.charging>0"
+    },
+    {
+      "id": "battery-unpaired-99",
+      "check": "an unpaired remote reads full",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "std::clamp(remote.battery_percent,0,100):100;",
+      "replace": "std::clamp(remote.battery_percent,0,100):99;"
+    },
+    {
+      "id": "battery-unclamped",
+      "check": "a level above 100 reads 100",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "std::clamp(remote.battery_percent,0,100)",
+      "replace": "remote.battery_percent"
+    },
+    {
+      "id": "battery-low-19",
+      "check": "20 percent is low",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "percent<=20",
+      "replace": "percent<20"
+    },
+    {
+      "id": "charging-unpaired-1",
+      "check": "an unpaired remote reads not charging",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "remote.bonded?remote.charging:0",
+      "replace": "remote.bonded?remote.charging:1"
+    },
+    {
+      "id": "read-when-disabled",
+      "check": "reads after stop() report a communication error",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "int read(hap_read_data_t data[],int count,void *,void *){\n    if(disabled.load())",
+      "replace": "int read(hap_read_data_t data[],int count,void *,void *){\n    if(false)"
+    },
+    {
+      "id": "read-mute-absent-inverted",
+      "check": "mute is absent while the audio status is unknown",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "(hc==mute_char&&!audio_known)",
+      "replace": "(hc==mute_char&&audio_known)"
+    },
+    {
+      "id": "read-low-present",
+      "check": "battery low is absent with the level",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "((hc==battery_level||hc==battery_low)&&!battery_known)",
+      "replace": "((hc==battery_level)&&!battery_known)"
+    },
+    {
+      "id": "read-charging-follows-level",
+      "check": "charging is absent on its own",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "(hc==battery_charging&&!charging_known)",
+      "replace": "(hc==battery_charging&&!battery_known)"
+    },
+    {
+      "id": "write-when-disabled",
+      "check": "writes after stop() report a communication error",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "int write(hap_write_data_t data[],int count,void *,void *){\n    if(disabled.load())",
+      "replace": "int write(hap_write_data_t data[],int count,void *,void *){\n    if(false)"
+    },
+    {
+      "id": "write-power-two",
+      "check": "Active takes only 0 or 1",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "(d.val.i==0||d.val.i==1))result=callbacks.power",
+      "replace": "(d.val.i==0||d.val.i==2))result=callbacks.power"
+    },
+    {
+      "id": "write-power-inverted",
+      "check": "Active 1 turns the hub on",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "callbacks.power(d.val.i!=0,callbacks.context)",
+      "replace": "callbacks.power(d.val.i==0,callbacks.context)"
+    },
+    {
+      "id": "write-input-past-activities",
+      "check": "an input past the hub activities is refused",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "d.val.i<=static_cast<int>(hub->snapshot().activities.size())",
+      "replace": "d.val.i<=static_cast<int>(hub->snapshot().activities.size())+1"
+    },
+    {
+      "id": "write-input-off-by-one",
+      "check": "input N selects activity N-1",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "result=callbacks.activity(d.val.i-1,callbacks.context);",
+      "replace": "result=callbacks.activity(d.val.i,callbacks.context);"
+    },
+    {
+      "id": "write-mute-inverted",
+      "check": "Mute passes the written value",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "result=callbacks.mute(d.val.b,callbacks.context);",
+      "replace": "result=callbacks.mute(!d.val.b,callbacks.context);"
+    },
+    {
+      "id": "write-volume-direction",
+      "check": "Volume selector 0 steps up",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "callbacks.volume_step(d.val.i==0?1:-1,callbacks.context)",
+      "replace": "callbacks.volume_step(d.val.i==0?-1:1,callbacks.context)"
+    },
+    {
+      "id": "write-volume-range",
+      "check": "Volume selector takes only 0 or 1",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "d.hc==volume_selector&&(d.val.i==0||d.val.i==1)",
+      "replace": "d.hc==volume_selector&&(d.val.i>=0)"
+    },
+    {
+      "id": "write-information-key",
+      "check": "Information sends the root menu key",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(d.val.i==11)result=callbacks.key(0x61,callbacks.context);",
+      "replace": "if(d.val.i==11)result=callbacks.key(0x60,callbacks.context);"
+    },
+    {
+      "id": "write-key-up",
+      "check": "Arrow up sends CEC up",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "{4,0x01}",
+      "replace": "{4,0x02}"
+    },
+    {
+      "id": "write-key-play-pause",
+      "check": "Play/pause sends CEC select",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "{9,0x0d},{10,0x0d}",
+      "replace": "{9,0x0d},{10,0x0e}"
+    },
+    {
+      "id": "write-key-information-15",
+      "check": "Information (15) sends CEC display information",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "{15,0x35}",
+      "replace": "{15,0x36}"
+    },
+    {
+      "id": "write-name-64",
+      "check": "a television name is at most 63 bytes",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "d.hc==tv_name&&d.val.s&&strlen(d.val.s)>0&&strlen(d.val.s)<=63)",
+      "replace": "d.hc==tv_name&&d.val.s&&strlen(d.val.s)>0&&strlen(d.val.s)<=64)"
+    },
+    {
+      "id": "write-name-empty",
+      "check": "an empty television name is refused",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "d.hc==tv_name&&d.val.s&&strlen(d.val.s)>0&&",
+      "replace": "d.hc==tv_name&&d.val.s&&"
+    },
+    {
+      "id": "write-name-key",
+      "check": "the television name is saved under hap_name",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "config_store::write(\"hap_name\",d.val.s)",
+      "replace": "config_store::write(\"hap_title\",d.val.s)"
+    },
+    {
+      "id": "write-observed-state-updated",
+      "check": "power, input and mute show observed hub state",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(result==ESP_OK&&d.hc!=active&&d.hc!=active_input&&d.hc!=mute_char)hap_char_update_val(d.hc,&d.val);",
+      "replace": "if(result==ESP_OK)hap_char_update_val(d.hc,&d.val);"
+    },
+    {
+      "id": "write-success-not-shown",
+      "check": "an accepted value is shown",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(result==ESP_OK&&d.hc!=active&&d.hc!=active_input&&d.hc!=mute_char)hap_char_update_val(d.hc,&d.val);",
+      "replace": ""
+    },
+    {
+      "id": "initialize-notifications-15",
+      "check": "HomeKit can notify 16 characteristics at once",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "config.max_event_notif_chars=16;",
+      "replace": "config.max_event_notif_chars=15;"
+    },
+    {
+      "id": "initialize-ethernet",
+      "check": "HomeKit runs on Wi-Fi",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "hap_init(HAP_TRANSPORT_WIFI)",
+      "replace": "hap_init(HAP_TRANSPORT_ETHERNET)"
+    },
+    {
+      "id": "initialize-size-403",
+      "check": "a setup record is 404 bytes",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(record.size()!=404)return ESP_ERR_INVALID_SIZE;",
+      "replace": "if(record.size()!=403)return ESP_ERR_INVALID_SIZE;"
+    },
+    {
+      "id": "initialize-setup-id-shifted",
+      "check": "the setup ID is the record's first four bytes",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "char id[5]{};memcpy(id,record.data(),4);hap_setup_info_t setup;",
+      "replace": "char id[5]{};memcpy(id,record.data()+1,4);hap_setup_info_t setup;"
+    },
+    {
+      "id": "initialize-starts-twice",
+      "check": "HomeKit starts once",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(!running){if(hap_start()!=HAP_SUCCESS)return ESP_FAIL;running=true;}",
+      "replace": "if(true){if(hap_start()!=HAP_SUCCESS)return ESP_FAIL;running=true;}"
+    },
+    {
+      "id": "accessory-category",
+      "check": "the accessory is a television",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "television_category=static_cast<hap_cid_t>(31);",
+      "replace": "television_category=static_cast<hap_cid_t>(30);"
+    },
+    {
+      "id": "accessory-serial",
+      "check": "the serial number is the station MAC",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "\"%02X%02X%02X%02X%02X%02X\",mac[0],mac[1]",
+      "replace": "\"%02X%02X%02X%02X%02X%02X\",mac[1],mac[1]"
+    },
+    {
+      "id": "accessory-mac-type",
+      "check": "the serial number is the station MAC",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "esp_read_mac(mac,ESP_MAC_WIFI_STA);",
+      "replace": "esp_read_mac(mac,ESP_MAC_BT);"
+    },
+    {
+      "id": "accessory-default-name",
+      "check": "the television is named Amity until renamed",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "std::string name=\"Amity\",saved;",
+      "replace": "std::string name=\"Amity TV\",saved;"
+    },
+    {
+      "id": "accessory-saved-name-ignored",
+      "check": "a saved television name is used",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(config_store::read(\"hap_name\",saved)==ESP_OK&&!saved.empty())name=saved;",
+      "replace": "if(false)name=saved;"
+    },
+    {
+      "id": "accessory-input-identifier",
+      "check": "input N has identifier N+1",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "hap_char_uint32_create(text(\"E6\"),HAP_CHAR_PERM_PR,i+1)",
+      "replace": "hap_char_uint32_create(text(\"E6\"),HAP_CHAR_PERM_PR,i)"
+    },
+    {
+      "id": "accessory-input-unlinked",
+      "check": "every input is linked to the television",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "hap_acc_add_serv(accessory,service);hap_serv_link_serv(tv,service);",
+      "replace": "hap_acc_add_serv(accessory,service);"
+    },
+    {
+      "id": "accessory-primary-speaker",
+      "check": "the television is the primary service",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "hap_serv_mark_primary(tv);",
+      "replace": "hap_serv_mark_primary(speaker);"
+    },
+    {
+      "id": "accessory-remote-key-15",
+      "check": "remote keys go up to 16",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "remote_key=integer(tv,\"E1\",HAP_CHAR_PERM_PW,0,16);",
+      "replace": "remote_key=integer(tv,\"E1\",HAP_CHAR_PERM_PW,0,15);"
+    },
+    {
+      "id": "accessory-no-read-callback",
+      "check": "every service has the read callback",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "hap_serv_set_bulk_read_cb(service,read);hap_serv_set_write_cb(service,write);hap_acc_add_serv(accessory,service);",
+      "replace": "hap_serv_set_write_cb(service,write);hap_acc_add_serv(accessory,service);"
+    },
+    {
+      "id": "save-without-configuration",
+      "check": "an input edit without a saved configuration is a communication error",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(!configuration)return ESP_ERR_INVALID_STATE;\n    auto candidate=*configuration;",
+      "replace": "if(!configuration)return ESP_ERR_INVALID_ARG;\n    auto candidate=*configuration;"
+    },
+    {
+      "id": "values-mute-while-unknown",
+      "check": "mute keeps its value while the audio status is unknown",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "if(audio_known)update_bool(mute_char,s.muted);",
+      "replace": "update_bool(mute_char,s.muted);"
+    },
+    {
+      "id": "values-speaker-inactive",
+      "check": "the speaker is active with an activity",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "update(speaker_active,s.current_activity>=0);",
+      "replace": "update(speaker_active,false);"
+    },
+    {
+      "id": "pin-forbidden-12345678",
+      "check": "the setup code 123-45-678 is never used",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "pin==12345678",
+      "replace": "pin==12345677"
+    },
+    {
+      "id": "pin-forbidden-87654321",
+      "check": "the setup code 876-54-321 is never used",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "pin==87654321",
+      "replace": "pin==87654320"
+    },
+    {
+      "id": "pin-repeated-digits",
+      "check": "setup codes of one repeated digit are never used",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "pin%11111111==0",
+      "replace": "pin%11111110==0"
+    },
+    {
+      "id": "pin-range",
+      "check": "a setup code has eight digits",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "pin=esp_random()%100000000;",
+      "replace": "pin=esp_random()%1000000000;"
+    },
+    {
+      "id": "pin-format",
+      "check": "a setup code reads DDD-DD-DDD",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "snprintf(code,11,\"%03lu-%02lu-%03lu\"",
+      "replace": "snprintf(code,11,\"%03lu%02lu-%03lu\""
+    },
+    {
+      "id": "setup-id-alphabet",
+      "check": "a setup ID uses digits and capital letters",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "alphabet[esp_random()%36]",
+      "replace": "alphabet[esp_random()%35]"
+    },
+    {
+      "id": "setup-id-not-reused",
+      "check": "a saved setup keeps its setup ID",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "old.size()==404)memcpy(id,old.data(),4);",
+      "replace": "old.size()==405)memcpy(id,old.data(),4);"
+    },
+    {
+      "id": "setup-key",
+      "check": "the setup is saved under hap_setup",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "return config_store::write(\"hap_setup\",record);",
+      "replace": "return config_store::write(\"hap_setup2\",record);"
+    },
+    {
+      "id": "setup-generation-error-ignored",
+      "check": "a setup code that cannot be prepared is refused",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "const auto error=amity_homekit_generate_setup(code,&setup);if(error!=ESP_OK)return error;",
+      "replace": "const auto error=amity_homekit_generate_setup(code,&setup);(void)error;"
+    },
+    {
+      "id": "worker-deletes-before-loop",
+      "check": "the worker deletes its own task only after its work loop",
+      "file": "components/amity_homekit/homekit.cpp",
+      "find": "worker_loop();\n    vTaskDeleteWithCaps(nullptr);",
+      "replace": "vTaskDeleteWithCaps(nullptr);\n    worker_loop();"
+    }
+  ]
+}

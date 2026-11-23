@@ -1,0 +1,35 @@
+// Copyright 2026.
+// This file is part of Amity-esp32.
+// Amity-esp32 is free software: you can redistribute it and/or modify it under the terms of the
+// GNU General Public License as published by the Free Software Foundation, either version 3 of the
+// License, or (at your option) any later version.
+
+// Constants and layouts the HomeKit fakes reproduce from the pinned ESP-IDF.
+// fakes: tests/homekit_fakes tests/core_fakes
+// headers: esp_wifi.h esp_mac.h nvs.h
+// target: components/amity_homekit/homekit.cpp
+AMITY_PARITY(wifi_err_not_init, ESP_ERR_WIFI_NOT_INIT)
+AMITY_PARITY(wifi_err_conn, ESP_ERR_WIFI_CONN)
+AMITY_PARITY(wifi_err_not_connect, ESP_ERR_WIFI_NOT_CONNECT)
+AMITY_PARITY(wifi_ap_record_size, sizeof(wifi_ap_record_t))
+AMITY_PARITY(wifi_ap_record_primary, offsetof(wifi_ap_record_t, primary))
+AMITY_PARITY(wifi_ap_record_second, offsetof(wifi_ap_record_t, second))
+AMITY_PARITY(wifi_ap_record_rssi, offsetof(wifi_ap_record_t, rssi))
+AMITY_PARITY(wifi_ap_record_authmode, offsetof(wifi_ap_record_t, authmode))
+AMITY_PARITY(wifi_ap_record_ant, offsetof(wifi_ap_record_t, ant))
+AMITY_PARITY(wifi_ap_record_country, offsetof(wifi_ap_record_t, country))
+AMITY_PARITY(wifi_ap_record_he_ap, offsetof(wifi_ap_record_t, he_ap))
+AMITY_PARITY(wifi_ap_record_bandwidth, offsetof(wifi_ap_record_t, bandwidth))
+AMITY_PARITY(wifi_ap_record_vht_ch_freq2, offsetof(wifi_ap_record_t, vht_ch_freq2))
+AMITY_PARITY(wifi_country_size, sizeof(wifi_country_t))
+AMITY_PARITY(wifi_he_ap_info_size, sizeof(wifi_he_ap_info_t))
+
+AMITY_PARITY(mac_wifi_sta, ESP_MAC_WIFI_STA)
+AMITY_PARITY(mac_wifi_softap, ESP_MAC_WIFI_SOFTAP)
+AMITY_PARITY(mac_bt, ESP_MAC_BT)
+AMITY_PARITY(mac_eth, ESP_MAC_ETH)
+AMITY_PARITY(mac_efuse_ext, ESP_MAC_EFUSE_EXT)
+
+AMITY_PARITY(nvs_err_base, ESP_ERR_NVS_BASE)
+AMITY_PARITY(nvs_err_not_initialized, ESP_ERR_NVS_NOT_INITIALIZED)
+AMITY_PARITY(nvs_err_not_found, ESP_ERR_NVS_NOT_FOUND)

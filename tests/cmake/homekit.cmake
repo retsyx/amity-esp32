@@ -5,7 +5,41 @@
 # License, or (at your option) any later version.
 
 # HomeKit and the HomeKit SDK fork.
+
+# The tests that build components/amity_homekit/homekit.cpp share a recording
+# fake of the HomeKit SDK and strict seams for the rest of what it calls.
+set(homekit_includes "${T}/homekit_fakes" "${T}/core_fakes" "${T}/crypto_fakes" "${T}"
+    "${C}/amity_homekit" "${C}/amity_homekit/include" "${C}/amity_matter/include" "${C}/device_settings/include"
+    "${C}/config_store/include" "${C}/system_sync/include" "${C}/amity_hub/include" "${C}/cec/include"
+    "${C}/amity_system/include" "${C}/ble_remote/include" "${HAP}/esp_hap_core/include"
+    "${HAP}/esp_hap_apple_profiles/include")
+if(NOT TARGET homekit_harness)
+    add_library(homekit_harness OBJECT "${T}/homekit_fakes/hap_fake.cpp" "${T}/homekit_fakes/homekit_seams.cpp")
+    target_include_directories(homekit_harness PRIVATE ${homekit_includes} "${T}/fakes")
+    target_compile_options(homekit_harness PRIVATE ${amity_seam_warnings})
+    target_link_libraries(homekit_harness PRIVATE strict)
+endif()
+
 if(AMITY_TEST_TIER STREQUAL standalone)
+    amity_host_compile(homekit_host
+        SOURCES "${C}/amity_homekit/homekit.cpp"
+        INCLUDES ${homekit_includes})
+    add_library(homekit_configuration_seams OBJECT "${T}/homekit_fakes/system_configuration_seams.cpp")
+    target_include_directories(homekit_configuration_seams PRIVATE ${homekit_includes} "${T}/fakes")
+    target_compile_options(homekit_configuration_seams PRIVATE ${amity_seam_warnings})
+    target_link_libraries(homekit_configuration_seams PRIVATE strict)
+    amity_test(homekit_test PTHREAD RACE
+        SOURCES "${T}/homekit_test.cpp"
+        INCLUDES ${homekit_includes}
+        LIBS homekit_harness homekit_configuration_seams core_fakes system_control_seams hub_service_seams
+            device_settings_seams ble_remote_seams amity_model
+        REGISTRY
+        SCENARIOS start-worker init-failure task-creation-failure startup-timeout startup-error
+            startup-initialize-error stop-before-start stop-during-start restore-saved-setup accessory open-pairing
+            pairing-expiry paired-closes-window open-while-paired open-refused open-failures reopen-with-saved-setup
+            stop-clears-pairing stop-ignores-queued-open failed-stop remote-battery
+            read-values write-dispatch disabled-callbacks rename-hostname)
+
     # HomeKit SDK fork
     amity_test(homekit_input_test
         SOURCES "${T}/homekit_input_test.cpp"
