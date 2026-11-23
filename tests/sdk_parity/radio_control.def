@@ -1,0 +1,41 @@
+// Copyright 2026.
+// This file is part of Amity-esp32.
+// Amity-esp32 is free software: you can redistribute it and/or modify it under the terms of the
+// GNU General Public License as published by the Free Software Foundation, either version 3 of the
+// License, or (at your option) any later version.
+
+// The NimBLE HCI event layouts and constants, and the build configuration,
+// the radio control fakes reproduce.
+// fakes: tests/radio_control_fakes
+// headers: nimble/hci_common.h sdkconfig.h
+// target: components/radio_control/radio_control.cpp
+AMITY_PARITY(max_connections, CONFIG_BT_NIMBLE_MAX_CONNECTIONS)
+
+AMITY_PARITY(event_size, sizeof(struct ble_hci_ev))
+AMITY_PARITY(event_length_offset, offsetof(struct ble_hci_ev, length))
+AMITY_PARITY(command_complete_size, sizeof(struct ble_hci_ev_command_complete))
+AMITY_PARITY(command_complete_opcode_offset, offsetof(struct ble_hci_ev_command_complete, opcode))
+AMITY_PARITY(command_complete_status_offset, offsetof(struct ble_hci_ev_command_complete, status))
+AMITY_PARITY(disconnection_size, sizeof(struct ble_hci_ev_disconn_cmp))
+AMITY_PARITY(disconnection_handle_offset, offsetof(struct ble_hci_ev_disconn_cmp, conn_handle))
+AMITY_PARITY(connection_size, sizeof(struct ble_hci_ev_le_subev_conn_complete))
+AMITY_PARITY(connection_status_offset, offsetof(struct ble_hci_ev_le_subev_conn_complete, status))
+AMITY_PARITY(connection_handle_offset, offsetof(struct ble_hci_ev_le_subev_conn_complete, conn_handle))
+AMITY_PARITY(connection_role_offset, offsetof(struct ble_hci_ev_le_subev_conn_complete, role))
+AMITY_PARITY(enhanced_connection_size, sizeof(struct ble_hci_ev_le_subev_enh_conn_complete))
+AMITY_PARITY(enhanced_connection_handle_offset, offsetof(struct ble_hci_ev_le_subev_enh_conn_complete, conn_handle))
+AMITY_PARITY(enhanced_connection_role_offset, offsetof(struct ble_hci_ev_le_subev_enh_conn_complete, role))
+AMITY_PARITY(enhanced_connection_mca_offset, offsetof(struct ble_hci_ev_le_subev_enh_conn_complete, mca))
+
+AMITY_PARITY(evcode_disconnection, BLE_HCI_EVCODE_DISCONN_CMP)
+AMITY_PARITY(evcode_command_complete, BLE_HCI_EVCODE_COMMAND_COMPLETE)
+AMITY_PARITY(evcode_le_meta, BLE_HCI_EVCODE_LE_META)
+AMITY_PARITY(subevent_connection, BLE_HCI_LE_SUBEV_CONN_COMPLETE)
+AMITY_PARITY(subevent_connection_update, BLE_HCI_LE_SUBEV_CONN_UPD_COMPLETE)
+AMITY_PARITY(subevent_enhanced_connection, BLE_HCI_LE_SUBEV_ENH_CONN_COMPLETE)
+AMITY_PARITY(subevent_enhanced_connection_v2, BLE_HCI_LE_SUBEV_ENH_CONN_COMPLETE_V2)
+AMITY_PARITY(role_master, BLE_HCI_LE_CONN_COMPLETE_ROLE_MASTER)
+AMITY_PARITY(role_slave, BLE_HCI_LE_CONN_COMPLETE_ROLE_SLAVE)
+AMITY_PARITY(connection_handle_max, BLE_HCI_LE_CONN_HANDLE_MAX)
+AMITY_PARITY(controller_reset_opcode, BLE_HCI_OP(BLE_HCI_OGF_CTLR_BASEBAND, BLE_HCI_OCF_CB_RESET))
+AMITY_PARITY(set_advertising_enable_opcode, BLE_HCI_OP(BLE_HCI_OGF_LE, BLE_HCI_OCF_LE_SET_ADV_ENABLE))

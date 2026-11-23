@@ -1,0 +1,48 @@
+// Copyright 2026.
+// This file is part of Amity-esp32.
+// Amity-esp32 is free software: you can redistribute it and/or modify it under the terms of the
+// GNU General Public License as published by the Free Software Foundation, either version 3 of the
+// License, or (at your option) any later version.
+
+// The network commissioning driver types and the esp_wifi and esp_netif
+// layouts the CHIP fakes reproduce for the consortium network hooks. The
+// station configuration has many more fields in the SDK, so only the offsets
+// and sizes of the fields Amity reads are compared.
+// fakes: tests/amity_matter_fakes tests/core_fakes
+// headers: platform/ESP32/NetworkCommissioningDriver.h esp_wifi.h esp_netif.h
+// target: components/amity_matter/consortium_network.cpp
+AMITY_PARITY(status_size, sizeof(chip::DeviceLayer::NetworkCommissioning::Status))
+AMITY_PARITY(status_success, static_cast<int>(chip::DeviceLayer::NetworkCommissioning::Status::kSuccess))
+AMITY_PARITY(status_out_of_range, static_cast<int>(chip::DeviceLayer::NetworkCommissioning::Status::kOutOfRange))
+AMITY_PARITY(status_bounds_exceeded, static_cast<int>(chip::DeviceLayer::NetworkCommissioning::Status::kBoundsExceeded))
+AMITY_PARITY(status_network_id_not_found,
+             static_cast<int>(chip::DeviceLayer::NetworkCommissioning::Status::kNetworkIDNotFound))
+AMITY_PARITY(status_duplicate_network_id,
+             static_cast<int>(chip::DeviceLayer::NetworkCommissioning::Status::kDuplicateNetworkID))
+AMITY_PARITY(status_network_not_found, static_cast<int>(chip::DeviceLayer::NetworkCommissioning::Status::kNetworkNotFound))
+AMITY_PARITY(status_regulatory_error, static_cast<int>(chip::DeviceLayer::NetworkCommissioning::Status::kRegulatoryError))
+AMITY_PARITY(status_auth_failure, static_cast<int>(chip::DeviceLayer::NetworkCommissioning::Status::kAuthFailure))
+AMITY_PARITY(status_unsupported_security,
+             static_cast<int>(chip::DeviceLayer::NetworkCommissioning::Status::kUnsupportedSecurity))
+AMITY_PARITY(status_other_connection_failure,
+             static_cast<int>(chip::DeviceLayer::NetworkCommissioning::Status::kOtherConnectionFailure))
+AMITY_PARITY(status_ipv6_failed, static_cast<int>(chip::DeviceLayer::NetworkCommissioning::Status::kIPV6Failed))
+AMITY_PARITY(status_ip_bind_failed, static_cast<int>(chip::DeviceLayer::NetworkCommissioning::Status::kIPBindFailed))
+AMITY_PARITY(status_unknown_error, static_cast<int>(chip::DeviceLayer::NetworkCommissioning::Status::kUnknownError))
+AMITY_PARITY(max_network_id_len, chip::DeviceLayer::NetworkCommissioning::kMaxNetworkIDLen)
+AMITY_PARITY(network_id_size, sizeof(chip::DeviceLayer::NetworkCommissioning::Network::networkID))
+AMITY_PARITY(network_id_len_size, sizeof(chip::DeviceLayer::NetworkCommissioning::Network::networkIDLen))
+
+AMITY_PARITY(wifi_if_sta, WIFI_IF_STA)
+AMITY_PARITY(wifi_if_ap, WIFI_IF_AP)
+AMITY_PARITY(sta_ssid_offset, offsetof(wifi_sta_config_t, ssid))
+AMITY_PARITY(sta_ssid_size, sizeof(static_cast<wifi_sta_config_t *>(nullptr)->ssid))
+AMITY_PARITY(sta_password_offset, offsetof(wifi_sta_config_t, password))
+AMITY_PARITY(sta_password_size, sizeof(static_cast<wifi_sta_config_t *>(nullptr)->password))
+AMITY_PARITY(config_sta_offset, offsetof(wifi_config_t, sta))
+
+AMITY_PARITY(ip4_addr_size, sizeof(esp_ip4_addr_t))
+AMITY_PARITY(ip_info_size, sizeof(esp_netif_ip_info_t))
+AMITY_PARITY(ip_info_ip_offset, offsetof(esp_netif_ip_info_t, ip))
+AMITY_PARITY(ip_info_netmask_offset, offsetof(esp_netif_ip_info_t, netmask))
+AMITY_PARITY(ip_info_gw_offset, offsetof(esp_netif_ip_info_t, gw))

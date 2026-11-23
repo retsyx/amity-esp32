@@ -1,0 +1,38 @@
+// Copyright 2026.
+// This file is part of Amity-esp32.
+// Amity-esp32 is free software: you can redistribute it and/or modify it under the terms of the
+// GNU General Public License as published by the Free Software Foundation, either version 3 of the
+// License, or (at your option) any later version.
+
+// Constants and types the CHIP fakes reproduce from the pinned CHIP SDK and
+// the Amity build's configuration.
+// fakes: tests/amity_matter_fakes tests/core_fakes
+// headers: lib/core/CHIPError.h credentials/FabricTable.h system/SystemClock.h
+// target: components/amity_matter/apple_fabrics.cpp
+AMITY_PARITY(chip_error_storage_size, sizeof(CHIP_ERROR::StorageType))
+AMITY_PARITY(chip_error_format_as_string, CHIP_CONFIG_ERROR_FORMAT_AS_STRING)
+AMITY_PARITY(chip_error_format_size, sizeof(CHIP_ERROR::FormatType))
+AMITY_PARITY(chip_no_error, CHIP_NO_ERROR.AsInteger())
+AMITY_PARITY(chip_error_incorrect_state, CHIP_ERROR_INCORRECT_STATE.AsInteger())
+AMITY_PARITY(chip_error_no_memory, CHIP_ERROR_NO_MEMORY.AsInteger())
+AMITY_PARITY(chip_error_invalid_argument, CHIP_ERROR_INVALID_ARGUMENT.AsInteger())
+AMITY_PARITY(chip_error_timeout, CHIP_ERROR_TIMEOUT.AsInteger())
+AMITY_PARITY(chip_error_internal, CHIP_ERROR_INTERNAL.AsInteger())
+AMITY_PARITY(chip_error_not_found, CHIP_ERROR_NOT_FOUND.AsInteger())
+AMITY_PARITY(chip_error_busy, CHIP_ERROR_BUSY.AsInteger())
+
+AMITY_PARITY(max_fabrics, CHIP_CONFIG_MAX_FABRICS)
+AMITY_PARITY(fabric_index_size, sizeof(chip::FabricIndex))
+AMITY_PARITY(undefined_fabric_index, chip::kUndefinedFabricIndex)
+AMITY_PARITY(min_valid_fabric_index, chip::kMinValidFabricIndex)
+AMITY_PARITY(max_valid_fabric_index, chip::kMaxValidFabricIndex)
+AMITY_PARITY(vendor_id_size, sizeof(chip::VendorId))
+AMITY_PARITY(vendor_common, static_cast<unsigned>(chip::VendorId::Common))
+AMITY_PARITY(vendor_not_specified, static_cast<unsigned>(chip::VendorId::NotSpecified))
+
+AMITY_PARITY(timeout_rep_size, sizeof(chip::System::Clock::Timeout::rep))
+AMITY_PARITY(timeout_period_num, chip::System::Clock::Timeout::period::num)
+AMITY_PARITY(timeout_period_den, chip::System::Clock::Timeout::period::den)
+AMITY_PARITY(seconds16_rep_size, sizeof(chip::System::Clock::Seconds16::rep))
+AMITY_PARITY(seconds32_rep_size, sizeof(chip::System::Clock::Seconds32::rep))
+AMITY_PARITY(seconds32_period_den, chip::System::Clock::Seconds32::period::den)

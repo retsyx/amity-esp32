@@ -9,6 +9,16 @@ if(AMITY_TEST_TIER STREQUAL standalone)
     amity_test(diagnostics_test SOURCES "${T}/diagnostics_test.cpp" INCLUDES "${C}/amity_matter/include")
     amity_test(apple_fabric_cleanup_test SOURCES "${T}/apple_fabric_cleanup_test.cpp"
         INCLUDES "${C}/amity_matter/include")
+
+    # The CHIP fakes: the CHIP task and its stack lock, System Layer timers, and
+    # strict seams for the SDK calls that answer questions. Tests list
+    # matter_includes first among their INCLUDES.
+    add_library(amity_matter_fakes OBJECT "${T}/amity_matter_fakes/amity_matter_fakes.cpp")
+    target_include_directories(amity_matter_fakes PRIVATE "${T}/core_fakes" "${T}/amity_matter_fakes" "${T}")
+    target_compile_options(amity_matter_fakes PRIVATE ${amity_seam_warnings})
+    target_link_libraries(amity_matter_fakes PRIVATE strict)
+    set(matter_includes "${T}/core_fakes" "${T}/amity_matter_fakes")
+
     amity_python_tests(
         apple_fabric_lifecycle_test.py
         consortium_network_connect_test.py
