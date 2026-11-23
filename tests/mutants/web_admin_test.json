@@ -1,0 +1,523 @@
+{
+  "ctest": "^web_admin_test\\.",
+  "targets": [
+    "web_admin_test"
+  ],
+  "baseline": {
+    "ctest": "^(controller_api_surface_test|hostname_reconnect_api_test|original_controller_web_test)\\.py$",
+    "targets": []
+  },
+  "mutants": [
+    {
+      "id": "stub-response-fail",
+      "check": "stub: early return from response()",
+      "file": "components/web/request.cpp",
+      "find": "esp_err_t response(httpd_req_t *req,const char *data,size_t size) {",
+      "replace": "esp_err_t response(httpd_req_t *req,const char *data,size_t size) { return ESP_FAIL;"
+    },
+    {
+      "id": "stub-json-fail",
+      "check": "stub: early return from json()",
+      "file": "components/web/request.cpp",
+      "find": "esp_err_t json(httpd_req_t *req,const std::string &data,const char *status) {",
+      "replace": "esp_err_t json(httpd_req_t *req,const std::string &data,const char *status) { return ESP_FAIL;"
+    },
+    {
+      "id": "stub-send-fail",
+      "check": "stub: early return from send()",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "esp_err_t send(httpd_req_t *req,cJSON *root) {",
+      "replace": "esp_err_t send(httpd_req_t *req,cJSON *root) { return ESP_FAIL;"
+    },
+    {
+      "id": "stub-api-fail",
+      "check": "stub: early return from api()",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "esp_err_t api(httpd_req_t *req) {",
+      "replace": "esp_err_t api(httpd_req_t *req) { return ESP_FAIL;"
+    },
+    {
+      "id": "stub-asset_tag-empty",
+      "check": "stub: early return from asset_tag()",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "const char* asset_tag() {",
+      "replace": "const char* asset_tag() { return {};"
+    },
+    {
+      "id": "stub-asset-fail",
+      "check": "stub: early return from asset()",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "esp_err_t asset(httpd_req_t *req) {",
+      "replace": "esp_err_t asset(httpd_req_t *req) { return ESP_FAIL;"
+    },
+    {
+      "id": "stub-start-fail",
+      "check": "stub: early return from start()",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "esp_err_t start(amity::SystemControl &service,const char *hostname,const char *initial_auth) {",
+      "replace": "esp_err_t start(amity::SystemControl &service,const char *hostname,const char *initial_auth) { return ESP_FAIL;"
+    },
+    {
+      "id": "stub-stop-fail",
+      "check": "stub: early return from stop()",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "esp_err_t stop() {",
+      "replace": "esp_err_t stop() { return ESP_FAIL;"
+    },
+    {
+      "id": "ready-any-method",
+      "check": "only GET of /api/ready is public",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "if(path==\"/api/ready\"&&req->method==HTTP_GET) {",
+      "replace": "if(path==\"/api/ready\") {"
+    },
+    {
+      "id": "ready-path-prefix",
+      "check": "only the exact /api/ready path is public, without a query string",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "if(path==\"/api/ready\"&&req->method==HTTP_GET) {",
+      "replace": "if(path.rfind(\"/api/ready\",0)==0&&req->method==HTTP_GET) {"
+    },
+    {
+      "id": "ready-reads-session",
+      "check": "the readiness reply reads no session",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "if(path==\"/api/ready\"&&req->method==HTTP_GET) {",
+      "replace": "if(path==\"/api/ready\"&&req->method==HTTP_GET) {web::authenticated(req);"
+    },
+    {
+      "id": "ready-reads-clock",
+      "check": "the readiness reply reads no clock",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "if(path==\"/api/ready\"&&req->method==HTTP_GET) {",
+      "replace": "if(path==\"/api/ready\"&&req->method==HTTP_GET) {(void)esp_timer_get_time();"
+    },
+    {
+      "id": "ready-device-boot-id",
+      "check": "the readiness reply names this device",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "cJSON_AddStringToObject(root.get(),\"device_id\",hub->octopus_id().str().c_str());",
+      "replace": "cJSON_AddStringToObject(root.get(),\"device_id\",system_services::boot_id());"
+    },
+    {
+      "id": "ready-extra-field",
+      "check": "the readiness reply has exactly four fields",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "cJSON_AddStringToObject(root.get(),\"device_id\",hub->octopus_id().str().c_str());",
+      "replace": "cJSON_AddStringToObject(root.get(),\"device_id\",hub->octopus_id().str().c_str());cJSON_AddBoolToObject(root.get(),\"public\",true);"
+    },
+    {
+      "id": "ready-hostname-boot-id",
+      "check": "the readiness reply reports the hostname",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "cJSON_AddStringToObject(root.get(),\"hostname\",device_settings::hostname());\n        cJSON_AddBoolToObject(root.get(),\"ready\",system_services::firmware_ready());\n        return send(req,root.get());\n    }\n    if(path==\"/api/setup\")",
+      "replace": "cJSON_AddStringToObject(root.get(),\"hostname\",system_services::boot_id());\n        cJSON_AddBoolToObject(root.get(),\"ready\",system_services::firmware_ready());\n        return send(req,root.get());\n    }\n    if(path==\"/api/setup\")"
+    },
+    {
+      "id": "ready-inverted",
+      "check": "the readiness reply tracks firmware readiness",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "cJSON_AddStringToObject(root.get(),\"hostname\",device_settings::hostname());\n        cJSON_AddBoolToObject(root.get(),\"ready\",system_services::firmware_ready());\n        return send(req,root.get());\n    }\n    if(path==\"/api/setup\")",
+      "replace": "cJSON_AddStringToObject(root.get(),\"hostname\",device_settings::hostname());\n        cJSON_AddBoolToObject(root.get(),\"ready\",!system_services::firmware_ready());\n        return send(req,root.get());\n    }\n    if(path==\"/api/setup\")"
+    },
+    {
+      "id": "ready-without-cors",
+      "check": "the readiness reply is readable across origins",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "httpd_resp_set_hdr(req,\"Access-Control-Allow-Origin\",\"*\");",
+      "replace": ""
+    },
+    {
+      "id": "ready-with-credentials",
+      "check": "the readiness reply allows no credentials across origins",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "httpd_resp_set_hdr(req,\"Access-Control-Allow-Origin\",\"*\");",
+      "replace": "httpd_resp_set_hdr(req,\"Access-Control-Allow-Origin\",\"*\");httpd_resp_set_hdr(req,\"Access-Control-Allow-Credentials\",\"true\");"
+    },
+    {
+      "id": "ready-cached",
+      "check": "the readiness reply is never cached",
+      "file": "components/web/request.cpp",
+      "find": "httpd_resp_set_hdr(req,\"Cache-Control\",\"no-store\");",
+      "replace": ""
+    },
+    {
+      "id": "cors-everywhere",
+      "check": "only the readiness reply is readable across origins",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "std::string path=req->uri;",
+      "replace": "std::string path=req->uri;httpd_resp_set_hdr(req,\"Access-Control-Allow-Origin\",\"*\");"
+    },
+    {
+      "id": "refusal-cors",
+      "check": "refusals grant no cross-origin access",
+      "file": "components/web/request.cpp",
+      "find": "httpd_resp_set_hdr(req,\"Connection\",\"close\");",
+      "replace": "httpd_resp_set_hdr(req,\"Connection\",\"close\");httpd_resp_set_hdr(req,\"Access-Control-Allow-Origin\",\"*\");"
+    },
+    {
+      "id": "setup-cross-origin",
+      "check": "other origins cannot read the setup status",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "Json root(cJSON_CreateObject(),cJSON_Delete);\n            cJSON_AddBoolToObject(root.get(),\"required\",web::setup_required());",
+      "replace": "httpd_resp_set_hdr(req,\"Access-Control-Allow-Origin\",\"*\");Json root(cJSON_CreateObject(),cJSON_Delete);\n            cJSON_AddBoolToObject(root.get(),\"required\",web::setup_required());"
+    },
+    {
+      "id": "setup-digest-truncated",
+      "check": "the setup status reports the whole ELF digest",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "for(size_t i=0;i<sizeof(description->app_elf_sha256);++i)",
+      "replace": "for(size_t i=0;i<sizeof(description->app_elf_sha256)/2;++i)"
+    },
+    {
+      "id": "session-refusal-silent",
+      "check": "requests without a session get 401",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "if(!web::authenticated(req))return web::error(req,\"Login required\",\"401 Unauthorized\");",
+      "replace": "if(!web::authenticated(req))return ESP_OK;"
+    },
+    {
+      "id": "get-body-one-byte",
+      "check": "a GET with any body is refused",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "if(req->method==HTTP_GET&&req->content_len)return",
+      "replace": "if(req->method==HTTP_GET&&req->content_len>1)return"
+    },
+    {
+      "id": "api-ui-guard-open",
+      "check": "the API refuses requests while administration is not enabled",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "if (!ui_enabled.load()) return web::error(req,\"Administration is available on the main Amity only.\",\"403 Forbidden\");\n    if(req->method==HTTP_GET&&req->content_len)return",
+      "replace": "if (!ui_enabled.load()) (void)req;\n    if(req->method==HTTP_GET&&req->content_len)return"
+    },
+    {
+      "id": "asset-ui-guard-open",
+      "check": "the assets refuse requests while administration is not enabled",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "if (!ui_enabled.load()) return web::error(req,\"Administration is available on the main Amity only.\",\"403 Forbidden\");\n    if(req->content_len)return",
+      "replace": "if (!ui_enabled.load()) (void)req;\n    if(req->content_len)return"
+    },
+    {
+      "id": "csp-connect-self",
+      "check": "the policy allows HTTPS probes of other .local names",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "connect-src 'self' https://*.local;",
+      "replace": "connect-src 'self';"
+    },
+    {
+      "id": "csp-inline-scripts",
+      "check": "the policy allows only this origin's scripts",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "script-src 'self';",
+      "replace": "script-src 'self' 'unsafe-inline';"
+    },
+    {
+      "id": "csp-framing",
+      "check": "the policy forbids framing",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "; frame-ancestors 'none'\"",
+      "replace": "\""
+    },
+    {
+      "id": "asset-not-gzip",
+      "check": "assets are served gzip-encoded",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "httpd_resp_set_hdr(req,\"Content-Encoding\",\"gzip\");",
+      "replace": ""
+    },
+    {
+      "id": "asset-no-store",
+      "check": "assets are revalidated, not refetched",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "httpd_resp_set_hdr(req,\"Cache-Control\",\"no-cache\");",
+      "replace": "httpd_resp_set_hdr(req,\"Cache-Control\",\"no-store\");"
+    },
+    {
+      "id": "etag-seven-bytes",
+      "check": "the ETag is the first eight bytes of the ELF digest",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "for(size_t i=0;i<8;++i)snprintf(digits+2*i,3,\"%02x\",description->app_elf_sha256[i]);",
+      "replace": "for(size_t i=0;i<7;++i)snprintf(digits+2*i,3,\"%02x\",description->app_elf_sha256[i]);"
+    },
+    {
+      "id": "etag-dropped",
+      "check": "assets carry the firmware ETag",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "httpd_resp_set_hdr(req,\"ETag\",asset_tag());",
+      "replace": ""
+    },
+    {
+      "id": "script-type",
+      "check": "scripts are served as JavaScript",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "if(!strcmp(req->uri,\"/app.js\")){begin=js_start;end=js_end;mime=\"text/javascript\";}",
+      "replace": "if(!strcmp(req->uri,\"/app.js\")){begin=js_start;end=js_end;mime=\"text/plain\";}"
+    },
+    {
+      "id": "style-serves-script",
+      "check": "each path serves its own asset",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "if(!strcmp(req->uri,\"/style.css\")){begin=css_start;end=css_end;",
+      "replace": "if(!strcmp(req->uri,\"/style.css\")){begin=js_start;end=js_end;"
+    },
+    {
+      "id": "asset-body-allowed",
+      "check": "an asset GET with a body is refused",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "if (!ui_enabled.load()) return web::error(req,\"Administration is available on the main Amity only.\",\"403 Forbidden\");\n    if(req->content_len)return",
+      "replace": "if (!ui_enabled.load()) return web::error(req,\"Administration is available on the main Amity only.\",\"403 Forbidden\");\n    if(false)return"
+    },
+    {
+      "id": "revalidation-exact-tag",
+      "check": "weak and listed matching tags revalidate",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "(strstr(cached,asset_tag())||!strcmp(cached,\"*\"))",
+      "replace": "(!strcmp(cached,asset_tag())||!strcmp(cached,\"*\"))"
+    },
+    {
+      "id": "revalidation-without-star",
+      "check": "If-None-Match * revalidates",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "(strstr(cached,asset_tag())||!strcmp(cached,\"*\"))",
+      "replace": "(strstr(cached,asset_tag()))"
+    },
+    {
+      "id": "revalidation-ignored",
+      "check": "a matching tag is answered 304",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "if(httpd_req_get_hdr_value_str(req,\"If-None-Match\",cached,sizeof(cached))==ESP_OK&&",
+      "replace": "if(false&&httpd_req_get_hdr_value_str(req,\"If-None-Match\",cached,sizeof(cached))==ESP_OK&&"
+    },
+    {
+      "id": "revalidation-any-tag",
+      "check": "another tag gets the whole asset",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "sizeof(cached))==ESP_OK&&(strstr(cached,asset_tag())",
+      "replace": "sizeof(cached))==ESP_OK||(strstr(cached,asset_tag())"
+    },
+    {
+      "id": "not-modified-with-body",
+      "check": "a 304 has no body",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "httpd_resp_set_status(req,\"304 Not Modified\");return web::response(req,nullptr,0);",
+      "replace": "httpd_resp_set_status(req,\"304 Not Modified\");return web::response(req,reinterpret_cast<const char *>(begin),end-begin);"
+    },
+    {
+      "id": "not-modified-encoded",
+      "check": "a 304 has no content encoding",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "httpd_resp_set_hdr(req,\"Cache-Control\",\"no-cache\");",
+      "replace": "httpd_resp_set_hdr(req,\"Cache-Control\",\"no-cache\");httpd_resp_set_hdr(req,\"Content-Encoding\",\"gzip\");"
+    },
+    {
+      "id": "role-member-ignored",
+      "check": "a member never starts administration",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "!role.authority_ready || role.member || role.phase==\"recovery_required\"",
+      "replace": "!role.authority_ready || role.phase==\"recovery_required\""
+    },
+    {
+      "id": "role-recovery-ignored",
+      "check": "a device that must recover never starts administration",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "|| role.member || role.phase==\"recovery_required\") return ESP_ERR_INVALID_STATE;",
+      "replace": "|| role.member) return ESP_ERR_INVALID_STATE;"
+    },
+    {
+      "id": "role-coordinator-ignored",
+      "check": "only the coordinator starts administration",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "if(!role.coordinator || !role.authority_ready",
+      "replace": "if(!role.authority_ready"
+    },
+    {
+      "id": "role-authority-ignored",
+      "check": "only a coordinator with authority starts administration",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "!role.coordinator || !role.authority_ready || role.member",
+      "replace": "!role.coordinator || role.member"
+    },
+    {
+      "id": "role-refusal-code",
+      "check": "a refused role is reported as an invalid state",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "role.phase==\"recovery_required\") return ESP_ERR_INVALID_STATE;",
+      "replace": "role.phase==\"recovery_required\") return ESP_FAIL;"
+    },
+    {
+      "id": "restart-after-stop",
+      "check": "a stop blocks every later start",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "if(ui_revoked.load() || server) return ESP_ERR_INVALID_STATE;",
+      "replace": "if(server) return ESP_ERR_INVALID_STATE;"
+    },
+    {
+      "id": "second-start",
+      "check": "a running server is not started again",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "if(ui_revoked.load() || server) return ESP_ERR_INVALID_STATE;",
+      "replace": "if(ui_revoked.load()) return ESP_ERR_INVALID_STATE;"
+    },
+    {
+      "id": "redirect-before-routes",
+      "check": "the redirect opens only after every route",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "auto e=web::start(server,std::string(hostname)+\".local\",initial_auth);if(e!=ESP_OK)return e;",
+      "replace": "auto e=web::start(server,std::string(hostname)+\".local\",initial_auth);if(e!=ESP_OK)return e;web::start_redirect();"
+    },
+    {
+      "id": "redirect-before-ui",
+      "check": "the redirect opens only after the UI is enabled",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "if(e==ESP_OK)ui_enabled.store(true);\n    if(e==ESP_OK)e=web::start_redirect();",
+      "replace": "if(e==ESP_OK)e=web::start_redirect();\n    if(e==ESP_OK)ui_enabled.store(true);"
+    },
+    {
+      "id": "redirect-port",
+      "check": "the redirect listens on port 80",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "if(e==ESP_OK)e=web::start_redirect();",
+      "replace": "if(e==ESP_OK)e=web::start_redirect(8080);"
+    },
+    {
+      "id": "system-script-unrouted",
+      "check": "every asset is routed",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "for(auto *path:{\"/\",\"/app.js\",\"/system.js\",\"/style.css\",\"/favicon.svg\"})",
+      "replace": "for(auto *path:{\"/\",\"/app.js\",\"/style.css\",\"/favicon.svg\"})"
+    },
+    {
+      "id": "api-get-unrouted",
+      "check": "API GETs are routed",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "e=web::route(server,\"/api/*\",HTTP_GET,api);if(e!=ESP_OK)return e;",
+      "replace": ""
+    },
+    {
+      "id": "ui-enabled-on-route-error",
+      "check": "a server that fails to route stays disabled",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "if(e==ESP_OK)ui_enabled.store(true);",
+      "replace": "ui_enabled.store(true);"
+    },
+    {
+      "id": "redirect-on-route-error",
+      "check": "a server that fails to route opens no redirect",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "if(e==ESP_OK)e=web::start_redirect();",
+      "replace": "e=web::start_redirect();"
+    },
+    {
+      "id": "redirect-error-swallowed",
+      "check": "a redirect error is returned",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "if(e==ESP_OK)e=web::start_redirect();\n    return e;",
+      "replace": "if(e==ESP_OK)web::start_redirect();\n    return e;"
+    },
+    {
+      "id": "redirect-error-drops-server",
+      "check": "a redirect error keeps the routed server",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "if(e==ESP_OK)e=web::start_redirect();\n    return e;",
+      "replace": "if(e==ESP_OK)e=web::start_redirect();\n    if(e!=ESP_OK)server=nullptr;\n    return e;"
+    },
+    {
+      "id": "revoke-after-redirect",
+      "check": "stopping revokes the handlers before closing the redirect",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "ui_revoked.store(true); ui_enabled.store(false);\n    std::lock_guard<std::mutex> guard(server_mutex);\n    const auto plain=web::stop_redirect();",
+      "replace": "std::lock_guard<std::mutex> guard(server_mutex);\n    const auto plain=web::stop_redirect();\n    ui_revoked.store(true); ui_enabled.store(false);"
+    },
+    {
+      "id": "stop-keeps-ui",
+      "check": "stopping disables the UI",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "ui_revoked.store(true); ui_enabled.store(false);",
+      "replace": "ui_revoked.store(true);"
+    },
+    {
+      "id": "stop-not-revoked",
+      "check": "stopping revokes administration for this boot",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "ui_revoked.store(true); ui_enabled.store(false);",
+      "replace": "ui_enabled.store(false);"
+    },
+    {
+      "id": "log-stop-after-server",
+      "check": "log downloads stop before the server",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "system_services::stop_log_downloads();\n    const auto result=web::stop(server);",
+      "replace": "const auto result=web::stop(server);\n    system_services::stop_log_downloads();"
+    },
+    {
+      "id": "log-stop-dropped",
+      "check": "stopping stops log downloads",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "system_services::stop_log_downloads();",
+      "replace": ""
+    },
+    {
+      "id": "stop-without-server",
+      "check": "a stop without a server closes only the redirect",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "if(!server)return plain;",
+      "replace": ""
+    },
+    {
+      "id": "idle-stop-fails",
+      "check": "a stop with nothing to close succeeds",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "if(!server)return plain;",
+      "replace": "if(!server)return ESP_FAIL;"
+    },
+    {
+      "id": "failed-stop-forgets-server",
+      "check": "a server that fails to stop is kept for a retry",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "if(result==ESP_OK)server=nullptr;",
+      "replace": "server=nullptr;"
+    },
+    {
+      "id": "stop-error-precedence",
+      "check": "a redirect error is reported ahead of a server error",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "return plain!=ESP_OK?plain:result;",
+      "replace": "return result!=ESP_OK?result:plain;"
+    },
+    {
+      "id": "redirect-stop-error-dropped",
+      "check": "a redirect stop error is reported",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "return plain!=ESP_OK?plain:result;",
+      "replace": "return result;"
+    },
+    {
+      "id": "server-stop-error-dropped",
+      "check": "a server stop error is reported",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "return plain!=ESP_OK?plain:result;",
+      "replace": "return plain;"
+    },
+    {
+      "id": "firmware-before-session",
+      "check": "firmware uploads only with a session",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "if(path==\"/api/login\" && req->method==HTTP_POST) {",
+      "replace": "if(path==\"/api/firmware\")return system_services::upload_firmware(req);\n    if(path==\"/api/login\" && req->method==HTTP_POST) {"
+    },
+    {
+      "id": "firmware-outside-post",
+      "check": "firmware uploads only through POST",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "if(req->method==HTTP_POST) {\n        if(path==\"/api/firmware\")return system_services::upload_firmware(req);",
+      "replace": "if(path==\"/api/firmware\")return system_services::upload_firmware(req);\n    if(req->method==HTTP_POST) {"
+    },
+    {
+      "id": "firmware-blocked-while-passive",
+      "check": "firmware uploads while configuration is passive",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "&&path!=\"/api/firmware\"",
+      "replace": ""
+    }
+  ]
+}

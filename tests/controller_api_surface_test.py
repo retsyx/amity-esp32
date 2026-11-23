@@ -9,7 +9,6 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     source = (ROOT / 'components/web_admin/system_admin.cpp').read_text()
-    web_source = (ROOT / 'components/web_admin/web_admin.cpp').read_text()
     start = source.index('std::optional<std::string> device_settings_target(')
     router = source[start:source.index('void update_operation(', start)]
     capacity = next(line for line in source.splitlines()
@@ -20,9 +19,6 @@ def main():
     get_start = source.index('if(req->method==HTTP_GET)', source.index('bool admin_request('))
     post_start = source.index('if(req->method!=HTTP_POST)', get_start)
     assert 'if(path=="/api/updates/cohort"){result=web::json(req,system_services::updates::cohort_status_json());return true;}' in source[get_start:post_start]
-    firmware = web_source.index('if(path=="/api/firmware")return system_services::upload_firmware(req);')
-    assert web_source.index('if(!web::authenticated(req))') < firmware
-    assert web_source.index('if(req->method==HTTP_POST)', web_source.index('if(!web::authenticated(req))')) < firmware
     program = r'''
 #include <algorithm>
 #include <cassert>
@@ -63,7 +59,7 @@ int main(){
     assert(cJSON_IsNumber(advertised)&&advertised->valuedouble==4
         &&advertised->valuedouble==amity::consortium::maximum_roster_peers+1);
     cJSON_Delete(body);
-    std::cout<<"PASS actual administration router: shared authenticated firmware upload, read-only update status, unknown routes rejected before admission and four total Amity devices\n";
+    std::cout<<"PASS actual administration router: read-only update status, unknown routes rejected before admission and four total Amity devices\n";
 }
 '''
     json_dir = ROOT / 'managed_components/espressif__cjson/cJSON'
