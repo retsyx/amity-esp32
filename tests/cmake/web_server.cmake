@@ -15,6 +15,14 @@ if(NOT TARGET web_server_fakes)
         "${T}/web_request_fakes" "${T}")
     target_compile_options(web_server_fakes PRIVATE ${amity_seam_warnings})
     target_link_libraries(web_server_fakes PRIVATE strict)
+    # The response path builds in every tier, and links into the HTTPS
+    # response test.
+    amity_host_compile(web_request
+        SOURCES "${C}/web/request.cpp"
+        INCLUDES "${T}/core_fakes" "${T}/web_request_fakes" "${C}/web" "${C}/web/include")
+    amity_host_compile(web_tls_write
+        SOURCES "${C}/web/tls_write.cpp"
+        INCLUDES "${T}/core_fakes" "${T}/web_server_fakes" "${T}/web_request_fakes")
 endif()
 
 if(AMITY_TEST_TIER STREQUAL standalone)
@@ -56,6 +64,33 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         web_session_tcp_test.py
     )
 elseif(AMITY_TEST_TIER STREQUAL sdk)
+    # The pinned SDK functions the response path runs on, cut with #line
+    # directives that name their SDK files.
+    set(web_idf "$ENV{IDF_PATH}")
+    if(NOT web_idf)
+        set(web_idf "$ENV{HOME}/.espressif/v6.1/esp-idf")
+    endif()
+    set(web_sdk_functions "${CMAKE_CURRENT_BINARY_DIR}/https_response_write_sdk.c")
+    add_custom_command(OUTPUT "${web_sdk_functions}"
+        COMMAND "${PYTHON3}" "${T}/extract_sdk_functions.py" "${T}/https_response_write_sdk.json"
+            "${web_sdk_functions}" --idf "${web_idf}"
+        DEPENDS "${T}/extract_sdk_functions.py" "${T}/https_response_write_sdk.json"
+            "${web_idf}/components/mbedtls/port/aes/dma/esp_aes_dma_core.c"
+            "${web_idf}/components/esp-tls/esp_tls_mbedtls.c" "${web_idf}/components/esp-tls/esp_tls.c"
+            "${web_idf}/components/esp_http_server/src/httpd_txrx.c"
+        VERBATIM)
+    # The SDK compares signed results with sizes.
+    set_source_files_properties("${web_sdk_functions}" PROPERTIES COMPILE_OPTIONS -Wno-sign-compare)
+    amity_test(https_response_write_test
+        SOURCES "${T}/https_response_write_test.cpp" "${web_sdk_functions}"
+        INCLUDES "${T}/core_fakes" "${T}/web_server_fakes" "${T}/web_request_fakes" "${T}/crypto_fakes" "${T}"
+            "${C}/web" "${C}/web/include"
+        LIBS web_request web_tls_write core_fakes web_server_fakes
+        REGISTRY
+        SCENARIOS bounded-records body-sizes short-and-want-writes write-errors zero-progress dma-failure
+            bounded-write)
+    unset(web_idf)
+    unset(web_sdk_functions)
     amity_python_tests(
         https_response_write_test.py
         web_stall_test.py

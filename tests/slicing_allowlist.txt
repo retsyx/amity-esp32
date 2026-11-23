@@ -37,7 +37,7 @@ homekit_notifications_test.py pending:Z
 homekit_refresh_test.py pending:H1
 homekit_worker_test.py pending:H1
 hostname_services_test.py pending:Z
-https_response_write_test.py pending:E3
+https_response_write_test.py lint
 json_memory_test.py whole-file
 key_release_timing_test.py pending:I
 log_download_test.py pending:F

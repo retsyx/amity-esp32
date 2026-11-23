@@ -9,8 +9,8 @@
 #pragma once
 // HTTPD's private session and request state, from the pinned ESP-IDF's
 // esp_http_server/src/esp_httpd_priv.h with the Amity build's configuration:
-// the fields up to the last one the HTTPS deadline guard uses, in the SDK's
-// order (sdk_parity/web_server.def).
+// the fields up to the last one the HTTPS deadline guard and the sliced
+// response path use, in the SDK's order (sdk_parity/web_server.def).
 #include "esp_http_server.h"
 #include "freertos/semphr.h"
 #include <stdbool.h>
@@ -38,6 +38,10 @@ typedef enum {
     HTTP_SERVER_EVENT_DISCONNECTED,
     HTTP_SERVER_EVENT_STOP,
 } esp_http_server_event_id_t;
+typedef struct {
+    int fd;
+    int data_len;
+} esp_http_server_event_data;
 
 struct sock_db {
     int fd;
@@ -94,6 +98,11 @@ struct httpd_data {
     uint64_t lru_counter;
     esp_http_server_event_id_t http_server_state;
 };
+
+// CONFIG_HTTPD_VALIDATE_REQ is off in the Amity build.
+#define httpd_valid_req(r) true
+// CONFIG_HTTPD_ENABLE_EVENTS is on in the Amity build.
+void esp_http_server_dispatch_event(int32_t event_id, const void *event_data, size_t event_data_size);
 
 #ifdef __cplusplus
 }

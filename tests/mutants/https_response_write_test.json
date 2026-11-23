@@ -1,0 +1,138 @@
+{
+  "ctest": "^https_response_write_test\\.",
+  "targets": [
+    "https_response_write_test"
+  ],
+  "baseline": {
+    "ctest": "^https_response_write_test\\.py$",
+    "targets": []
+  },
+  "mutants": [
+    {
+      "id": "stub-response-fail",
+      "check": "stub: early return from response()",
+      "file": "components/web/request.cpp",
+      "find": "esp_err_t response(httpd_req_t *req,const char *data,size_t size) {",
+      "replace": "esp_err_t response(httpd_req_t *req,const char *data,size_t size) { return ESP_FAIL;"
+    },
+    {
+      "id": "response-bound-empty",
+      "check": "a response is bounded by its size",
+      "file": "components/web/request.cpp",
+      "find": "stall::Response bound(req,size);",
+      "replace": "stall::Response bound(req,0);"
+    },
+    {
+      "id": "response-chunked",
+      "check": "responses keep Content-Length framing",
+      "file": "components/web/request.cpp",
+      "find": "return httpd_resp_send(req,data,size);",
+      "replace": "return httpd_resp_send_chunk(req,data,size);"
+    },
+    {
+      "id": "response-short-body",
+      "check": "the whole body is sent",
+      "file": "components/web/request.cpp",
+      "find": "return httpd_resp_send(req,data,size);",
+      "replace": "return httpd_resp_send(req,data,size/2);"
+    },
+    {
+      "id": "stub-json-fail",
+      "check": "stub: early return from json()",
+      "file": "components/web/request.cpp",
+      "find": "esp_err_t json(httpd_req_t *req,const std::string &data,const char *status) {",
+      "replace": "esp_err_t json(httpd_req_t *req,const std::string &data,const char *status) { return ESP_FAIL;"
+    },
+    {
+      "id": "json-without-status",
+      "check": "a JSON response carries its status",
+      "file": "components/web/request.cpp",
+      "find": "httpd_resp_set_status(req,status);httpd_resp_set_type(req,\"application/json\");",
+      "replace": "httpd_resp_set_type(req,\"application/json\");(void)status;"
+    },
+    {
+      "id": "json-without-type",
+      "check": "a JSON response is typed application/json",
+      "file": "components/web/request.cpp",
+      "find": "httpd_resp_set_type(req,\"application/json\");",
+      "replace": ""
+    },
+    {
+      "id": "json-cacheable",
+      "check": "a JSON response is not cached",
+      "file": "components/web/request.cpp",
+      "find": "httpd_resp_set_hdr(req,\"Cache-Control\",\"no-store\");",
+      "replace": ""
+    },
+    {
+      "id": "json-sniffable",
+      "check": "a JSON response is not sniffed",
+      "file": "components/web/request.cpp",
+      "find": "httpd_resp_set_hdr(req,\"X-Content-Type-Options\",\"nosniff\");",
+      "replace": ""
+    },
+    {
+      "id": "json-body-trimmed",
+      "check": "a JSON response sends the whole body",
+      "file": "components/web/request.cpp",
+      "find": "return response(req,data.data(),data.size());",
+      "replace": "return response(req,data.data(),data.size()/2);"
+    },
+    {
+      "id": "stub-__wrap_esp_tls_conn_write-empty",
+      "check": "stub: early return from __wrap_esp_tls_conn_write()",
+      "file": "components/web/tls_write.cpp",
+      "find": "extern \"C\" ssize_t __wrap_esp_tls_conn_write(esp_tls_t *tls, const void *data, size_t size) {",
+      "replace": "extern \"C\" ssize_t __wrap_esp_tls_conn_write(esp_tls_t *tls, const void *data, size_t size) { return {};"
+    },
+    {
+      "id": "record-limit-larger",
+      "check": "application writes are at most 512 bytes",
+      "file": "components/web/tls_write.cpp",
+      "find": "std::min(size,size_t{512})",
+      "replace": "std::min(size,size_t{513})"
+    },
+    {
+      "id": "record-limit-none",
+      "check": "application writes are bounded",
+      "file": "components/web/tls_write.cpp",
+      "find": "std::min(size,size_t{512})",
+      "replace": "size"
+    },
+    {
+      "id": "closed-write-progress",
+      "check": "a closed TLS write ends the response",
+      "file": "components/web/tls_write.cpp",
+      "find": "return size&&written==0?-1:written;",
+      "replace": "return written;"
+    },
+    {
+      "id": "empty-write-fails",
+      "check": "an empty write writes nothing and succeeds",
+      "file": "components/web/tls_write.cpp",
+      "find": "return size&&written==0?-1:written;",
+      "replace": "return written==0?-1:written;"
+    },
+    {
+      "id": "tls-output-smaller",
+      "check": "TLS keeps a 4 KiB output buffer",
+      "file": "sdkconfig.defaults",
+      "find": "CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN=4096",
+      "replace": "CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN=2048"
+    },
+    {
+      "id": "cmake-write-unwrapped",
+      "check": "CMake wraps esp_tls_conn_write",
+      "file": "components/web/CMakeLists.txt",
+      "find": "\"-Wl,--wrap=esp_tls_conn_write\"",
+      "replace": ""
+    },
+    {
+      "id": "unbounded-asset-response",
+      "check": "project responses go through web::response",
+      "file": "components/web_admin/web_admin.cpp",
+      "find": "return web::response(req,reinterpret_cast<const char *>(begin),end-begin);",
+      "replace": "return httpd_resp_send(req,reinterpret_cast<const char *>(begin),end-begin);"
+    }
+  ]
+}

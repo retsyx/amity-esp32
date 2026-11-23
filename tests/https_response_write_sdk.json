@@ -1,0 +1,23 @@
+{
+  "include": "https_response_write_sdk.h",
+  "functions": [
+    {
+      "file": "components/mbedtls/port/aes/dma/esp_aes_dma_core.c",
+      "name": "esp_aes_process_dma_ext_ram",
+      "replace": [["static int esp_aes_process_dma_ext_ram", "int esp_aes_process_dma_ext_ram"], ["free", "dma_free"]]
+    },
+    {"file": "components/esp-tls/esp_tls_mbedtls.c", "name": "esp_mbedtls_write"},
+    {
+      "file": "components/esp-tls/esp_tls.c",
+      "name": "esp_tls_conn_write",
+      "replace": [["esp_tls_conn_write", "__real_esp_tls_conn_write"]]
+    },
+    {"file": "components/esp_http_server/src/httpd_txrx.c", "name": "httpd_send_all"},
+    {"file": "components/esp_http_server/src/httpd_txrx.c", "name": "httpd_resp_send"},
+    {
+      "file": "components/esp_http_server/src/httpd_txrx.c",
+      "name": "httpd_resp_send_chunk",
+      "replace": [["httpd_resp_send_chunk", "sdk_httpd_resp_send_chunk"]]
+    }
+  ]
+}
