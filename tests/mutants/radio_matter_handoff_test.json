@@ -1,0 +1,580 @@
+{
+  "ctest": "^radio_matter_handoff_test\\.",
+  "targets": [
+    "radio_matter_handoff_test"
+  ],
+  "baseline": {
+    "ctest": "^radio_matter_handoff_test\\.py$",
+    "targets": []
+  },
+  "mutants": [
+    {
+      "id": "stub-peripheral_active-false",
+      "check": "stub: early return from peripheral_active()",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "bool peripheral_active(){",
+      "replace": "bool peripheral_active(){ return false;"
+    },
+    {
+      "id": "stub-peripheral_active-true",
+      "check": "stub: early return from peripheral_active()",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "bool peripheral_active(){",
+      "replace": "bool peripheral_active(){ return true;"
+    },
+    {
+      "id": "stub-peripheral_uncertain-return",
+      "check": "stub: early return from peripheral_uncertain()",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "void peripheral_uncertain(){",
+      "replace": "void peripheral_uncertain(){ return;"
+    },
+    {
+      "id": "stub-matter_hci_event-return",
+      "check": "stub: early return from matter_hci_event()",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "void matter_hci_event(const uint8_t* buffer){",
+      "replace": "void matter_hci_event(const uint8_t* buffer){ return;"
+    },
+    {
+      "id": "stub-release_idle_matter-return",
+      "check": "stub: early return from release_idle_matter()",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "void release_idle_matter(uint64_t generation){",
+      "replace": "void release_idle_matter(uint64_t generation){ return;"
+    },
+    {
+      "id": "stub-remote_request-false",
+      "check": "stub: early return from remote_request()",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "bool remote_request(uint32_t seconds,void*) {",
+      "replace": "bool remote_request(uint32_t seconds,void*) { return false;"
+    },
+    {
+      "id": "stub-remote_request-true",
+      "check": "stub: early return from remote_request()",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "bool remote_request(uint32_t seconds,void*) {",
+      "replace": "bool remote_request(uint32_t seconds,void*) { return true;"
+    },
+    {
+      "id": "stub-finish_cancellation-invalid-state",
+      "check": "stub: early return from finish_cancellation()",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "esp_err_t finish_cancellation(uint64_t generation) {",
+      "replace": "esp_err_t finish_cancellation(uint64_t generation) { return ESP_ERR_INVALID_STATE;"
+    },
+    {
+      "id": "stub-worker-return",
+      "check": "stub: early return from worker()",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "void worker(void*) {",
+      "replace": "void worker(void*) { return;"
+    },
+    {
+      "id": "stub-matter_will_advertise-false",
+      "check": "stub: early return from matter_will_advertise()",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "bool matter_will_advertise(){",
+      "replace": "bool matter_will_advertise(){ return false;"
+    },
+    {
+      "id": "stub-matter_will_advertise-true",
+      "check": "stub: early return from matter_will_advertise()",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "bool matter_will_advertise(){",
+      "replace": "bool matter_will_advertise(){ return true;"
+    },
+    {
+      "id": "stub-matter_advertising_disabled-return",
+      "check": "stub: early return from matter_advertising_disabled()",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "void matter_advertising_disabled(){",
+      "replace": "void matter_advertising_disabled(){ return;"
+    },
+    {
+      "id": "stub-reserve_consortium-invalid-state",
+      "check": "stub: early return from reserve_consortium()",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "esp_err_t reserve_consortium(bool inviter,uint64_t& generation){",
+      "replace": "esp_err_t reserve_consortium(bool inviter,uint64_t& generation){ return ESP_ERR_INVALID_STATE;"
+    },
+    {
+      "id": "stub-release-return",
+      "check": "stub: early return from release()",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "void release(uint64_t generation){",
+      "replace": "void release(uint64_t generation){ return;"
+    },
+    {
+      "id": "stub-wrap-set-advertising-enabled",
+      "check": "stub: early return from the BLE advertising wrapper",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "extern \"C\" CHIP_ERROR __wrap__ZN4chip11DeviceLayer8Internal14BLEManagerImpl22_SetAdvertisingEnabledEb(void* self,bool enabled){",
+      "replace": "extern \"C\" CHIP_ERROR __wrap__ZN4chip11DeviceLayer8Internal14BLEManagerImpl22_SetAdvertisingEnabledEb(void* self,bool enabled){ return CHIP_NO_ERROR;"
+    },
+    {
+      "id": "stub-wrap-hci-rx-event",
+      "check": "stub: early return from the HCI event wrapper",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "extern \"C\" int __wrap_ble_hs_hci_rx_evt(uint8_t* event,void* context){",
+      "replace": "extern \"C\" int __wrap_ble_hs_hci_rx_evt(uint8_t* event,void* context){ return {};"
+    },
+    {
+      "id": "stub-start-fail",
+      "check": "stub: early return from start()",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "esp_err_t start(){",
+      "replace": "esp_err_t start(){return ESP_FAIL;"
+    },
+    {
+      "id": "handoff-skips-disable",
+      "check": "the handoff disables Matter advertising",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(chip::DeviceLayer::ConnectivityMgr().SetBLEAdvertisingEnabled(false)!=CHIP_NO_ERROR)return ESP_ERR_INVALID_STATE;",
+      "replace": "if(false)return ESP_ERR_INVALID_STATE;"
+    },
+    {
+      "id": "handoff-ignores-disable-failure",
+      "check": "a failed disable stops the handoff",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "SetBLEAdvertisingEnabled(false)!=CHIP_NO_ERROR)return ESP_ERR_INVALID_STATE;",
+      "replace": "SetBLEAdvertisingEnabled(false)!=CHIP_NO_ERROR&&false)return ESP_ERR_INVALID_STATE;"
+    },
+    {
+      "id": "handoff-swaps-owner",
+      "check": "the handoff reserves the requested role",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "inviter?RadioMode::consortium_inviter:RadioMode::consortium_candidate",
+      "replace": "inviter?RadioMode::consortium_candidate:RadioMode::consortium_inviter"
+    },
+    {
+      "id": "handoff-ignores-peripheral",
+      "check": "a physical Matter peripheral denies takeover",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(peripheral_active())return ESP_ERR_INVALID_STATE;\n            if(current.owner",
+      "replace": "if(current.owner"
+    },
+    {
+      "id": "handoff-ignores-late-peripheral",
+      "check": "a peripheral that connects during the disable denies takeover",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(matter_disabled_generation!=matter.generation||peripheral_active())return ESP_ERR_INVALID_STATE;",
+      "replace": "if(matter_disabled_generation!=matter.generation)return ESP_ERR_INVALID_STATE;"
+    },
+    {
+      "id": "handoff-gated",
+      "check": "the handoff requests without the release gates",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "RadioArbiter::enrollment_ms,false);",
+      "replace": "RadioArbiter::enrollment_ms,true);"
+    },
+    {
+      "id": "handoff-not-waiting-advertiser",
+      "check": "the handoff waits for the advertiser to stop",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "const auto e=matter_handoff&&ble_gap_adv_active()?ESP_ERR_TIMEOUT:finish_cancellation(expected);",
+      "replace": "const auto e=matter_handoff&&false?ESP_ERR_TIMEOUT:finish_cancellation(expected);"
+    },
+    {
+      "id": "handoff-no-release-on-failure",
+      "check": "a failed handoff wait releases its generation",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(e!=ESP_OK){release(handoff_generation);return e;}",
+      "replace": "if(e!=ESP_OK){return e;}"
+    },
+    {
+      "id": "wait-ignores-generation",
+      "check": "a replaced generation ends the wait",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(arbiter.reservation().generation!=expected)return ESP_ERR_INVALID_STATE;",
+      "replace": "if(false)return ESP_ERR_INVALID_STATE;"
+    },
+    {
+      "id": "cleanup-match-any-step",
+      "check": "only the next generation counts as the disable's cleanup",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "current.generation-matter.generation==1",
+      "replace": "current.generation-matter.generation>=1"
+    },
+    {
+      "id": "budget-51-checks",
+      "check": "the cancellation budget is 50 checks",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "while(checks++<50){",
+      "replace": "while(checks++<51){"
+    },
+    {
+      "id": "budget-per-wait",
+      "check": "the handoff and the workflow share one budget",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "const auto wait_cleanup=[&](uint64_t expected,bool matter_handoff){",
+      "replace": "const auto wait_cleanup=[&](uint64_t expected,bool matter_handoff){checks=0;"
+    },
+    {
+      "id": "wait-step-200ms",
+      "check": "each cleanup check waits 100 ms",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(e!=ESP_ERR_TIMEOUT)return e;\n            vTaskDelay(pdMS_TO_TICKS(100));",
+      "replace": "if(e!=ESP_ERR_TIMEOUT)return e;\n            vTaskDelay(pdMS_TO_TICKS(200));"
+    },
+    {
+      "id": "wait-stops-on-timeout",
+      "check": "a timed-out check is retried",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(e!=ESP_ERR_TIMEOUT)return e;\n            vTaskDelay",
+      "replace": "return e;\n            vTaskDelay"
+    },
+    {
+      "id": "workflow-no-release-on-failure",
+      "check": "a failed workflow wait releases its reservation",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(e!=ESP_OK){release(generation);generation=0;}",
+      "replace": "if(e!=ESP_OK){generation=0;}"
+    },
+    {
+      "id": "worker-no-resume",
+      "check": "the worker resumes remote reconnect when the radio is free",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(reservation.owner==RadioMode::operational)ble_remote_pause_background(false);",
+      "replace": ""
+    },
+    {
+      "id": "cleanup-ignores-advertiser",
+      "check": "cleanup waits for the advertiser",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(advertising||peripheral_active())return ESP_ERR_TIMEOUT;",
+      "replace": "if((advertising&&false)||peripheral_active())return ESP_ERR_TIMEOUT;"
+    },
+    {
+      "id": "cleanup-ignores-peripheral",
+      "check": "cleanup waits for physical peripherals",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(advertising||peripheral_active())return ESP_ERR_TIMEOUT;",
+      "replace": "if(advertising)return ESP_ERR_TIMEOUT;"
+    },
+    {
+      "id": "cleanup-ignores-pause-failure",
+      "check": "cleanup needs the remote paused",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(cancelled!=ESP_OK)return cancelled;",
+      "replace": "if(cancelled!=ESP_OK&&false)return cancelled;"
+    },
+    {
+      "id": "gap-query-under-radio-mutex",
+      "check": "cleanup queries GAP outside the radio mutex",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "const bool advertising=ble_gap_adv_active();\n    Lock lock;",
+      "replace": "Lock lock;\n    const bool advertising=ble_gap_adv_active();"
+    },
+    {
+      "id": "gap-query-in-critical-section",
+      "check": "no SDK call runs inside the peripheral critical section",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "const bool advertising=ble_gap_adv_active();",
+      "replace": "bool advertising;{PeripheralLock critical;advertising=ble_gap_adv_active();}"
+    },
+    {
+      "id": "worker-expires-matter",
+      "check": "a Matter lease deadline does not end Matter BLE",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "const bool may_expire=reservation.owner!=RadioMode::matter_induction&&",
+      "replace": "const bool may_expire="
+    },
+    {
+      "id": "worker-expires-uncancelled",
+      "check": "an expired consortium workflow is cancelled through its owner first",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "(!consortium_owner||!expired||runtime_cancel_radio_workflows())",
+      "replace": "(!consortium_owner||!expired||true)"
+    },
+    {
+      "id": "idle-release-ignores-disable",
+      "check": "only a committed disable releases idle Matter",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "||current.generation!=generation||matter_disabled_generation!=generation)return;",
+      "replace": "||current.generation!=generation)return;"
+    },
+    {
+      "id": "idle-release-ignores-generation",
+      "check": "a disable releases only its own generation",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(current.owner!=RadioMode::matter_induction||current.generation!=generation||",
+      "replace": "if(current.owner!=RadioMode::matter_induction||",
+      "survives": "the disable check already ties the generation to the disabled one, and RadioArbiter::release refuses a stale generation itself"
+    },
+    {
+      "id": "idle-release-ignores-links",
+      "check": "live peripherals keep Matter",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "const bool active=peripheral_active();\n    arbiter.matter_ble_active(active);",
+      "replace": "const bool active=false;\n    arbiter.matter_ble_active(active);"
+    },
+    {
+      "id": "central-link-tracked",
+      "check": "central-role links are not Matter peripherals",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(data[4]==BLE_HCI_LE_CONN_COMPLETE_ROLE_MASTER)return;",
+      "replace": "if(data[4]==BLE_HCI_LE_CONN_COMPLETE_ROLE_MASTER&&false)return;"
+    },
+    {
+      "id": "failed-connect-tracked",
+      "check": "a failed connection creates no link",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(data[1])return;\n        if(length<required",
+      "replace": "if(length<required"
+    },
+    {
+      "id": "failed-disconnect-removes",
+      "check": "a failed disconnection removes nothing",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(data[0])return;\n        handle=",
+      "replace": "handle="
+    },
+    {
+      "id": "disconnect-clears-all",
+      "check": "a disconnect removes only its link",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "for(auto& slot:peripheral_connections)if(slot==encoded)slot=0;",
+      "replace": "for(auto& slot:peripheral_connections)slot=0;"
+    },
+    {
+      "id": "handle-zero-dropped",
+      "check": "handle 0 is a link",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "const uint32_t encoded=uint32_t(handle)+1;",
+      "replace": "const uint32_t encoded=uint32_t(handle);"
+    },
+    {
+      "id": "retry-keeps-disable",
+      "check": "an SDK retry drops the old disable's authority",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(result==RadioResult::granted||result==RadioResult::cancelling)matter_disabled_generation=0;",
+      "replace": ""
+    },
+    {
+      "id": "failed-disable-counts",
+      "check": "a rejected disable is not a committed disable",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(!enabled&&result==CHIP_NO_ERROR)amity::radio::matter_advertising_disabled();",
+      "replace": "if(!enabled)amity::radio::matter_advertising_disabled();"
+    },
+    {
+      "id": "advertising-without-admission",
+      "check": "enabling advertising needs admission",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(enabled&&!amity::radio::matter_will_advertise())return CHIP_ERROR_BUSY;",
+      "replace": "if(enabled&&!amity::radio::matter_will_advertise()&&false)return CHIP_ERROR_BUSY;"
+    },
+    {
+      "id": "admission-ignores-pause",
+      "check": "Matter advertising needs the remote paused",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(result==RadioResult::granted)return ble_remote_pause_background(true)==ESP_OK;",
+      "replace": "if(result==RadioResult::granted)return true;"
+    },
+    {
+      "id": "admission-skips-cancel",
+      "check": "Matter advertising cancels Amity workflows first",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(!runtime_cancel_radio_workflows()||ble_remote_cancel_setup()!=ESP_OK)return false;",
+      "replace": "if(ble_remote_cancel_setup()!=ESP_OK)return false;"
+    },
+    {
+      "id": "admission-skips-remote-cancel",
+      "check": "Matter advertising cancels the remote setup first",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(!runtime_cancel_radio_workflows()||ble_remote_cancel_setup()!=ESP_OK)return false;",
+      "replace": "if(!runtime_cancel_radio_workflows())return false;"
+    },
+    {
+      "id": "disabled-any-owner",
+      "check": "only a Matter owner records a disable",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(current.owner==RadioMode::matter_induction)matter_disabled_generation=current.generation;",
+      "replace": "matter_disabled_generation=current.generation;"
+    },
+    {
+      "id": "invalid-role-accepted",
+      "check": "an invalid role makes tracking uncertain",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "||data[4]>BLE_HCI_LE_CONN_COMPLETE_ROLE_SLAVE){peripheral_uncertain();return;}",
+      "replace": "||(data[4]>BLE_HCI_LE_CONN_COMPLETE_ROLE_SLAVE&&false)){peripheral_uncertain();return;}"
+    },
+    {
+      "id": "overflow-silent",
+      "check": "a full table makes tracking uncertain",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "for(auto& slot:peripheral_connections)if(!slot){slot=encoded;return;}\n        peripheral_tracking_failed=true;",
+      "replace": "for(auto& slot:peripheral_connections)if(!slot){slot=encoded;return;}"
+    },
+    {
+      "id": "reset-ignores-status",
+      "check": "only a successful controller reset clears tracking",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "&&!data[3]){",
+      "replace": "){"
+    },
+    {
+      "id": "reset-any-command",
+      "check": "only a controller reset clears tracking",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "(data[1]|uint16_t(data[2])<<8)==BLE_HCI_OP(BLE_HCI_OGF_CTLR_BASEBAND,BLE_HCI_OCF_CB_RESET)&&",
+      "replace": "((data[1]|uint16_t(data[2])<<8)==BLE_HCI_OP(BLE_HCI_OGF_CTLR_BASEBAND,BLE_HCI_OCF_CB_RESET)||true)&&"
+    },
+    {
+      "id": "reset-keeps-uncertainty",
+      "check": "a successful reset clears uncertainty",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "peripheral_connections.fill(0);\n            peripheral_tracking_failed=false;",
+      "replace": "peripheral_connections.fill(0);"
+    },
+    {
+      "id": "reset-keeps-links",
+      "check": "a successful reset clears links",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "peripheral_connections.fill(0);\n            peripheral_tracking_failed=false;",
+      "replace": "peripheral_tracking_failed=false;"
+    },
+    {
+      "id": "connection-length-short-by-one",
+      "check": "a connection event one byte short is uncertain",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(length<required||",
+      "replace": "if(length+1<required||"
+    },
+    {
+      "id": "enhanced-length-short",
+      "check": "an enhanced connection event must reach mca",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "required=offsetof(ble_hci_ev_le_subev_enh_conn_complete,mca)+1;",
+      "replace": "required=offsetof(ble_hci_ev_le_subev_enh_conn_complete,mca);"
+    },
+    {
+      "id": "enhanced-v2-length-short",
+      "check": "a V2 connection event must reach its sync handle",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "+1+sizeof(uint8_t)+sizeof(uint16_t);",
+      "replace": "+1+sizeof(uint8_t);"
+    },
+    {
+      "id": "status-before-length",
+      "check": "an event too short for its status is uncertain",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(length<2){peripheral_uncertain();return;}",
+      "replace": "if(length<1){peripheral_uncertain();return;}"
+    },
+    {
+      "id": "disconnect-length-short",
+      "check": "a disconnection event one byte short is uncertain",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(length<sizeof(ble_hci_ev_disconn_cmp)){peripheral_uncertain();return;}",
+      "replace": "if(length+1<sizeof(ble_hci_ev_disconn_cmp)){peripheral_uncertain();return;}"
+    },
+    {
+      "id": "handle-max-rejected",
+      "check": "the highest connection handle is valid",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(handle>BLE_HCI_LE_CONN_HANDLE_MAX){peripheral_uncertain();return;}",
+      "replace": "if(handle>=BLE_HCI_LE_CONN_HANDLE_MAX){peripheral_uncertain();return;}"
+    },
+    {
+      "id": "handle-out-of-range-accepted",
+      "check": "an out-of-range handle is uncertain",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(handle>BLE_HCI_LE_CONN_HANDLE_MAX){peripheral_uncertain();return;}",
+      "replace": ""
+    },
+    {
+      "id": "command-length-short",
+      "check": "a command completion too short for its status changes nothing",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(length>=sizeof(ble_hci_ev_command_complete)&&",
+      "replace": "if(length+1>=sizeof(ble_hci_ev_command_complete)&&"
+    },
+    {
+      "id": "observe-after-delivery",
+      "check": "links are observed before the host delivers the event",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "amity::radio::matter_hci_event(event);\n    return __real_ble_hs_hci_rx_evt(event,context);",
+      "replace": "const int result=__real_ble_hs_hci_rx_evt(event,context);\n    amity::radio::matter_hci_event(event);return result;"
+    },
+    {
+      "id": "delivery-result-replaced",
+      "check": "the wrapper returns the host's result",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "return __real_ble_hs_hci_rx_evt(event,context);",
+      "replace": "__real_ble_hs_hci_rx_evt(event,context);return 0;"
+    },
+    {
+      "id": "observe-under-radio-mutex",
+      "check": "raw observation never takes the radio mutex",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "const uint8_t code=buffer[0],length=buffer[1];",
+      "replace": "Lock radio;const uint8_t code=buffer[0],length=buffer[1];"
+    },
+    {
+      "id": "radio-before-chip",
+      "check": "the CHIP lock is never taken under the radio mutex",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(matter.owner==RadioMode::matter_induction){",
+      "replace": "if(matter.owner==RadioMode::matter_induction){Lock order;"
+    },
+    {
+      "id": "start-twice",
+      "check": "start() runs once",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(mutex)return ESP_ERR_INVALID_STATE;\n    mutex=",
+      "replace": "mutex="
+    },
+    {
+      "id": "start-skips-remote-hooks",
+      "check": "start() registers the remote hooks",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "ble_remote_set_radio_hooks(remote_request,remote_done,nullptr);",
+      "replace": ""
+    },
+    {
+      "id": "start-skips-runtime-hooks",
+      "check": "start() registers the runtime hooks",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "runtime_radio_hooks({reserve_consortium,release});",
+      "replace": ""
+    },
+    {
+      "id": "start-ignores-task-failure",
+      "check": "start() reports a failed task creation",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "==pdPASS?ESP_OK:ESP_ERR_NO_MEM;",
+      "replace": "==pdPASS?ESP_OK:ESP_OK;"
+    },
+    {
+      "id": "worker-stack-2048",
+      "check": "the worker has a 3072-byte stack",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "xTaskCreate(worker,\"radio_owner\",3072,",
+      "replace": "xTaskCreate(worker,\"radio_owner\",2048,"
+    },
+    {
+      "id": "remote-scan-unrecorded",
+      "check": "a remote scan records its reservation",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "remote_generation=arbiter.reservation().generation;return true;",
+      "replace": "return true;"
+    },
+    {
+      "id": "remote-done-skips-release",
+      "check": "a finished remote scan releases its reservation",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "if(remote_generation){arbiter.release(remote_generation,now());remote_generation=0;}",
+      "replace": "if(remote_generation){remote_generation=0;}"
+    },
+    {
+      "id": "remote-scan-duration",
+      "check": "a remote scan reserves its requested time",
+      "file": "components/radio_control/radio_control.cpp",
+      "find": "arbiter.request(RadioMode::remote_pairing,now(),seconds*1000,false);",
+      "replace": "arbiter.request(RadioMode::remote_pairing,now(),seconds*1001,false);"
+    }
+  ]
+}

@@ -30,8 +30,28 @@ if(AMITY_TEST_TIER STREQUAL standalone)
         SCENARIOS stop-fences-queued-work fail-safe-retry cleanup public-functions storage-errors delegate-refused
             scheduling-retry deletion-retry last-home-removed home-committed commit-reschedules pending-fabric-ignored)
 
+    # Clang warns about the CHIP_ERROR returned by the extern "C" link
+    # wrappers; GCC, which builds the firmware, accepts them.
+    set(radio_includes ${matter_includes} "${T}/radio_control_fakes" "${C}/radio_control/include"
+        "${C}/consortium/include" "${C}/amity_system/include" "${C}/ble_remote/include")
+    set_source_files_properties("${C}/radio_control/radio_control.cpp" "${T}/radio_matter_handoff_test.cpp"
+        PROPERTIES COMPILE_OPTIONS $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-return-type-c-linkage>)
+    amity_host_compile(radio_control SOURCES "${C}/radio_control/radio_control.cpp" INCLUDES ${radio_includes})
+    amity_test(radio_matter_handoff_test
+        SOURCES "${T}/radio_matter_handoff_test.cpp"
+        INCLUDES ${radio_includes}
+        LIBS amity_matter_fakes core_fakes consortium_runtime_seams ble_remote_seams amity_consortium amity_model
+        REGISTRY
+        SCENARIOS idle-handoff-candidate idle-handoff-inviter active-denied other-busy stale-disable stale-cleanup
+            bounded-timeout shared-budget peripheral-during-disable disable-refused handoff-after-other-owner
+            late-cleanup-handoff late-cleanup-release late-cleanup-result late-advertising-cleanup ordinary
+            worker-consumes-disable worker-finishes-cleanup disable-before-disconnect disconnect-before-disable
+            unrelated-events ip-state-releases ip-state-admits committed-disable-retry disable-fences-generation
+            late-peripheral-in-transition expired-workflow disable-before-matter-owns invalid-role table-overflow
+            hci-connection-forms hci-minimum-lengths hci-before-delivery hci-under-radio-mutex controller-reset start
+            start-failures remote-hooks advertising-refused)
+
     amity_python_tests(
         consortium_network_connect_test.py
-        radio_matter_handoff_test.py
     )
 endif()

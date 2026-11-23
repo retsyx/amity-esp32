@@ -63,7 +63,6 @@ network_diagnostics_test.py sdk-slice
 original_controller_web_test.py pending:E2
 partition_staging_test.py whole-file
 protocol_memory_policy_test.py sdk-slice
-radio_matter_handoff_test.py pending:G1
 release_hardware_test.py whole-file
 removed_metadata_test.py pending:A2
 runtime_peer_status_test.py pending:A2
