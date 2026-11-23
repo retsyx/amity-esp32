@@ -40,6 +40,25 @@ if(AMITY_TEST_TIER STREQUAL standalone)
             stop-clears-pairing stop-ignores-queued-open failed-stop remote-battery
             read-values write-dispatch disabled-callbacks rename-hostname)
 
+    # amity_hap.c, the Amity side of the HomeKit SDK fork, compiled whole as C11
+    set(amity_hap_includes "${T}/homekit_fakes" "${T}/core_fakes" "${T}/web_request_fakes"
+        "${HAP}/esp_hap_core/src/priv_includes" "${HAP}/esp_hap_core/include" "${HAP}/esp_hap_platform/include")
+    amity_host_compile(amity_hap_host
+        SOURCES "${HAP}/esp_hap_core/src/amity_hap.c"
+        INCLUDES ${amity_hap_includes})
+    set_target_properties(amity_hap_host PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
+    add_library(amity_hap_seams OBJECT "${T}/homekit_fakes/hap_core_seams.cpp")
+    target_include_directories(amity_hap_seams PRIVATE ${amity_hap_includes} "${T}" "${T}/fakes")
+    target_compile_options(amity_hap_seams PRIVATE ${amity_seam_warnings})
+    target_link_libraries(amity_hap_seams PRIVATE strict)
+    amity_test(amity_hap_test
+        SOURCES "${T}/amity_hap_test.cpp"
+        INCLUDES ${amity_hap_includes} "${T}"
+        LIBS amity_hap_host amity_hap_seams core_fakes
+        REGISTRY
+        SCENARIOS init init-without-lock lock pairing-window refresh-mdns rename-hostname rename-withdrawal-failure
+            rename-announcement-failure remove-pairings remove-pairings-failure stop stop-server-failure stop-failures)
+
     # HomeKit SDK fork
     amity_test(homekit_input_test
         SOURCES "${T}/homekit_input_test.cpp"

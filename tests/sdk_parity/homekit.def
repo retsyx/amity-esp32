@@ -4,9 +4,11 @@
 // GNU General Public License as published by the Free Software Foundation, either version 3 of the
 // License, or (at your option) any later version.
 
-// Constants and layouts the HomeKit fakes reproduce from the pinned ESP-IDF.
+// Constants and layouts the HomeKit fakes reproduce from the pinned ESP-IDF
+// and mDNS component. An mDNS text item holds two pointers, so only their
+// order and count are compared.
 // fakes: tests/homekit_fakes tests/core_fakes
-// headers: esp_wifi.h esp_mac.h nvs.h
+// headers: esp_wifi.h esp_mac.h nvs.h mdns.h
 // target: components/amity_homekit/homekit.cpp
 AMITY_PARITY(wifi_err_not_init, ESP_ERR_WIFI_NOT_INIT)
 AMITY_PARITY(wifi_err_conn, ESP_ERR_WIFI_CONN)
@@ -33,3 +35,6 @@ AMITY_PARITY(mac_efuse_ext, ESP_MAC_EFUSE_EXT)
 AMITY_PARITY(nvs_err_base, ESP_ERR_NVS_BASE)
 AMITY_PARITY(nvs_err_not_initialized, ESP_ERR_NVS_NOT_INITIALIZED)
 AMITY_PARITY(nvs_err_not_found, ESP_ERR_NVS_NOT_FOUND)
+
+AMITY_PARITY(mdns_txt_value_after_key, offsetof(mdns_txt_item_t, value) > offsetof(mdns_txt_item_t, key))
+AMITY_PARITY(mdns_txt_two_pointers, sizeof(mdns_txt_item_t) == 2 * sizeof(const char *))

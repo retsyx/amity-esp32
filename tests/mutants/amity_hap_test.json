@@ -1,0 +1,368 @@
+{
+  "ctest": "^amity_hap_test\\.",
+  "targets": [
+    "amity_hap_test"
+  ],
+  "baseline": {
+    "ctest": "^(controller_integration_test|hostname_services_test)\\.py$"
+  },
+  "mutants": [
+    {
+      "id": "stub-hap_amity_lock-return",
+      "check": "stub: early return from hap_amity_lock()",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "void hap_amity_lock(void) {",
+      "replace": "void hap_amity_lock(void) { return;"
+    },
+    {
+      "id": "stub-hap_amity_unlock-return",
+      "check": "stub: early return from hap_amity_unlock()",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "void hap_amity_unlock(void) {",
+      "replace": "void hap_amity_unlock(void) { return;"
+    },
+    {
+      "id": "stub-hap_amity_stop-empty",
+      "check": "stub: early return from hap_amity_stop()",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "int hap_amity_stop(void) {",
+      "replace": "int hap_amity_stop(void) { return (int){0};"
+    },
+    {
+      "id": "stub-hap_amity_rename_hostname-empty",
+      "check": "stub: early return from hap_amity_rename_hostname()",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "int hap_amity_rename_hostname(const char *name) {",
+      "replace": "int hap_amity_rename_hostname(const char *name) { return (int){0};"
+    },
+    {
+      "id": "init-after-stop",
+      "check": "a stopped service cannot start again",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "if (!atomic_load(&service_enabled)) return HAP_FAIL;\n    if (!name",
+      "replace": "if (!name"
+    },
+    {
+      "id": "init-hostname-33",
+      "check": "a hostname is at most 32 bytes",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "if (!name || strlen(name) >= sizeof(hostname)) return HAP_FAIL;\n    if (!lock)",
+      "replace": "if (!name || strlen(name) > sizeof(hostname)) return HAP_FAIL;\n    if (!lock)"
+    },
+    {
+      "id": "init-lock-recreated",
+      "check": "the HAP lock is created once",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "if (!lock) lock = xSemaphoreCreateRecursiveMutex();",
+      "replace": "lock = xSemaphoreCreateRecursiveMutex();"
+    },
+    {
+      "id": "init-without-lock",
+      "check": "init fails without its lock",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "if (!lock) return HAP_FAIL;\n    strcpy(hostname, name);",
+      "replace": "strcpy(hostname, name);"
+    },
+    {
+      "id": "init-hostname-dropped",
+      "check": "init keeps the hostname",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "strcpy(hostname, name);\n    return HAP_SUCCESS;",
+      "replace": "return HAP_SUCCESS;"
+    },
+    {
+      "id": "hostname-empty",
+      "check": "the hostname is the one kept",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "const char *hap_amity_hostname(void) { return hostname; }",
+      "replace": "const char *hap_amity_hostname(void) { return \"\"; }"
+    },
+    {
+      "id": "window-every-deadline",
+      "check": "only a new deadline is a new window",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "if (deadline != pairing_deadline) ++pairing_window;",
+      "replace": "++pairing_window;"
+    },
+    {
+      "id": "window-never",
+      "check": "a new deadline is a new window",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "if (deadline != pairing_deadline) ++pairing_window;",
+      "replace": "if (false) ++pairing_window;"
+    },
+    {
+      "id": "deadline-dropped",
+      "check": "the deadline is kept",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "pairing_deadline = deadline;\n}",
+      "replace": "(void)deadline;\n}"
+    },
+    {
+      "id": "enabled-always",
+      "check": "a stopped service is disabled",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "bool hap_amity_enabled(void) { return atomic_load(&service_enabled); }",
+      "replace": "bool hap_amity_enabled(void) { return true; }"
+    },
+    {
+      "id": "pairing-when-disabled",
+      "check": "a disabled service opens no window",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "return hap_amity_enabled() && pairing_deadline > esp_timer_get_time();",
+      "replace": "return pairing_deadline > esp_timer_get_time();"
+    },
+    {
+      "id": "pairing-at-deadline",
+      "check": "a window closes at its deadline",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "pairing_deadline > esp_timer_get_time()",
+      "replace": "pairing_deadline >= esp_timer_get_time()"
+    },
+    {
+      "id": "window-zero",
+      "check": "the window count is reported",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "uint32_t hap_amity_pairing_window(void) { return pairing_window; }",
+      "replace": "uint32_t hap_amity_pairing_window(void) { return 0; }"
+    },
+    {
+      "id": "refresh-first-announce",
+      "check": "a refresh is not a first announcement",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "int hap_amity_refresh_mdns(void) { return hap_mdns_announce(false); }",
+      "replace": "int hap_amity_refresh_mdns(void) { return hap_mdns_announce(true); }"
+    },
+    {
+      "id": "refresh-result-dropped",
+      "check": "a failed refresh is reported",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "int hap_amity_refresh_mdns(void) { return hap_mdns_announce(false); }",
+      "replace": "int hap_amity_refresh_mdns(void) { hap_mdns_announce(false); return HAP_SUCCESS; }"
+    },
+    {
+      "id": "rename-empty",
+      "check": "an empty hostname is refused",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "if (!name || !name[0] || strlen(name) >= sizeof(hostname)) return HAP_FAIL;",
+      "replace": "if (!name || strlen(name) >= sizeof(hostname)) return HAP_FAIL;"
+    },
+    {
+      "id": "rename-33",
+      "check": "a hostname is at most 32 bytes",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "if (!name || !name[0] || strlen(name) >= sizeof(hostname)) return HAP_FAIL;",
+      "replace": "if (!name || !name[0] || strlen(name) > sizeof(hostname)) return HAP_FAIL;"
+    },
+    {
+      "id": "rename-unlocked",
+      "check": "a rename holds the HAP lock",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "hap_amity_lock();\n    if (!strcmp(hostname, name))",
+      "replace": "if (!strcmp(hostname, name))"
+    },
+    {
+      "id": "rename-same-name",
+      "check": "an unchanged hostname changes nothing",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "if (!strcmp(hostname, name)) { hap_amity_unlock(); return HAP_SUCCESS; }",
+      "replace": ""
+    },
+    {
+      "id": "rename-same-name-locked",
+      "check": "an unchanged hostname releases the lock",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "if (!strcmp(hostname, name)) { hap_amity_unlock(); return HAP_SUCCESS; }",
+      "replace": "if (!strcmp(hostname, name)) { return HAP_SUCCESS; }"
+    },
+    {
+      "id": "rename-not-withdrawn",
+      "check": "a rename withdraws the old name",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "int result = hap_mdns_deannounce_for_rename();",
+      "replace": "int result = HAP_SUCCESS;"
+    },
+    {
+      "id": "rename-withdrawal-ignored",
+      "check": "a failed withdrawal keeps the old name",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "if (result == HAP_SUCCESS) {\n        strcpy(hostname, name);",
+      "replace": "if (true) {\n        strcpy(hostname, name);"
+    },
+    {
+      "id": "rename-name-kept",
+      "check": "a rename announces the new name",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "strcpy(hostname, name);\n        result = hap_mdns_announce(false);",
+      "replace": "result = hap_mdns_announce(false);"
+    },
+    {
+      "id": "rename-first-announce",
+      "check": "a rename is not a first announcement",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "strcpy(hostname, name);\n        result = hap_mdns_announce(false);",
+      "replace": "strcpy(hostname, name);\n        result = hap_mdns_announce(true);"
+    },
+    {
+      "id": "rename-not-restored",
+      "check": "a failed announcement restores the old name",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "strcpy(hostname, previous);\n            if (hap_mdns_announce(false) != HAP_SUCCESS)",
+      "replace": "if (hap_mdns_announce(false) != HAP_SUCCESS)"
+    },
+    {
+      "id": "rename-restore-not-announced",
+      "check": "a restored name is announced again",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "if (hap_mdns_announce(false) != HAP_SUCCESS)\n                ESP_LOGE(",
+      "replace": "if (false)\n                ESP_LOGE("
+    },
+    {
+      "id": "rename-restore-not-logged",
+      "check": "a failed restore is logged",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "ESP_LOGE(\"amity_hap\", \"Could not restore HomeKit discovery after hostname change\");",
+      "replace": "(void)0;"
+    },
+    {
+      "id": "rename-lock-kept",
+      "check": "a rename releases the HAP lock",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "hap_amity_unlock();\n    return result;\n}\nint hap_amity_remove_pairings",
+      "replace": "return result;\n}\nint hap_amity_remove_pairings"
+    },
+    {
+      "id": "rename-result-dropped",
+      "check": "a failed rename is reported",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "hap_amity_unlock();\n    return result;\n}\nint hap_amity_remove_pairings",
+      "replace": "hap_amity_unlock();\n    return HAP_SUCCESS;\n}\nint hap_amity_remove_pairings"
+    },
+    {
+      "id": "remove-sessions-kept",
+      "check": "removing pairings closes every session",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "int hap_amity_remove_pairings(void) {\n    hap_close_all_sessions();",
+      "replace": "int hap_amity_remove_pairings(void) {"
+    },
+    {
+      "id": "remove-keystore-ignored",
+      "check": "a keystore failure keeps the pairings",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "if (hap_keystore_delete_namespace(\"hap_ctrl\") != HAP_SUCCESS) return HAP_FAIL;",
+      "replace": "hap_keystore_delete_namespace(\"hap_ctrl\");"
+    },
+    {
+      "id": "remove-wrong-namespace",
+      "check": "the controllers live in hap_ctrl",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "hap_keystore_delete_namespace(\"hap_ctrl\")",
+      "replace": "hap_keystore_delete_namespace(\"hap_main\")"
+    },
+    {
+      "id": "remove-controllers-kept",
+      "check": "removing pairings clears the SDK database",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "memset(hap_priv.controllers, 0, sizeof(hap_priv.controllers));",
+      "replace": ""
+    },
+    {
+      "id": "remove-window-kept",
+      "check": "removing pairings closes the window",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "pairing_deadline = 0;\n    return hap_mdns_deannounce();",
+      "replace": "return hap_mdns_deannounce();"
+    },
+    {
+      "id": "remove-discovery-kept",
+      "check": "removing pairings withdraws discovery",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "pairing_deadline = 0;\n    return hap_mdns_deannounce();",
+      "replace": "pairing_deadline = 0;\n    return HAP_SUCCESS;"
+    },
+    {
+      "id": "stop-still-enabled",
+      "check": "stop disables the service",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "atomic_store(&service_enabled, false);",
+      "replace": "atomic_store(&service_enabled, true);"
+    },
+    {
+      "id": "stop-without-lock",
+      "check": "without its lock stop only disables the service",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "if (!lock) return HAP_SUCCESS;\n    hap_amity_lock();",
+      "replace": "hap_amity_lock();"
+    },
+    {
+      "id": "stop-unlocked",
+      "check": "stop holds the HAP lock",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "hap_amity_lock();\n    hap_amity_set_pairing_deadline(0);",
+      "replace": "hap_amity_set_pairing_deadline(0);"
+    },
+    {
+      "id": "stop-window-kept",
+      "check": "stop closes the pairing window",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "hap_amity_set_pairing_deadline(0);\n    hap_close_all_sessions();",
+      "replace": "hap_close_all_sessions();"
+    },
+    {
+      "id": "stop-sessions-kept",
+      "check": "stop closes every session",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "hap_close_all_sessions();\n    int result = hap_mdns_deannounce();",
+      "replace": "int result = hap_mdns_deannounce();"
+    },
+    {
+      "id": "stop-discovery-kept",
+      "check": "stop withdraws discovery",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "int result = hap_mdns_deannounce();\n    if (hap_ip_services_stop()",
+      "replace": "int result = HAP_SUCCESS;\n    if (hap_ip_services_stop()"
+    },
+    {
+      "id": "stop-ip-failure-ignored",
+      "check": "a failed IP services stop is reported",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "if (hap_ip_services_stop() != HAP_SUCCESS) result = HAP_FAIL;",
+      "replace": "hap_ip_services_stop();"
+    },
+    {
+      "id": "stop-server-under-lock",
+      "check": "the HTTP server stops after the lock is released",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "hap_amity_unlock();\n    // httpd_stop waits",
+      "replace": "// httpd_stop waits"
+    },
+    {
+      "id": "stop-server-failure-ignored",
+      "check": "a failed HTTP server stop is reported",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "if (hap_platform_httpd_stop(&hap_priv.server) != ESP_OK) return HAP_FAIL;",
+      "replace": "hap_platform_httpd_stop(&hap_priv.server);"
+    },
+    {
+      "id": "stop-server-kept",
+      "check": "a stopped server is forgotten",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "hap_priv.server = NULL;",
+      "replace": ""
+    },
+    {
+      "id": "stop-server-always",
+      "check": "only a running server is stopped",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "if (hap_priv.server) {",
+      "replace": "if (true) {"
+    },
+    {
+      "id": "stop-result-dropped",
+      "check": "a failed stop is reported",
+      "file": "third_party/esp-homekit-sdk/components/esp_hap_core/src/amity_hap.c",
+      "find": "No pairing/fabric namespace is erased.\n    return result;",
+      "replace": "No pairing/fabric namespace is erased.\n    (void)result;\n    return HAP_SUCCESS;"
+    }
+  ]
+}
