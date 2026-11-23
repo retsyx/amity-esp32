@@ -33,10 +33,21 @@ if(AMITY_TEST_TIER STREQUAL standalone)
     amity_host_compile(consortium_gatt_transport
         SOURCES "${C}/consortium/gatt_transport.cpp"
         INCLUDES ${gatt_includes})
+
+    amity_test(consortium_gatt_callback_test
+        SOURCES "${T}/consortium_gatt_callback_test.cpp"
+        INCLUDES ${gatt_includes} "${T}"
+        LIBS consortium_gatt_fakes consortium_admission_server_seams consortium_credentials_seams core_fakes
+            amity_consortium amity_model
+        PTHREAD
+        REGISTRY
+        SCENARIOS collect-candidates filter-and-bound callback-cookie disconnect-cancels own-disconnect
+            mtu-before-discovery bounded-stage-waits missing-attributes mtu-already-sent mtu-failures
+            mtu-callback-fences mtu-event-fences readvertise seal-prepared seal-stops-advertising stage-timing
+            progressive-selection scan-stop-failure scan-natural-end scan-window-bounds cookie-exhaustion)
     unset(gatt_includes)
     amity_python_tests(
         consortium_gatt_admission_test.py
-        consortium_gatt_callback_test.py
         consortium_gatt_fragment_test.py
     )
 endif()

@@ -1,0 +1,805 @@
+{
+  "ctest": "^consortium_gatt_callback_test\\.",
+  "targets": [
+    "consortium_gatt_callback_test"
+  ],
+  "baseline": {
+    "ctest": "^consortium_gatt_callback_test\\.py$",
+    "targets": []
+  },
+  "mutants": [
+    {
+      "id": "stub-advertise_remaining-empty",
+      "check": "stub: early return from advertise_remaining()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "int advertise_remaining(){",
+      "replace": "int advertise_remaining(){ return {};"
+    },
+    {
+      "id": "stub-server_gap-empty",
+      "check": "stub: early return from server_gap()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "int server_gap(ble_gap_event *event,void *token){",
+      "replace": "int server_gap(ble_gap_event *event,void *token){ return {};"
+    },
+    {
+      "id": "stub-complete-return",
+      "check": "stub: early return from complete()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "void complete(int error){",
+      "replace": "void complete(int error){ return;"
+    },
+    {
+      "id": "stub-current-false",
+      "check": "stub: early return from current()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "bool current(void *token){",
+      "replace": "bool current(void *token){ return false;"
+    },
+    {
+      "id": "stub-current-true",
+      "check": "stub: early return from current()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "bool current(void *token){",
+      "replace": "bool current(void *token){ return true;"
+    },
+    {
+      "id": "stub-admission_service-false",
+      "check": "stub: early return from admission_service()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "bool admission_service(const ble_hs_adv_fields& fields){",
+      "replace": "bool admission_service(const ble_hs_adv_fields& fields){ return false;"
+    },
+    {
+      "id": "stub-admission_service-true",
+      "check": "stub: early return from admission_service()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "bool admission_service(const ble_hs_adv_fields& fields){",
+      "replace": "bool admission_service(const ble_hs_adv_fields& fields){ return true;"
+    },
+    {
+      "id": "stub-client_gap-empty",
+      "check": "stub: early return from client_gap()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "int client_gap(ble_gap_event *event,void *token){",
+      "replace": "int client_gap(ble_gap_event *event,void *token){ return {};"
+    },
+    {
+      "id": "stub-on_mtu-empty",
+      "check": "stub: early return from on_mtu()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "int on_mtu(uint16_t connection,const ble_gatt_error *error,uint16_t mtu,void *token){",
+      "replace": "int on_mtu(uint16_t connection,const ble_gatt_error *error,uint16_t mtu,void *token){ return {};"
+    },
+    {
+      "id": "stub-on_service-empty",
+      "check": "stub: early return from on_service()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "int on_service(uint16_t,const ble_gatt_error *error,const ble_gatt_svc *service,void *token){",
+      "replace": "int on_service(uint16_t,const ble_gatt_error *error,const ble_gatt_svc *service,void *token){ return {};"
+    },
+    {
+      "id": "stub-on_characteristic-empty",
+      "check": "stub: early return from on_characteristic()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "int on_characteristic(uint16_t,const ble_gatt_error *error,const ble_gatt_chr *characteristic,void *token){",
+      "replace": "int on_characteristic(uint16_t,const ble_gatt_error *error,const ble_gatt_chr *characteristic,void *token){ return {};"
+    },
+    {
+      "id": "stub-wait-false",
+      "check": "stub: early return from wait()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "bool wait(uint32_t ms){",
+      "replace": "bool wait(uint32_t ms){ return false;"
+    },
+    {
+      "id": "stub-wait-true",
+      "check": "stub: early return from wait()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "bool wait(uint32_t ms){",
+      "replace": "bool wait(uint32_t ms){ return true;"
+    },
+    {
+      "id": "stub-clear_done-return",
+      "check": "stub: early return from clear_done()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "void clear_done(){",
+      "replace": "void clear_done(){ return;"
+    },
+    {
+      "id": "stub-capture_gatt_link-return",
+      "check": "stub: early return from capture_gatt_link()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "void capture_gatt_link(GattTiming& timing){",
+      "replace": "void capture_gatt_link(GattTiming& timing){ return;"
+    },
+    {
+      "id": "stub-gatt_server_seal-return",
+      "check": "stub: early return from gatt_server_seal()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "void gatt_server_seal(){",
+      "replace": "void gatt_server_seal(){ return;"
+    },
+    {
+      "id": "stub-gatt_client_candidates-fail",
+      "check": "stub: early return from gatt_client_candidates()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "esp_err_t gatt_client_candidates(uint64_t gen,std::vector<RuntimeAdmissionCandidate>& output){",
+      "replace": "esp_err_t gatt_client_candidates(uint64_t gen,std::vector<RuntimeAdmissionCandidate>& output){ return ESP_FAIL;"
+    },
+    {
+      "id": "stub-gatt_client_discover-fail",
+      "check": "stub: early return from gatt_client_discover()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "esp_err_t gatt_client_discover(uint64_t gen,std::vector<RuntimeAdmissionCandidate>& output){",
+      "replace": "esp_err_t gatt_client_discover(uint64_t gen,std::vector<RuntimeAdmissionCandidate>& output){ return ESP_FAIL;"
+    },
+    {
+      "id": "stub-gatt_client_connect_candidate-fail",
+      "check": "stub: early return from gatt_client_connect_candidate()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "esp_err_t gatt_client_connect_candidate(std::string_view selected,uint64_t gen){",
+      "replace": "esp_err_t gatt_client_connect_candidate(std::string_view selected,uint64_t gen){ return ESP_FAIL;"
+    },
+    {
+      "id": "stub-gatt_client_disconnect-return",
+      "check": "stub: early return from gatt_client_disconnect()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "void gatt_client_disconnect(){",
+      "replace": "void gatt_client_disconnect(){ return;"
+    },
+    {
+      "id": "stub-GattTiming-issued-false",
+      "check": "stub: early return from GattTiming::issued()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "bool issued(int result){",
+      "replace": "bool issued(int result){ return false;"
+    },
+    {
+      "id": "stub-GattTiming-issued-true",
+      "check": "stub: early return from GattTiming::issued()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "bool issued(int result){",
+      "replace": "bool issued(int result){ return true;"
+    },
+    {
+      "id": "stub-GattTiming-await-false",
+      "check": "stub: early return from GattTiming::await()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "bool await(uint64_t submitted,uint32_t timeout){",
+      "replace": "bool await(uint64_t submitted,uint32_t timeout){ return false;"
+    },
+    {
+      "id": "stub-GattTiming-await-true",
+      "check": "stub: early return from GattTiming::await()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "bool await(uint64_t submitted,uint32_t timeout){",
+      "replace": "bool await(uint64_t submitted,uint32_t timeout){ return true;"
+    },
+    {
+      "id": "stub-GattTiming-done-return",
+      "check": "stub: early return from GattTiming::done()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "void done(){successful=true;failure=\"none\";emit();}",
+      "replace": "void done(){ return;successful=true;failure=\"none\";emit();}"
+    },
+    {
+      "id": "stub-GattTiming-emit-return",
+      "check": "stub: early return from GattTiming::emit()",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "void emit(){",
+      "replace": "void emit(){ return;"
+    },
+    {
+      "id": "scan-window-10s",
+      "check": "the scan collects for 20 s",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "ble_gap_disc(BLE_OWN_ADDR_PUBLIC,20000,",
+      "replace": "ble_gap_disc(BLE_OWN_ADDR_PUBLIC,10000,"
+    },
+    {
+      "id": "scan-passive",
+      "check": "the scan is active",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "params.passive=0;params.filter_duplicates=1;",
+      "replace": "params.passive=1;params.filter_duplicates=1;"
+    },
+    {
+      "id": "scan-duplicates-unfiltered",
+      "check": "the controller filters duplicate reports",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "params.passive=0;params.filter_duplicates=1;",
+      "replace": "params.passive=0;params.filter_duplicates=0;"
+    },
+    {
+      "id": "first-candidate-ends-scan",
+      "check": "the first candidate does not end the scan",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "discovered.push_back({{random_hex(16),label},event->disc.addr});",
+      "replace": "discovered.push_back({{random_hex(16),label},event->disc.addr});client_discovery_waiting=false;complete(0);"
+    },
+    {
+      "id": "label-any-characters",
+      "check": "only hexadecimal suffixes label a candidate",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "fields.name[1]=='-'&&std::all_of(fields.name+2,fields.name+8,[](uint8_t c){return (c>='0'&&c<='9')||(c>='a'&&c<='f');})",
+      "replace": "fields.name[1]=='-'"
+    },
+    {
+      "id": "label-uppercase",
+      "check": "only lowercase hexadecimal suffixes label a candidate",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "(c>='a'&&c<='f')",
+      "replace": "(c>='a'&&c<='f')||(c>='A'&&c<='F')"
+    },
+    {
+      "id": "label-any-length",
+      "check": "only eight-character names label a candidate",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "fields.name_len==8&&",
+      "replace": "fields.name_len>=8&&"
+    },
+    {
+      "id": "label-any-prefix",
+      "check": "only A- names label a candidate",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "fields.name[0]=='A'&&fields.name[1]=='-'",
+      "replace": "fields.name[1]=='-'"
+    },
+    {
+      "id": "service-any-uuid",
+      "check": "only the admission service UUID admits an advertiser",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(ble_uuid_cmp(&fields.uuids128[i].u,&service_uuid.u)==0)return true;",
+      "replace": "return true;"
+    },
+    {
+      "id": "service-first-uuid-only",
+      "check": "any listed UUID may be the admission service",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "for(size_t i=0;i<fields.num_uuids128;++i)",
+      "replace": "for(size_t i=0;i<fields.num_uuids128&&i<1;++i)",
+      "survives": "a legacy advertisement holds one 128-bit UUID at most, so the first is the only one"
+    },
+    {
+      "id": "report-parse-ignored",
+      "check": "a report that does not parse is ignored",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(ble_hs_adv_parse_fields(&fields,event->disc.data,event->disc.length_data)!=0||!admission_service(fields))return 0;",
+      "replace": "ble_hs_adv_parse_fields(&fields,event->disc.data,event->disc.length_data);if(!admission_service(fields))return 0;"
+    },
+    {
+      "id": "duplicates-kept",
+      "check": "one candidate per address",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(duplicate!=discovered.end()||discovered.size()>=8)return 0;",
+      "replace": "if((false&&duplicate!=discovered.end())||discovered.size()>=8)return 0;"
+    },
+    {
+      "id": "duplicate-by-value-only",
+      "check": "an address is its type and value",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "return value.address.type==event->disc.addr.type&&memcmp(",
+      "replace": "return memcmp("
+    },
+    {
+      "id": "candidates-capped-at-9",
+      "check": "at most eight candidates",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "discovered.size()>=8",
+      "replace": "discovered.size()>=9"
+    },
+    {
+      "id": "report-after-window",
+      "check": "reports after the window are not collected",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(event->type==BLE_GAP_EVENT_DISC&&client_discovery_waiting){",
+      "replace": "if(event->type==BLE_GAP_EVENT_DISC){"
+    },
+    {
+      "id": "client-callbacks-unfenced",
+      "check": "stale client callbacks are ignored",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "int client_gap(ble_gap_event *event,void *token){std::lock_guard<std::mutex> guard(client_mutex);if(!current(token))return 0;",
+      "replace": "int client_gap(ble_gap_event *event,void *token){std::lock_guard<std::mutex> guard(client_mutex);if(!current(token)&&false)return 0;"
+    },
+    {
+      "id": "current-ignores-workflow",
+      "check": "callbacks after the workflow ended are ignored",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "bool current(void *token){return client_workflow&&",
+      "replace": "bool current(void *token){return "
+    },
+    {
+      "id": "discover-cookie-unchanged",
+      "check": "each discovery gets its own cookie",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "client_generation=gen;client_workflow=true;client_stopping=false;++client_callback_cookie;",
+      "replace": "client_generation=gen;client_workflow=true;client_stopping=false;"
+    },
+    {
+      "id": "generation-truncated",
+      "check": "the radio generation keeps 64 bits",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "client_generation=gen;client_workflow=true;",
+      "replace": "client_generation=uint32_t(gen);client_workflow=true;"
+    },
+    {
+      "id": "discover-token-from-generation",
+      "check": "callback tokens are cookies, not generations",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "client_stopping=false;++client_callback_cookie;token=reinterpret_cast<void*>(static_cast<uintptr_t>(client_callback_cookie));",
+      "replace": "client_stopping=false;++client_callback_cookie;token=reinterpret_cast<void*>(static_cast<uintptr_t>(uint32_t(gen)));"
+    },
+    {
+      "id": "disconnect-keeps-scan",
+      "check": "disconnect cancels the scan",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "discovered.clear();ble_gap_disc_cancel();ble_gap_conn_cancel();",
+      "replace": "discovered.clear();ble_gap_conn_cancel();"
+    },
+    {
+      "id": "disconnect-keeps-attempt",
+      "check": "disconnect cancels the connection attempt",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "discovered.clear();ble_gap_disc_cancel();ble_gap_conn_cancel();",
+      "replace": "discovered.clear();ble_gap_disc_cancel();"
+    },
+    {
+      "id": "disconnect-keeps-candidates",
+      "check": "disconnect drops the candidates",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "client_mtu_ready=client_mtu_waiting=false;discovered.clear();ble_gap_disc_cancel();",
+      "replace": "client_mtu_ready=client_mtu_waiting=false;ble_gap_disc_cancel();"
+    },
+    {
+      "id": "disconnect-keeps-link",
+      "check": "disconnect terminates the link",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "{cancelled_client=client_connection;ble_gap_terminate(client_connection,BLE_ERR_REM_USER_CONN_TERM);}",
+      "replace": "{cancelled_client=client_connection;}"
+    },
+    {
+      "id": "disconnect-terminates-other-link",
+      "check": "disconnect terminates the exact link",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "{cancelled_client=client_connection;ble_gap_terminate(client_connection,BLE_ERR_REM_USER_CONN_TERM);}",
+      "replace": "{cancelled_client=client_connection;ble_gap_terminate(client_connection+1,BLE_ERR_REM_USER_CONN_TERM);}"
+    },
+    {
+      "id": "disconnect-forgets-link",
+      "check": "disconnect remembers the terminated link",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "{cancelled_client=client_connection;ble_gap_terminate(",
+      "replace": "{ble_gap_terminate("
+    },
+    {
+      "id": "disconnect-wakes-success",
+      "check": "disconnect wakes the waiter as a failure",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "++client_callback_cookie;complete(BLE_HS_ENOTCONN);}",
+      "replace": "++client_callback_cookie;complete(0);}"
+    },
+    {
+      "id": "disconnect-keeps-cookie",
+      "check": "disconnect fences the old callbacks",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(client_callback_cookie<UINT32_MAX)++client_callback_cookie;complete(BLE_HS_ENOTCONN);",
+      "replace": "complete(BLE_HS_ENOTCONN);"
+    },
+    {
+      "id": "disconnect-repeats",
+      "check": "a second disconnect does nothing",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "void gatt_client_disconnect(){std::lock_guard<std::mutex> guard(client_mutex);if(!client_workflow)return;",
+      "replace": "void gatt_client_disconnect(){std::lock_guard<std::mutex> guard(client_mutex);"
+    },
+    {
+      "id": "any-disconnect-ends-workflow",
+      "check": "only the workflow's own link ending ends it",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "else if(event->type==BLE_GAP_EVENT_DISCONNECT&&client_connection==event->disconnect.conn.conn_handle){",
+      "replace": "else if(event->type==BLE_GAP_EVENT_DISCONNECT){"
+    },
+    {
+      "id": "own-disconnect-wakes-success",
+      "check": "the own link's end wakes the waiter as a failure",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "client_stopping=true;complete(BLE_HS_ENOTCONN);}",
+      "replace": "client_stopping=true;complete(0);}"
+    },
+    {
+      "id": "own-disconnect-keeps-going",
+      "check": "the own link's end stops the workflow",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "client_mtu_ready=client_mtu_waiting=false;client_stopping=true;complete(BLE_HS_ENOTCONN);}",
+      "replace": "client_mtu_ready=client_mtu_waiting=false;complete(BLE_HS_ENOTCONN);}"
+    },
+    {
+      "id": "connect-wait-10s",
+      "check": "the connection is awaited 11 s",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "connection_timing.await(connecting,11000)",
+      "replace": "connection_timing.await(connecting,10000)"
+    },
+    {
+      "id": "connect-wait-12s",
+      "check": "the connection is awaited 11 s",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "connection_timing.await(connecting,11000)",
+      "replace": "connection_timing.await(connecting,12000)"
+    },
+    {
+      "id": "connect-attempt-9s",
+      "check": "the controller attempts the connection for 10 s",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "ble_gap_connect(BLE_OWN_ADDR_PUBLIC,&candidate_address,10000,",
+      "replace": "ble_gap_connect(BLE_OWN_ADDR_PUBLIC,&candidate_address,9000,"
+    },
+    {
+      "id": "mtu-wait-4990",
+      "check": "the MTU is awaited 5 s",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "mtu_timing.await(negotiating,5000)",
+      "replace": "mtu_timing.await(negotiating,4990)"
+    },
+    {
+      "id": "mtu-wait-6s",
+      "check": "the MTU is awaited 5 s",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "mtu_timing.await(negotiating,5000)",
+      "replace": "mtu_timing.await(negotiating,6000)"
+    },
+    {
+      "id": "service-wait-4990",
+      "check": "the service is awaited 5 s",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "service_timing.await(discovering_service,5000)",
+      "replace": "service_timing.await(discovering_service,4990)"
+    },
+    {
+      "id": "characteristic-wait-4990",
+      "check": "the characteristic is awaited 5 s",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "characteristic_timing.await(discovering_characteristic,5000)",
+      "replace": "characteristic_timing.await(discovering_characteristic,4990)"
+    },
+    {
+      "id": "mtu-skipped",
+      "check": "the MTU is exchanged before discovery",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "const auto mtu_status=ble_gattc_exchange_mtu(client_connection,on_mtu,token);",
+      "replace": "const auto mtu_status=0;complete(0);(void)on_mtu;"
+    },
+    {
+      "id": "already-sent-not-awaited",
+      "check": "an already-sent exchange waits for its event",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(client_mtu_ready)complete(0);else client_mtu_waiting=true;",
+      "replace": "complete(0);"
+    },
+    {
+      "id": "already-sent-fails",
+      "check": "an already-sent exchange is not an error",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(mtu_status==BLE_HS_EALREADY){",
+      "replace": "if(false){"
+    },
+    {
+      "id": "already-sent-stale-accepted",
+      "check": "an already-sent exchange is checked against the workflow",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(!current(token)||client_stopping||client_connection==BLE_HS_CONN_HANDLE_NONE)return ESP_FAIL;",
+      "replace": ""
+    },
+    {
+      "id": "service-unchecked",
+      "check": "a missing service ends the connection",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "||!service_timing.await(discovering_service,5000)||!client_service_start)return ESP_FAIL;",
+      "replace": "||!service_timing.await(discovering_service,5000))return ESP_FAIL;"
+    },
+    {
+      "id": "characteristic-unchecked",
+      "check": "a missing characteristic ends the connection",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "||!characteristic_timing.await(discovering_characteristic,5000)||!client_attribute)return ESP_FAIL;",
+      "replace": "||!characteristic_timing.await(discovering_characteristic,5000))return ESP_FAIL;"
+    },
+    {
+      "id": "mtu-callback-error-ignored",
+      "check": "an MTU callback error fails the exchange",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "const int status=!error?BLE_HS_EINVAL:error->status?error->status:mtu<BLE_ATT_MTU_DFLT?BLE_HS_EINVAL:0;",
+      "replace": "const int status=!error?BLE_HS_EINVAL:mtu<BLE_ATT_MTU_DFLT?BLE_HS_EINVAL:0;"
+    },
+    {
+      "id": "mtu-callback-small-accepted",
+      "check": "an MTU below 23 fails the exchange",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "error->status?error->status:mtu<BLE_ATT_MTU_DFLT?BLE_HS_EINVAL:0;",
+      "replace": "error->status?error->status:mtu<1?BLE_HS_EINVAL:0;"
+    },
+    {
+      "id": "mtu-callback-missing-status",
+      "check": "an MTU callback without a status fails the exchange",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "const int status=!error?BLE_HS_EINVAL:",
+      "replace": "const int status=!error?0:"
+    },
+    {
+      "id": "mtu-callback-stale-accepted",
+      "check": "a stale MTU callback is ignored",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(!current(token)||client_stopping||connection==BLE_HS_CONN_HANDLE_NONE||connection!=client_connection)return BLE_HS_EDONE;",
+      "replace": "if((!current(token)&&false)||client_stopping||connection==BLE_HS_CONN_HANDLE_NONE||connection!=client_connection)return BLE_HS_EDONE;"
+    },
+    {
+      "id": "mtu-callback-stopping-accepted",
+      "check": "a stopping workflow ignores its MTU callback",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(!current(token)||client_stopping||connection==BLE_HS_CONN_HANDLE_NONE",
+      "replace": "if(!current(token)||connection==BLE_HS_CONN_HANDLE_NONE"
+    },
+    {
+      "id": "mtu-callback-other-link",
+      "check": "an MTU callback for another link is ignored",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "||connection==BLE_HS_CONN_HANDLE_NONE||connection!=client_connection)return BLE_HS_EDONE;",
+      "replace": "||connection==BLE_HS_CONN_HANDLE_NONE)return BLE_HS_EDONE;"
+    },
+    {
+      "id": "mtu-event-other-link",
+      "check": "an MTU event for another link is ignored",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "&&event->mtu.conn_handle==client_connection&&",
+      "replace": "&&"
+    },
+    {
+      "id": "mtu-event-any-channel",
+      "check": "only the ATT channel MTU counts",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "&&event->mtu.channel_id==BLE_L2CAP_CID_ATT&&",
+      "replace": "&&"
+    },
+    {
+      "id": "mtu-event-small-accepted",
+      "check": "an MTU event below 23 is ignored",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "event->mtu.value>=BLE_ATT_MTU_DFLT){",
+      "replace": "event->mtu.value>=0){"
+    },
+    {
+      "id": "mtu-event-default-rejected",
+      "check": "a 23-byte MTU event counts",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "event->mtu.value>=BLE_ATT_MTU_DFLT){",
+      "replace": "event->mtu.value>BLE_ATT_MTU_DFLT){"
+    },
+    {
+      "id": "mtu-event-duplicate-wakes",
+      "check": "a duplicate MTU event completes nothing",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(client_mtu_waiting){client_mtu_waiting=false;complete(0);}",
+      "replace": "{client_mtu_waiting=false;complete(0);}"
+    },
+    {
+      "id": "seal-terminates",
+      "check": "sealing keeps the active connection",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "void gatt_server_seal(){std::lock_guard<std::mutex> guard(state_mutex);server_sealed=true;",
+      "replace": "void gatt_server_seal(){std::lock_guard<std::mutex> guard(state_mutex);server_sealed=true;if(server_connection!=BLE_HS_CONN_HANDLE_NONE)ble_gap_terminate(server_connection,BLE_ERR_REM_USER_CONN_TERM);"
+    },
+    {
+      "id": "seal-keeps-advertising",
+      "check": "sealing stops advertising",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "server_sealed=true;if(ble_gap_adv_active())ble_gap_adv_stop();}",
+      "replace": "server_sealed=true;}"
+    },
+    {
+      "id": "sealed-readvertises",
+      "check": "a sealed server never advertises again",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(!server_open||server_sealed||now_ms()>=deadline||failed_proofs>=5)return BLE_HS_EAPP;",
+      "replace": "if(!server_open||now_ms()>=deadline||failed_proofs>=5)return BLE_HS_EAPP;"
+    },
+    {
+      "id": "sealed-accepts",
+      "check": "a sealed server turns away new centrals",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(!server_open||server_sealed||server_connection!=BLE_HS_CONN_HANDLE_NONE||server_session==UINT64_MAX)",
+      "replace": "if(!server_open||server_connection!=BLE_HS_CONN_HANDLE_NONE||server_session==UINT64_MAX)"
+    },
+    {
+      "id": "server-disconnect-no-close",
+      "check": "the server link's end closes the channel",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "server_connection=BLE_HS_CONN_HANDLE_NONE;Work work;work.close=true;post_work(work);srv_response.clear();",
+      "replace": "server_connection=BLE_HS_CONN_HANDLE_NONE;srv_response.clear();"
+    },
+    {
+      "id": "server-session-unchanged",
+      "check": "each admitted connection is a new session",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "else{++server_session;server_connection=event->connect.conn_handle;}",
+      "replace": "else{server_connection=event->connect.conn_handle;}"
+    },
+    {
+      "id": "timing-under-lock",
+      "check": "timing lines are logged with no transport lock held",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "capture_gatt_link(connection_timing);connection_timing.done();",
+      "replace": "capture_gatt_link(connection_timing);{std::lock_guard<std::mutex> guard(client_mutex);connection_timing.done();}"
+    },
+    {
+      "id": "timing-without-interval",
+      "check": "timing lines carry the connection interval",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "timing.interval=description.conn_itvl;",
+      "replace": ""
+    },
+    {
+      "id": "timing-without-latency",
+      "check": "timing lines carry the connection latency",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "timing.latency=description.conn_latency;",
+      "replace": ""
+    },
+    {
+      "id": "timing-without-mtu",
+      "check": "timing lines carry the MTU",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "timing.mtu=ble_att_mtu(connection);",
+      "replace": ""
+    },
+    {
+      "id": "timing-twice",
+      "check": "one timing line per stage",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "void done(){successful=true;failure=\"none\";emit();}",
+      "replace": "void done(){successful=true;failure=\"none\";emit();emitted=false;}"
+    },
+    {
+      "id": "timing-token",
+      "check": "timing lines never carry the candidate token",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "GattTiming connection_timing(\"connect\");",
+      "replace": "GattTiming connection_timing(selected.data());"
+    },
+    {
+      "id": "timing-tag",
+      "check": "timing lines log under setup_timing",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "else ESP_LOGI(\"setup_timing\",\"area=gatt stage=%s at_ms=%llu elapsed_ms=%llu result=%s failure=%s att_wait_ms=%llu",
+      "replace": "else ESP_LOGI(\"timing\",\"area=gatt stage=%s at_ms=%llu elapsed_ms=%llu result=%s failure=%s att_wait_ms=%llu"
+    },
+    {
+      "id": "timing-unbounded",
+      "check": "timing lines stay under 384 bytes",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "else ESP_LOGI(\"setup_timing\",\"area=gatt stage=%s at_ms=%llu elapsed_ms=%llu result=%s failure=%s att_wait_ms=%llu mtu=%u interval_units=%u latency=%u status=%d\",\n            stage,",
+      "replace": "else ESP_LOGI(\"setup_timing\",\"area=gatt stage=%s%s at_ms=%llu elapsed_ms=%llu result=%s failure=%s att_wait_ms=%llu mtu=%u interval_units=%u latency=%u status=%d\",\n            stage,\" pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad pad\","
+    },
+    {
+      "id": "timing-result-inverted",
+      "check": "timing lines report the result",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "successful?\"ok\":\"failed\",failure,\n            static_cast<unsigned long long>(att_wait_ms),unsigned(mtu)",
+      "replace": "successful?\"failed\":\"ok\",failure,\n            static_cast<unsigned long long>(att_wait_ms),unsigned(mtu)"
+    },
+    {
+      "id": "timing-status-dropped",
+      "check": "a failed wait reports its status",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(!result)status=client_error.load();",
+      "replace": ""
+    },
+    {
+      "id": "timing-wait-dropped",
+      "check": "timing lines report the time waited",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "att_wait_ms+=elapsed;",
+      "replace": ""
+    },
+    {
+      "id": "timing-at-start",
+      "check": "timing lines report when the stage ended",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "emitted=true;const auto at=now_ms();",
+      "replace": "emitted=true;const auto at=started;"
+    },
+    {
+      "id": "first-candidate-waits",
+      "check": "the first candidate is returned at once",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(!output.empty()||!client_discovery_waiting)return ESP_OK;",
+      "replace": "if(!client_discovery_waiting)return ESP_OK;"
+    },
+    {
+      "id": "snapshot-new-tokens",
+      "check": "the snapshot keeps its tokens",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "for(const auto& candidate:discovered)output.push_back(candidate.public_value);\n    return ESP_OK;",
+      "replace": "for(const auto& candidate:discovered)output.push_back({random_hex(16),candidate.public_value.label});\n    return ESP_OK;"
+    },
+    {
+      "id": "candidates-any-generation",
+      "check": "a foreign generation reads no candidates",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(!gen||!client_workflow||client_stopping||client_generation!=gen||client_connection!=BLE_HS_CONN_HANDLE_NONE)return ESP_ERR_INVALID_STATE;\n    for",
+      "replace": "if(!gen||!client_workflow||client_stopping||client_connection!=BLE_HS_CONN_HANDLE_NONE)return ESP_ERR_INVALID_STATE;\n    for"
+    },
+    {
+      "id": "unknown-token-stops-scan",
+      "check": "an unknown token leaves the scan running",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(found==discovered.end())return ESP_ERR_INVALID_ARG;",
+      "replace": "if(found==discovered.end()){ble_gap_disc_cancel();return ESP_ERR_INVALID_ARG;}"
+    },
+    {
+      "id": "scan-not-stopped",
+      "check": "the scan stops before the connection",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "const auto stopped=ble_gap_disc_cancel();",
+      "replace": "const auto stopped=0;"
+    },
+    {
+      "id": "other-candidate-address",
+      "check": "the connection goes to the chosen candidate's address",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "candidate_address=found->address;",
+      "replace": "candidate_address=discovered.front().address;"
+    },
+    {
+      "id": "selection-cookie-unchanged",
+      "check": "the stopped scan's callbacks are fenced",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "candidate_address=found->address;discovered.clear();++client_callback_cookie;",
+      "replace": "candidate_address=found->address;discovered.clear();",
+      "survives": "once a candidate is selected discovery no longer waits, so the stopped scan's reports and completion are ignored with or without a new cookie"
+    },
+    {
+      "id": "scan-stop-failure-ignored",
+      "check": "a scan that fails to stop prevents the connection",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(stopped&&stopped!=BLE_HS_EALREADY){connection_timing.status=stopped;connection_timing.failure=\"scan_cancel\";return ESP_FAIL;}",
+      "replace": "(void)stopped;"
+    },
+    {
+      "id": "cancel-race-ignored",
+      "check": "a workflow cancelled while the scan stops does not connect",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "{std::lock_guard<std::mutex> guard(client_mutex);if(!current(token)||client_stopping||client_generation!=gen)return ESP_ERR_INVALID_STATE;}\n    ble_gap_conn_params connect{};",
+      "replace": "    ble_gap_conn_params connect{};"
+    },
+    {
+      "id": "discovery-bound-20s",
+      "check": "a missing completion fails at 21 s",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "const auto until=now_ms()+21000;",
+      "replace": "const auto until=now_ms()+20000;"
+    },
+    {
+      "id": "discovery-bound-22s",
+      "check": "a missing completion fails at 21 s",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "const auto until=now_ms()+21000;",
+      "replace": "const auto until=now_ms()+22000;"
+    },
+    {
+      "id": "scan-end-no-wake",
+      "check": "the window's end wakes the waiter",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "client_discovery_waiting){client_discovery_waiting=false;complete(0);}",
+      "replace": "client_discovery_waiting){client_discovery_waiting=false;}"
+    },
+    {
+      "id": "discovery-cancel-unseen",
+      "check": "a cancelled discovery returns no candidate",
+      "file": "components/consortium/gatt_transport.cpp",
+      "find": "if(!current(token)||client_generation!=gen||client_stopping)return ESP_ERR_INVALID_STATE;\n            output.clear();",
+      "replace": "if(client_generation!=gen)return ESP_ERR_INVALID_STATE;\n            output.clear();"
+    }
+  ]
+}
