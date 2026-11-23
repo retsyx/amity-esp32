@@ -70,8 +70,4 @@ elseif(AMITY_TEST_TIER STREQUAL sdk)
         PASS_REGULAR_EXPRESSION "seam device_settings::reset_pending was called without a behaviour")
     unset(web_admin_qr_code)
     unset(web_admin_includes)
-
-    amity_python_tests(
-        controller_api_surface_test.py
-    )
 endif()

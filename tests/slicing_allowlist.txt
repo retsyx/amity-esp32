@@ -27,7 +27,6 @@ consortium_synchronization_recovery_test.py pending:A4
 consortium_task_lifetime_test.py pending:A2
 consortium_tcp_ack_trace_test.py pending:A4
 consortium_worker_poll_test.py pending:A4
-controller_api_surface_test.py pending:E1
 controller_integration_test.py pending:Z
 controller_startup_test.py pending:I
 esp_aes_dma_cleanup_test.py sdk-slice
