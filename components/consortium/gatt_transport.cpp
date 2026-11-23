@@ -239,7 +239,11 @@ void capture_gatt_link(GattTiming& timing){
     timing.mtu=ble_att_mtu(connection);
 }
 }
-esp_err_t gatt_register(){if(registered)return ESP_ERR_INVALID_STATE;work_queue=create_work_queue();client_done=xSemaphoreCreateBinary();if(!work_queue||!client_done)return ESP_ERR_NO_MEM;
+esp_err_t gatt_register(){if(registered)return ESP_ERR_INVALID_STATE;
+    // A retry after a failed creation keeps what the earlier attempt created.
+    if(!work_queue)work_queue=create_work_queue();
+    if(!client_done)client_done=xSemaphoreCreateBinary();
+    if(!work_queue||!client_done)return ESP_ERR_NO_MEM;
     static ble_gatt_chr_def chars[2]{};chars[0].uuid=&record_uuid.u;chars[0].access_cb=access;chars[0].flags=BLE_GATT_CHR_F_READ|BLE_GATT_CHR_F_WRITE;chars[0].val_handle=&attribute_handle;
     static std::vector<ble_gatt_svc_def> services;ble_gatt_svc_def service{};service.type=BLE_GATT_SVC_TYPE_PRIMARY;service.uuid=&service_uuid.u;service.characteristics=chars;services.push_back(service);
     if(chip::DeviceLayer::Internal::BLEMgrImpl().ConfigureExtraServices(services,false)!=CHIP_NO_ERROR)return ESP_ERR_INVALID_STATE;

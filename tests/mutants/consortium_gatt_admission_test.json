@@ -82,8 +82,8 @@
       "id": "queue-not-created",
       "check": "registration keeps the queue it creates",
       "file": "components/consortium/gatt_transport.cpp",
-      "find": "work_queue=create_work_queue();client_done=",
-      "replace": "work_queue=(create_work_queue(),nullptr);client_done="
+      "find": "if(!work_queue)work_queue=create_work_queue();",
+      "replace": "if(!work_queue)work_queue=(create_work_queue(),nullptr);"
     },
     {
       "id": "queue-failure-hidden",

@@ -184,7 +184,10 @@ void queue_timeouts() {
     CHECK(xQueueSend(queue, &value, 0) == pdTRUE && xQueueSend(queue, &value, pdMS_TO_TICKS(20)) == errQUEUE_FULL);
     CHECK(amity_fake::now_us() == 70000);
     amity_fake::fail_queue_creations(1);
-    CHECK(xQueueCreate(4, 4) == nullptr && xSemaphoreCreateMutex() != nullptr);
+    CHECK(xQueueCreate(4, 4) == nullptr);
+    SemaphoreHandle_t mutex = xSemaphoreCreateMutex();
+    CHECK(mutex != nullptr);
+    vSemaphoreDelete(mutex);
     vQueueDelete(queue);
 }
 
@@ -215,6 +218,7 @@ void mutex_ownership() {
     std::thread other([&] { given = xSemaphoreGive(mutex) == pdTRUE; });
     other.join();
     CHECK(!given && xSemaphoreGive(mutex) == pdTRUE && xSemaphoreGetMutexHolder(mutex) == nullptr);
+    vSemaphoreDelete(mutex);
 }
 
 SemaphoreHandle_t ready;
@@ -248,6 +252,7 @@ void blocking_threads() {
     done.store(true);
     clock.join();
     CHECK(amity_fake::now_us() >= 500000);
+    vQueueDelete(queue);
 }
 
 void endless_wait() {
