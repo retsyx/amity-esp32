@@ -88,6 +88,14 @@ target_include_directories(crypto_fakes PRIVATE "${T}/crypto_fakes" "${T}")
 target_compile_options(crypto_fakes PRIVATE ${amity_seam_warnings})
 target_link_libraries(crypto_fakes PRIVATE strict PUBLIC OpenSSL::Crypto)
 
+# The HTTP server, for binaries built only from Amity code: requests that
+# script what a handler reads and record what it sends. Tests list
+# "${T}/web_request_fakes" after "${T}/core_fakes" among their INCLUDES.
+add_library(httpd_fake OBJECT "${T}/web_request_fakes/httpd_fake.cpp")
+target_include_directories(httpd_fake PRIVATE "${T}/core_fakes" "${T}/web_request_fakes" "${T}")
+target_compile_options(httpd_fake PRIVATE ${amity_seam_warnings})
+target_link_libraries(httpd_fake PRIVATE strict)
+
 # AMITY_TEST_TIER is set only while the area files are read. The functions
 # below label each test with it, and fail anywhere else.
 function(amity_require_tier name)

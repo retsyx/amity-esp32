@@ -8,8 +8,9 @@
 if(AMITY_TEST_TIER STREQUAL standalone)
     amity_test(web_request_test PTHREAD
         SOURCES "${C}/web/request.cpp" "${T}/web_request_test.cpp"
-        INCLUDES "${T}/web_request_fakes" "${C}/web" "${C}/web/include" "${C}/system_services/include"
-            "${C}/consortium/include" "${C}/amity_system/include")
+        INCLUDES "${T}/core_fakes" "${T}/web_request_fakes" "${C}/web" "${C}/web/include"
+            "${C}/system_services/include" "${C}/consortium/include" "${C}/amity_system/include"
+        LIBS core_fakes httpd_fake)
     amity_python_tests(
         web_redirect_test.py
         web_session_tcp_test.py

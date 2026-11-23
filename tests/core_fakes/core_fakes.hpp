@@ -38,6 +38,16 @@ void fail_timer_creations(unsigned count);
 void fail_timer_starts(unsigned count);
 // Timers created and not yet deleted.
 std::size_t live_timers();
+struct Timer {
+    std::string name;
+    bool armed, deleted;
+    // The latest deadline the timer was started or restarted with.
+    int64_t deadline_us;
+    uint64_t period_us;
+    unsigned starts;
+};
+// Created timers, in creation order.
+std::vector<Timer> timers();
 
 // Thrown by an on_delay hook to leave a task's endless loop; run_task()
 // catches it and marks the task left.

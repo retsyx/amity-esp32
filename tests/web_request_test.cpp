@@ -5,96 +5,51 @@
 #include "web.hpp"
 #include "stall.hpp"
 #include "system_services.hpp"
+#include "core_fakes.hpp"
+#include "httpd_fake.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <chrono>
-#include <condition_variable>
 #include <csignal>
 #include <cstdio>
 #include <cstring>
-#include <mutex>
+#include <memory>
 #include <thread>
 #include <vector>
 #include <sys/socket.h>
 #include <unistd.h>
 
 using Clock=std::chrono::steady_clock;
+using amity_fake::HttpRequest;
 // web_stall_test.py exercises the guard; here each response records its bound.
 static std::vector<size_t> bounded;
 web::stall::Response::Response(httpd_req_t*,size_t size) {(void)armed_;bounded.push_back(size);}
 web::stall::Response::~Response() {}
-struct esp_timer {
-    esp_timer_create_args_t args;
-    std::mutex mutex;
-    std::condition_variable changed;
-    std::thread thread;
-    bool stopped=false;
-};
-unsigned fake_reboots=0;
-static unsigned live_timers=0,ota_begins=0,ota_aborts=0,ota_ends=0,ota_boots=0;
-static uint64_t last_timeout=0,shorten_timeout=0;
-static bool fail_create=false,fail_start=false;
-static std::vector<uint8_t> written;
-static esp_app_desc_t running{ESP_APP_DESC_MAGIC_WORD,"1.2.3","amity"};
-static esp_partition_t partition{1024*1024};
-int64_t esp_timer_get_time() {return std::chrono::duration_cast<std::chrono::microseconds>(Clock::now().time_since_epoch()).count();}
-esp_err_t esp_timer_create(const esp_timer_create_args_t *args,esp_timer_handle_t *timer) {
-    if(fail_create)return ESP_FAIL;
-    *timer=new esp_timer;(*timer)->args=*args;++live_timers;return ESP_OK;
-}
-esp_err_t esp_timer_start_once(esp_timer_handle_t timer,uint64_t timeout) {
-    last_timeout=timeout;if(fail_start)return ESP_FAIL;
-    const auto duration=std::chrono::microseconds(shorten_timeout?shorten_timeout:timeout);
-    timer->thread=std::thread([timer,duration] {
-        std::unique_lock<std::mutex> lock(timer->mutex);
-        if(timer->changed.wait_for(lock,duration,[timer]{return timer->stopped;}))return;
-        lock.unlock();timer->args.callback(timer->args.arg);
-    });return ESP_OK;
-}
-esp_err_t esp_timer_stop_blocking(esp_timer_handle_t timer,uint32_t) {
-    {std::lock_guard<std::mutex> lock(timer->mutex);timer->stopped=true;}
-    timer->changed.notify_one();if(timer->thread.joinable())timer->thread.join();return ESP_OK;
-}
-esp_err_t esp_timer_delete(esp_timer_handle_t timer) {assert(!timer->thread.joinable());delete timer;--live_timers;return ESP_OK;}
-int httpd_req_to_sockfd(httpd_req_t *req) {return req->socket;}
-int httpd_req_recv(httpd_req_t *req,char *buffer,size_t size) {
-    ++req->receive_calls;
-    if(req->socket_input) {
-        size_t got=0;
-        do {
-            const auto n=recv(req->socket,buffer+got,size-got,0);
-            if(n<=0)return static_cast<int>(n);
-            got+=n;req->received+=n;
-        } while(req->wait_record&&got<size);
-        return static_cast<int>(got);
-    }
-    const size_t n=std::min({size,req->chunk,req->input.size()-req->offset});
-    memcpy(buffer,req->input.data()+req->offset,n);req->offset+=n;return static_cast<int>(n);
-}
-esp_err_t httpd_req_get_hdr_value_str(httpd_req_t *req,const char *key,char *out,size_t size) {
-    auto it=req->request_headers.find(key);
-    if(it==req->request_headers.end()||it->second.size()>=size)return ESP_FAIL;
-    strcpy(out,it->second.c_str());return ESP_OK;
-}
-esp_err_t httpd_resp_set_status(httpd_req_t *req,const char *value) {req->status=value;return ESP_OK;}
-esp_err_t httpd_resp_set_type(httpd_req_t *,const char *) {return ESP_OK;}
-esp_err_t httpd_resp_set_hdr(httpd_req_t *req,const char *key,const char *value) {req->headers[key]=value;return ESP_OK;}
-esp_err_t httpd_resp_send(httpd_req_t *req,const char *value,size_t size) {req->response.assign(value,size);return ESP_OK;}
-esp_err_t httpd_resp_send_chunk(httpd_req_t *req,const char *value,size_t size) {if(size)req->response.append(value,size);return ESP_OK;}
-esp_err_t httpd_resp_sendstr(httpd_req_t *req,const char *value) {return httpd_resp_send(req,value,strlen(value));}
-const esp_app_desc_t *esp_app_get_description() {return &running;}
-const esp_partition_t *esp_ota_get_running_partition() {return &partition;}
-const esp_partition_t *esp_ota_get_next_update_partition(const esp_partition_t *) {return &partition;}
-esp_err_t esp_ota_get_state_partition(const esp_partition_t *,esp_ota_img_states_t *state) {*state=ESP_OTA_IMG_VALID;return ESP_OK;}
-esp_err_t esp_ota_mark_app_valid_cancel_rollback() {return ESP_OK;}
-esp_err_t esp_ota_begin(const esp_partition_t *,size_t,esp_ota_handle_t *handle) {++ota_begins;written.clear();*handle=1;return ESP_OK;}
-esp_err_t esp_ota_write(esp_ota_handle_t,const void *data,size_t size) {const auto *p=static_cast<const uint8_t *>(data);written.insert(written.end(),p,p+size);return ESP_OK;}
-esp_err_t esp_ota_abort(esp_ota_handle_t) {++ota_aborts;return ESP_OK;}
-esp_err_t esp_ota_end(esp_ota_handle_t) {++ota_ends;return ESP_OK;}
-esp_err_t esp_ota_set_boot_partition(const esp_partition_t *) {++ota_boots;return ESP_OK;}
 
-static httpd_req_t request(std::string input,size_t extra=0) {
-    httpd_req_t req;req.input=std::move(input);req.content_len=req.input.size()+extra;return req;
+static std::unique_ptr<HttpRequest> request(std::string input,size_t extra=0) {
+    auto req=std::make_unique<HttpRequest>(HTTP_POST,"/api",std::move(input));
+    req->content_len+=extra;req->socket=7;return req;
+}
+static bool closes(const HttpRequest &req) {return req.response->header("Connection")=="close";}
+// The body deadline timer, started at started_us.
+static bool body_timer(int64_t started_us,uint64_t timeout_us) {
+    const auto timers=amity_fake::timers();
+    return !timers.empty()&&timers.back().name=="http_body"&&timers.back().starts==1&&
+        timers.back().deadline_us==started_us+int64_t(timeout_us)&&timers.back().deleted;
+}
+// Once the body timer is armed, waits for transfers to start, then moves the
+// scripted clock by advance_us, which fires the timer on this thread.
+static std::thread expire_body_timer(int64_t advance_us) {
+    return std::thread([advance_us] {
+        for(;;) {
+            const auto timers=amity_fake::timers();
+            if(!timers.empty()&&timers.back().armed)break;
+            std::this_thread::yield();
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        amity_fake::advance_us(advance_us);
+    });
 }
 struct SocketPair {
     int fd[2];
@@ -102,50 +57,82 @@ struct SocketPair {
     ~SocketPair() {close(fd[0]);close(fd[1]);}
 };
 static void rejection_tests() {
-    auto req=request("",1024*1024);
-    assert(web::error(&req,"Login required","401 Unauthorized")==ESP_FAIL);
-    assert(req.status=="401 Unauthorized"&&req.headers["Connection"]=="close");
-    assert(req.response=="{\"error\":\"Login required\"}"&&req.receive_calls==0);
-    req=request("",513);std::string body;
-    assert(!web::body(&req,body,512));
-    assert(req.status=="413 Content Too Large"&&req.headers["Connection"]=="close"&&req.receive_calls==0);
-    for(bool start_failure:{false,true}) {
-        fail_create=!start_failure;fail_start=start_failure;req=request("abc");
-        assert(!web::body(&req,body));assert(req.status=="503 Service Unavailable"&&req.receive_calls==0);
-        assert(live_timers==0);
+    {
+        auto req=request("",1024*1024);
+        assert(web::error(req.get(),"Login required","401 Unauthorized")==ESP_FAIL);
+        assert(req->response->status=="401 Unauthorized"&&closes(*req));
+        assert(req->response->body=="{\"error\":\"Login required\"}"&&req->receive_calls==0);
     }
-    fail_create=fail_start=false;
+    {
+        auto req=request("",513);std::string body;
+        assert(!web::body(req.get(),body,512));
+        assert(req->response->status=="413 Content Too Large"&&closes(*req)&&req->receive_calls==0);
+    }
+    for(bool start_failure:{false,true}) {
+        if(start_failure)amity_fake::fail_timer_starts(1);else amity_fake::fail_timer_creations(1);
+        auto req=request("abc");std::string body;
+        assert(!web::body(req.get(),body));assert(req->response->status=="503 Service Unavailable"&&req->receive_calls==0);
+        assert(amity_fake::live_timers()==0);
+    }
 }
 static void regular_body_tests() {
-    auto req=request("{\"password\":\"secret\"}");req.chunk=3;std::string body;
-    assert(web::body(&req,body,512)&&body==req.input&&req.offset==req.content_len);
-    assert(last_timeout==15000000&&live_timers==0);
-    assert(web::json(&req,"{\"ok\":true}")==ESP_OK&&req.headers.count("Connection")==0);
-    assert(!bounded.empty()&&bounded.back()==req.response.size()&&req.response=="{\"ok\":true}");
-    req=request("");assert(web::body(&req,body)&&body.empty()&&live_timers==0);
-    req=request("partial",10);assert(!web::body(&req,body));
-    assert(req.status=="408 Request Timeout"&&req.headers["Connection"]=="close"&&live_timers==0);
+    {
+        auto req=request("{\"password\":\"secret\"}");req->chunk=3;std::string body;
+        const auto started=amity_fake::now_us();
+        assert(web::body(req.get(),body,512)&&body==req->body&&req->offset==req->content_len);
+        assert(body_timer(started,15000000)&&amity_fake::live_timers()==0);
+        assert(web::json(req.get(),"{\"ok\":true}")==ESP_OK&&!req->response->has_header("Connection"));
+        assert(!bounded.empty()&&bounded.back()==req->response->body.size()&&req->response->body=="{\"ok\":true}");
+    }
+    {
+        auto req=request("");std::string body;
+        assert(web::body(req.get(),body)&&body.empty()&&amity_fake::live_timers()==0);
+    }
+    {
+        auto req=request("partial",10);std::string body;
+        assert(!web::body(req.get(),body));
+        assert(req->response->status=="408 Request Timeout"&&closes(*req)&&amity_fake::live_timers()==0);
+    }
 }
 static void slow_record_test() {
-    SocketPair pair;auto req=request("",40);req.socket=pair.fd[0];req.socket_input=req.wait_record=true;
+    SocketPair pair;auto req=request("",40);req->socket=pair.fd[0];size_t received=0;
+    // A TLS record completes only once all its bytes arrive.
+    req->receive=[&](char *buffer,size_t size) {
+        size_t got=0;
+        do {
+            const auto n=recv(pair.fd[0],buffer+got,size-got,0);
+            if(n<=0)return static_cast<int>(n);
+            got+=n;received+=n;
+        } while(got<size);
+        return static_cast<int>(got);
+    };
     std::thread sender([&]{for(unsigned i=0;i<40;++i) {if(send(pair.fd[1],"x",1,0)<=0)break;std::this_thread::sleep_for(std::chrono::milliseconds(10));}});
+    std::thread clock=expire_body_timer(100000);
     const auto started=Clock::now();
     {
-        web::BodyReader reader(&req,100000);assert(reader.valid());char buffer[40];
+        web::BodyReader reader(req.get(),100000);assert(reader.valid());char buffer[40];
         assert(reader.receive(buffer,sizeof(buffer))<=0);
     }
+    clock.join();
     assert(Clock::now()-started<std::chrono::milliseconds(500));
-    assert(req.receive_calls==1&&req.received>1&&req.received<40&&live_timers==0);
+    assert(req->receive_calls==1&&received>1&&received<40&&amity_fake::live_timers()==0);
     sender.join();
 }
 static void slow_body_test() {
-    SocketPair pair;auto req=request("",512);req.socket=pair.fd[0];req.socket_input=true;
+    SocketPair pair;auto req=request("",512);req->socket=pair.fd[0];size_t received=0;
+    req->receive=[&](char *buffer,size_t size) {
+        const auto n=recv(pair.fd[0],buffer,size,0);
+        if(n>0)received+=n;
+        return static_cast<int>(n);
+    };
     std::thread sender([&]{for(unsigned i=0;i<512;++i) {if(send(pair.fd[1],"x",1,0)<=0)break;std::this_thread::sleep_for(std::chrono::milliseconds(10));}});
-    shorten_timeout=100000;std::string body;const auto started=Clock::now();
-    assert(!web::body(&req,body,512));shorten_timeout=0;
+    std::thread clock=expire_body_timer(15000000);
+    std::string body;const auto started=Clock::now();const auto started_us=amity_fake::now_us();
+    assert(!web::body(req.get(),body,512));
+    clock.join();
     assert(Clock::now()-started<std::chrono::milliseconds(500));
-    assert(req.status=="408 Request Timeout"&&req.headers["Connection"]=="close");
-    assert(last_timeout==15000000&&req.received<512&&live_timers==0);sender.join();
+    assert(req->response->status=="408 Request Timeout"&&closes(*req));
+    assert(body_timer(started_us,15000000)&&received<512&&amity_fake::live_timers()==0);sender.join();
 }
 int main() {
     signal(SIGPIPE,SIG_IGN);

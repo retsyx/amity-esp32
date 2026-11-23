@@ -52,6 +52,7 @@ struct esp_timer {
     bool armed = false, running = false, deleted = false;
     int64_t deadline = 0;
     uint64_t period = 0;
+    unsigned starts = 0;
     std::thread::id runner;
 };
 
@@ -350,6 +351,15 @@ std::size_t live_timers() {
                                      [](const std::unique_ptr<esp_timer> &timer) { return !timer->deleted; }));
 }
 
+std::vector<Timer> timers() {
+    std::lock_guard<std::mutex> lock(state);
+    std::vector<Timer> result;
+    for (const auto &timer : timer_blocks)
+        result.push_back({timer->args.name ? timer->args.name : "", timer->armed, timer->deleted, timer->deadline,
+                          timer->period, timer->starts});
+    return result;
+}
+
 void on_delay(std::function<void(TickType_t)> hook) {
     std::lock_guard<std::mutex> lock(state);
     delay_hook = std::move(hook);
@@ -561,6 +571,7 @@ static esp_err_t start_timer(esp_timer_handle_t timer, uint64_t first, uint64_t 
     timer->armed = true;
     timer->deadline = clock_us.load() + int64_t(first);
     timer->period = period;
+    ++timer->starts;
     return ESP_OK;
 }
 esp_err_t esp_timer_start_once(esp_timer_handle_t timer, uint64_t timeout_us) { return start_timer(timer, timeout_us, 0); }

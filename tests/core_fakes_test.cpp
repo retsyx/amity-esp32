@@ -75,7 +75,11 @@ void timer_failures() {
     CHECK(esp_timer_restart(handle, 50) == ESP_OK);
     uint64_t expiry = 0;
     CHECK(esp_timer_get_expiry_time(handle, &expiry) == ESP_OK && expiry == 50);
+    auto record = amity_fake::timers().back();
+    CHECK(record.armed && record.deadline_us == 50 && record.starts == 1 && !record.deleted);
     CHECK(esp_timer_stop(handle) == ESP_OK && esp_timer_delete(handle) == ESP_OK);
+    record = amity_fake::timers().back();
+    CHECK(!record.armed && record.deleted && amity_fake::timers().size() == 1);
 }
 
 // A task loop that only ends when its delay hook throws.
