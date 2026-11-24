@@ -34,7 +34,7 @@ def test_source_theft():
 
 
 def test_source_theft_isolated():
-    main, secondary = DUT("amity-dut"), DUT("amity-dut-4")
+    main, secondary = DUT("amity-dut"), DUT("amity-dut-2")
     output, source_connection = secondary.tentacle(1), secondary.tentacle(2)
     tv = TvComponent(output.front, "Isolated TV")
     avr = AvrComponent(output.back, "Isolated AVR")

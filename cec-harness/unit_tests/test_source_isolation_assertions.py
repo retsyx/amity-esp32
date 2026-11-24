@@ -25,7 +25,7 @@ class SourceIsolationAssertionTests(unittest.TestCase):
 
     @contextmanager
     def fixture(self):
-        dut = DUT("amity-dut-4")
+        dut = DUT("amity-dut-2")
         tv = TvComponent(dut.tentacle(1).front, "Isolation TV")
         avr = AvrComponent(dut.tentacle(1).back, "Isolation AVR")
         player = PlaybackComponent(avr, "Isolation Play", port=1)

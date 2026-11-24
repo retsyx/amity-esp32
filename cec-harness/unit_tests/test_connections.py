@@ -29,7 +29,7 @@ class ConnectionTests(unittest.TestCase):
             self.assertFalse(low.called or release.called or request.called)
 
     def test_all_documented_adapters_and_configurable_upstream_tv_input(self):
-        dut = DUT("amity-dut-4")
+        dut = DUT("amity-dut-2")
         indices = sorted({index for name, index, _ in wiring().cec if name == dut.name})
         for index in indices:
             front_gpio = cec_gpio(dut.name, index, "front")
@@ -40,7 +40,7 @@ class ConnectionTests(unittest.TestCase):
                 self.assertEqual(adapter.front.tv_input, 3)
                 self.assertEqual(adapter.back.tv_input, 3)
         with self.assertRaises(ValueError):
-            DUT("amity-dut").tentacle(1)
+            DUT("amity-dut-4").tentacle(1)
         for bad in (-1, True, 0.0, "0"):
             with self.subTest(index=bad), self.assertRaises(ValueError):
                 dut.tentacle(bad)
@@ -95,7 +95,7 @@ class ConnectionTests(unittest.TestCase):
     def test_duck_typed_dut_uses_existing_lookup_without_hardware_methods(self):
         lookups = []
 
-        documented_gpio = cec_gpio("amity-dut-4", 2, "back")
+        documented_gpio = cec_gpio("amity-dut-2", 2, "back")
 
         class Wiring:
             def cec_gpio(self, name, tentacle, direction):

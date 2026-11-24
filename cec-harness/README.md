@@ -26,8 +26,8 @@ After [Pi software setup](#pi-software-setup), build the firmware as described
 in `BUILDING.md` and copy its images to the Pi checkout:
 
 ```sh
-ssh pi@test2.local mkdir -p amity/esp32/firmware
-scp build/amity-partition.bin build/amity-update.bin pi@test2.local:amity/esp32/firmware/
+ssh pi@amity-harness.local mkdir -p amity/esp32/firmware
+scp build/amity-partition.bin build/amity-update.bin pi@amity-harness.local:amity/esp32/firmware/
 ```
 
 Then, from the checkout root on the Pi, flash every DUT over USB and run the
@@ -876,7 +876,7 @@ Claim failures remain explicit; the backend does not retry using another type.
 
 ## Main reboot during playback
 
-`functional_tests/main_reboot.py` adds `amity-dut-4` to the original main
+`functional_tests/main_reboot.py` adds `amity-dut-2` to the original main
 `amity-dut`. The TV connects to the main's tentacle 0/front; the AVR's output
 reaches that tentacle's back without CEC. AVR inputs 2 and 3 attach to the
 member's tentacles 0 and 1, selected as `1.2.0.0` and `1.3.0.0` through the
@@ -905,7 +905,7 @@ TV. Select `--test activity_main_reboot`; it also runs in `--test all`.
 ## Dual-display activity scenario
 
 `functional_tests/dual_display.py` uses `amity-dut` as the original main and
-adds `amity-dut-4` as a headless member through the existing Add flow. Only the
+adds `amity-dut-2` as a headless member through the existing Add flow. Only the
 main needs HTTP credentials. The TV connects to member tentacle 1/front; the
 AVR's CEC-capable output connects to 1/back, with the player on AVR input 1.
 The projector is a CEC display on 2/front. The AVR's second output connects to
@@ -942,7 +942,7 @@ remain available. Select `--test dual_display`; it also runs in `--test all`.
 ## Source theft before the AVR
 
 The isolated-source case in `functional_tests/source_theft.py` adds
-`amity-dut-4` to the original main `amity-dut`. Its TV attaches to tentacle
+`amity-dut-2` to the original main `amity-dut`. Its TV attaches to tentacle
 1/front, the AVR output to 1/back,
 and the ordinary media player to AVR input 1. AVR input 2 attaches to tentacle
 2/front, with the thief on 2/back. `AvrAttachment` represents the same AVR at
@@ -1027,7 +1027,7 @@ activity's Standby. Fixture configuration closes before member removal.
 Select `--test qualified_names`.
 
 The activity group's `test_activity_same_osd_locations` applies the same checks
-to three identical triples on `amity-dut` adapter 0 and `amity-dut-4` adapters
+to three identical triples on `amity-dut` adapter 0 and `amity-dut-2` adapters
 0 and 1. Matching adapter numbers across owners and matching owners across
 adapters independently exercise both parts of device location. Each activity
 must control only its selected triple; observations cover both inactive triples.
@@ -1329,7 +1329,7 @@ two remote-key sub-tests,
 `--test add_amity` for adding and removing the second board, `--test consortium`
 for the two-owner equipment scenario, `--test consortium_three_duts` for the
 three-owner scenario, `--test consortium_four_duts` for the four-owner scenario,
-`--test dual_display` for the TV/projector scenario on `amity-dut-4`,
+`--test dual_display` for the TV/projector scenario on `amity-dut-2`,
 `--test split_theater` for independent owner progress through a shared AVR,
 `--test source_theft_isolated` for suppression ahead of the AVR,
 `--test qualified_names` for identical equipment identities on two owners,
@@ -1515,7 +1515,7 @@ described above. Each test bed contains its DUTs, components, scan evidence,
 CEC records and cleanup outcome. A failed run also includes an error. Test
 functions need no report-writing code.
 
-## Interactive use on test2
+## Interactive use on amity-harness
 
 This example inspects an enrolled main retained after a failed run. Direct
 `DUT` and `TestBed` calls do not perform the runner's enrollment or final reset.

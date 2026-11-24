@@ -5,7 +5,7 @@ from amity_harness.transitions import ActivityHandoff
 
 
 def test_dual_display():
-    main, secondary = DUT("amity-dut"), DUT("amity-dut-4")
+    main, secondary = DUT("amity-dut"), DUT("amity-dut-2")
     tv_connection, projector_connection = secondary.tentacle(1), secondary.tentacle(2)
     tv = TvComponent(tv_connection.front, "Dual TV")
     avr = AvrComponent(tv_connection.back, "Dual AVR")

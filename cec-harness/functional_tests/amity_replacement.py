@@ -54,7 +54,7 @@ def _exercise(main, keyboard, activity, equipment, inactive, *, source=True):
 
 
 def test_amity_replacement():
-    main, previous, replacement = DUT("amity-dut"), DUT("amity-dut-2"), DUT("amity-dut-4")
+    main, previous, replacement = DUT("amity-dut"), DUT("amity-dut-4"), DUT("amity-dut-2")
     local = _equipment(main, 0, "Local")
     old = _equipment(previous, 0, "Same")
     new = _equipment(replacement, 1, "Same")

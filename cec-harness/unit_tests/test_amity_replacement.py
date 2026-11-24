@@ -36,13 +36,16 @@ class PhysicalScan:
 
 
 class ReplacementFixture(CascadeFixture):
+    # The replacement needs a second wired adapter; the previous board does not.
+    candidate_name = "amity-dut-4"
+
     def __init__(self):
         self.apply_mutation = None
         self.lost_apply_reply = False
         self.replacement = None
         super().__init__()
         self.member.member_boot, self.member.timeout = self.member_boot, 10
-        self.new_dut = DUT("amity-dut-4")
+        self.new_dut = DUT("amity-dut-2")
         self.new_dut._testbed = self.bed
         self.bed.duts = (*self.bed.duts, self.new_dut)
         self.bed.members = (self.candidate, self.new_dut)

@@ -492,7 +492,7 @@ def test_activity_manual_component_secondary():
 
 
 def test_activity_same_osd_locations():
-    main, secondary = DUT("amity-dut"), DUT("amity-dut-4")
+    main, secondary = DUT("amity-dut"), DUT("amity-dut-2")
     # The first pair differs only by owner; the second only by adapter.
     systems = (same_name_equipment(main), same_name_equipment(secondary),
                same_name_equipment(secondary, 1))

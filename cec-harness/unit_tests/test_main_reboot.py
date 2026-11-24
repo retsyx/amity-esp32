@@ -19,7 +19,7 @@ from unit_tests.virtual_time import use_virtual_time
 class MainRebootFixture:
     def __init__(self):
         with use_config(RunConfig(insecure=True)):
-            self.main, self.secondary = DUT("amity-dut"), DUT("amity-dut-4")
+            self.main, self.secondary = DUT("amity-dut"), DUT("amity-dut-2")
         self.owners = (self.main, self.secondary)
         self.main_id, self.member_id = self.main.identity.device_id, self.secondary.identity.device_id
         self.boots = {self.main_id: "1" * 32, self.member_id: "2" * 32}

@@ -79,7 +79,7 @@ class WiringTests(unittest.TestCase):
         self.assertEqual(wiring.dut_cec_gpio("amity-dut", 0, "back"), 2)
         self.assertEqual(wiring.identities["amity-dut"].mac, "68:EE:8F:50:2B:44")
         with self.assertRaises(ValueError):
-            wiring.cec_gpio("amity-dut", 1, "front")
+            wiring.cec_gpio("amity-dut", 4, "front")
         with self.assertRaises(ValueError):
             DUT("unknown", wiring=wiring)
 

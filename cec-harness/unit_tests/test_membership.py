@@ -49,11 +49,12 @@ class UnitSession:
 
 class Fixture:
     token = "PRIVATE_CANDIDATE_TOKEN"
+    candidate_name = "amity-dut-2"
 
     def __init__(self):
         self.main = DUT("amity-dut")
         self.gpio = FakeGPIO()
-        self.candidate = DUT("amity-dut-2", gpio=self.gpio)
+        self.candidate = DUT(self.candidate_name, gpio=self.gpio)
         self.main.membership_operations = []
         self.callbacks, self.calls, self.presses, self.operations = [], [], [], {}
         self.group, self.boot, self.member_boot = "a" * 32, "b" * 32, "c" * 32

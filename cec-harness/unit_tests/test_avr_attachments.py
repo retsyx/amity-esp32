@@ -16,7 +16,7 @@ from unit_tests.virtual_time import use_virtual_time
 class AvrAttachmentTests(unittest.TestCase):
     def setUp(self):
         self.clock = use_virtual_time(self)
-        self.dut = DUT("amity-dut-4")
+        self.dut = DUT("amity-dut-2")
         self.tv = TvComponent(self.dut.tentacle(1).front, "Attached TV")
         self.avr = AvrComponent(self.dut.tentacle(1).back, "Attached AVR")
         self.player = PlaybackComponent(self.avr, "Attached Play", port=1)

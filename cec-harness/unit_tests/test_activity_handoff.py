@@ -44,7 +44,7 @@ class ActivityHandoffTests(unittest.TestCase):
 
     @contextmanager
     def fixture(self):
-        dut = DUT("amity-dut-4")
+        dut = DUT("amity-dut-2")
         previous = TvComponent(dut.tentacle(1).front, "Old TV")
         selected = TvComponent(dut.tentacle(2).front, "New TV")
         avr = AvrComponent(dut.tentacle(1).back, "Shared AVR")
@@ -415,7 +415,7 @@ class NoWakeTests(unittest.TestCase):
 
     @contextmanager
     def fixture(self, observed=("tv", "avr", "player")):
-        dut = DUT("amity-dut-4")
+        dut = DUT("amity-dut-2")
         tv = TvComponent(dut.tentacle(0).front, "Sleeping TV")
         avr = AvrComponent(dut.tentacle(0).back, "Sleeping AVR")
         player = PlaybackComponent(avr, "Former Source", port=1)

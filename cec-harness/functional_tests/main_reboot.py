@@ -11,7 +11,7 @@ HOLD_SECONDS = 3
 
 
 def test_activity_main_reboot():
-    main, secondary = DUT("amity-dut"), DUT("amity-dut-4")
+    main, secondary = DUT("amity-dut"), DUT("amity-dut-2")
     display, game_input, movie_input = main.tentacle(0), secondary.tentacle(0), secondary.tentacle(1)
     tv = TvComponent(display.front, "Restart TV")
     # The AVR's output reaches the main's tentacle without CEC. Its inputs 2

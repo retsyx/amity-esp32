@@ -154,7 +154,7 @@ class PiSetupTests(unittest.TestCase):
             root = Path(directory) / "harness"
             expected = {"setup.py", "setup_matter.py", "setup_runtime.py", "run", "run.py", "fw-reset",
                         "flash-duts", "README.md",
-                        "TEST-HARNESS.md", "TEST-HARNESS2.md", "matter-requirements.txt",
+                        "TEST-HARNESS.md", "matter-requirements.txt",
                         "runtime-requirements.txt", "runtime-constraints.txt", "amity_harness/__init__.py",
                         "functional_tests/example.py", "unit_tests/test_example.py",
                         "browser_tests/soak_browser.py"}

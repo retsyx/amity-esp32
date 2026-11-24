@@ -72,9 +72,9 @@ class AttachmentTopologyTests(unittest.TestCase):
             assign_addresses([unbased])
 
     def test_different_duts_and_adapters_have_independent_address_domains(self):
-        multi = DUT("amity-dut-4")
+        multi = DUT("amity-dut-2")
         trees = [self.tree(multi, tentacle=0), self.tree(multi, tentacle=1, tv_input=3),
-                 self.tree(DUT("amity-dut-2"))]
+                 self.tree(DUT("amity-dut-4"))]
         components = [component for tree in trees for component in tree]
         assign_addresses(list(reversed(components)))
         for tree, base in zip(trees, (0x1000, 0x3000, 0x1000)):

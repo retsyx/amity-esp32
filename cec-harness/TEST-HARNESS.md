@@ -5,7 +5,7 @@ Don't edit this file without permission.
 ## Harness testbed
 
 username: pi
-hostname: test2.local
+hostname: amity-harness.local
 
 The harness testbed is a Raspberry Pi 5 without a USB console.
 
@@ -43,15 +43,21 @@ update the tables when bench wiring changes.
 |---|---:|---|---:|---:|
 | amity-dut   | 0 | front | 1 | 23 |
 | amity-dut   | 0 | back | 2 | 24 |
+| amity-dut   | 1 | front | 5 | 7 |
+| amity-dut   | 1 | back | 6 | 8 |
+| amity-dut   | 2 | front | 7 | 9 |
+| amity-dut   | 2 | back | 8 | 10 |
+| amity-dut   | 3 | front | 9 | 14 |
+| amity-dut   | 3 | back | 44 | 15 |
 | amity-dut-2 | 0 | front | 1 | 17 |
 | amity-dut-2 | 0 | back | 2 | 27 |
+| amity-dut-2 | 1 | front | 5 | 5 |
+| amity-dut-2 | 1 | back | 6 | 6 |
+| amity-dut-2 | 2 | front | 7 | 20 |
+| amity-dut-2 | 2 | back | 8 | 21 |
+| amity-dut-2 | 3 | front | 9 | 16 |
+| amity-dut-2 | 3 | back | 44 | 26 |
 | amity-dut-3 | 0 | front | 1 | 22 |
 | amity-dut-3 | 0 | back | 2 | 25 |
 | amity-dut-4 | 0 | front | 1 | 12 |
 | amity-dut-4 | 0 | back | 2 | 13 |
-| amity-dut-4 | 1 | front | 5 | 5 |
-| amity-dut-4 | 1 | back | 6 | 6 |
-| amity-dut-4 | 2 | front | 7 | 20 |
-| amity-dut-4 | 2 | back | 8 | 21 |
-| amity-dut-4 | 3 | front | 9 | 16 |
-| amity-dut-4 | 3 | back | 44 | 26 |
