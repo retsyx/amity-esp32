@@ -21,15 +21,18 @@ from amity_harness.transitions import observe_no_standby
 DURATION_SECONDS = 2 * 60 * 60
 ACTIVITY_SECONDS = 20
 KEY_INTERVAL_SECONDS = 5
+# The firmware and UI support at most 16 activities, one per soak source.
+MAX_ACTIVITIES = 16
 
 
-def _system(dut, number):
-    connection = dut.tentacle(0)
+def _system(dut, tentacle, number):
+    # Tentacle 0 has two sources; every other wired adapter has one.
+    connection = dut.tentacle(tentacle)
     tv = TvComponent(connection.front, f"Soak{number} TV")
     avr = AvrComponent(connection.back, f"Soak{number} AVR")
     players = tuple(PlaybackComponent(avr, f"Soak{number} Player{port}", port=port,
                                       address_type="playback" if port == 1 else "tuner")
-                    for port in (1, 2))
+                    for port in ((1, 2) if tentacle == 0 else (1,)))
     return tv, avr, players
 
 
@@ -83,7 +86,8 @@ def _released(components):
             raise AssertionError("A component retained a pressed key after its final release")
 
 
-def _keys(main, activity, selected, components, browser, keyboard, scan, matter, homekit, proof, activity_index):
+def _keys(main, activity, selected, components, browser, keyboard, scan, matter, homekit, proof, activity_index,
+          activity_count):
     # The firmware clears the input gate when setup ends with no keys held.
     _, avr, player = selected
     with BLEInputEvidence(main, scan, *components) as evidence:
@@ -142,16 +146,16 @@ def _keys(main, activity, selected, components, browser, keyboard, scan, matter,
     proof["key_presses"] += 1
     proof["homekit_key_presses"] += 1
     _released(components)
-    # Rotate rejection/recovery checks through all eight activities, keeping
+    # Rotate rejection/recovery checks through all activities, keeping
     # one batch per protocol per sweep. Offset their recipients so the same
     # activity does not spend its dwell handling both rejection batches.
-    if activity_index == proof["sweeps"] % 8:
+    if activity_index == proof["sweeps"] % activity_count:
         matter_rejected(matter, main, scan, activity, player)
         proof["matter_rejection_checks"] += 1
         proof["key_presses"] += 1
         proof["matter_key_presses"] += 1
         _released(components)
-    if activity_index == (proof["sweeps"] + 4) % 8:
+    if activity_index == (proof["sweeps"] + activity_count // 2) % activity_count:
         homekit_rejected(homekit, main, scan, activity, player)
         proof["homekit_rejection_checks"] += 1
         proof["key_presses"] += 1
@@ -161,12 +165,17 @@ def _keys(main, activity, selected, components, browser, keyboard, scan, matter,
     browser.assert_active(activity)
 
 
-def _soak(main_name):
-    main = DUT(main_name)
+def test_soak():
+    """Two-hour soak on every wired adapter, with the original board as main."""
+    main = DUT("amity-dut")
     owners = (main, *(DUT(name, wiring=main.wiring) for name in main.wiring.identities if name != main.name))
     if len(owners) != 4:
         raise ValueError("The soak scenario requires four documented Amities")
-    systems = tuple(_system(dut, number) for number, dut in enumerate(owners, 1))
+    adapters = tuple((dut, tentacle) for dut in owners
+                     for tentacle in sorted({index for name, index, _ in dut.wiring.cec if name == dut.name}))
+    systems = tuple(_system(dut, tentacle, number) for number, (dut, tentacle) in enumerate(adapters, 1))
+    if sum(len(players) for _, _, players in systems) > MAX_ACTIVITIES:
+        raise ValueError("The soak needs one activity per source, and at most 16 activities")
     components = tuple(component for tv, avr, players in systems for component in (tv, avr, *players))
     with TestBed(*owners, *components, members=owners[1:], preserve_dut_on_failure=True) as bed:
         proof = {"duration_seconds": DURATION_SECONDS, "elapsed_seconds": 0,
@@ -212,7 +221,7 @@ def _soak(main_name):
                         proof["activity_changes"] += 1
                         proof[route + "_activity_changes"] += 1
                         _keys(main, activity, selected, components, browser, keyboard, scan,
-                              matter, homekit, proof, index)
+                              matter, homekit, proof, index, len(selections))
                         _homekit_state(homekit, homekit_slots[activity.activity_id])
                         previous = selected
                     standby_route = ("ui", "matter", "homekit")[proof["sweeps"] % 3]
@@ -243,13 +252,3 @@ def _soak(main_name):
                 proof["completed"] = True
             finally:
                 proof["elapsed_seconds"] = round(time.monotonic() - started, 3)
-
-
-def test_soak():
-    """Two-hour soak phase with the original board as main."""
-    _soak("amity-dut")
-
-
-def test_soak_main4():
-    """Two-hour soak phase with the fourth board as main."""
-    _soak("amity-dut-4")

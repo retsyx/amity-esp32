@@ -141,9 +141,9 @@ explicitly; see [Run functional tests](#run-functional-tests) and
   selects published inputs and checks remote keys, playback, volume, mute and
   power with local/member equipment. Unsupported keys and an invalid input
   must be dropped without CEC control frames. Cleanup removes the owned pairing.
-- `functional_tests/soak.py` (`--soak`): two explicit two-hour endurance
-  phases on all four DUTs, using each main and the rendered administration UI. Excluded
-  from default runs and `--test all`.
+- `functional_tests/soak.py` (`--soak`): an explicit two-hour endurance run on
+  every wired adapter of all four DUTs, using the rendered administration UI.
+  Excluded from default runs and `--test all`.
 - `unit_tests/`: hardware-free framework checks, separate from functional tests.
 
 The hostname tests also verify saved activities, adapter settings and stable
@@ -220,9 +220,7 @@ needs no development computer once setup and file transfer are complete.
 ## Main enrollment
 
 Each invocation of `cec-harness/run` requires a **factory-reset selected main**:
-`amity-dut` by default, or `amity-dut-4` for the explicit `_main4` variants
-and `--soak-first amity-dut-4`.
-The combined soak run resets and enrolls its next main between phases.
+`amity-dut` by default, or `amity-dut-4` for the explicit `_main4` variants.
 Preparation never resets it implicitly or reuses an enrolled
 main. Reachable HTTPS fails preparation. Standard Matter preflight must confirm
 zero fabrics and no configured Wi-Fi before the controller supplies the bench
@@ -1365,33 +1363,28 @@ final reset. Successful enrollment-only runs contain preparation and reset
 verification entries.
 
 The endurance run requires explicit `--soak` (also selected by `--test soak`);
-neither the default nor `--test all` selects either phase. It runs two hours
-with `amity-dut` as main, resets and enrolls `amity-dut-4`, then runs the same
-two-hour workload with the other three boards as members. Both phases share
-this selector. Add `--soak-first amity-dut-4` to run the fourth-board phase first;
-both phases and their reset/enrollment transition still run. Supply each main's admin and Matter credentials using
-`--dut-credentials DUT=PATH` and `--dut-enrollment-credentials DUT=PATH`; the
-existing default credential options remain fallbacks. Run the entire process
-on the harness Pi, including
+neither the default nor `--test all` selects it. It runs two hours with
+`amity-dut` as main and the other three boards as members. Run the entire
+process on the harness Pi, including
 Chromium, HTTP control, Matter/HomeKit accessory control and CEC I/O. Normal Pi setup installs
 and checks its browser dependencies:
 
 ```sh
 ./cec-harness/run --soak \
   --credentials /private/path/amity-dut.json --insecure --url https://amity.local \
-  --dut-credentials amity-dut-4=/private/path/amity-dut-4.json \
-  --dut-enrollment-credentials amity-dut-4=/private/path/amity-dut-4-enrollment.json \
   --output test-results/functional/soak.json
 ```
 
-Start with a factory-reset first main and three unclaimed members (`amity-dut`
-is first by default). Each phase
-adds the other three boards through the normal Add workflow.
-Each owns a TV, AVR and two sources. Eight saved activities cycle between
-shared-equipment handoffs and changes of owner, rotating actual UI clicks,
+Start with a factory-reset main and three unclaimed members. The run adds the
+other three boards through the normal Add workflow.
+Every wired adapter carries a TV, an AVR and its sources: two sources on each
+board's tentacle 0 and one on every other adapter. With the bench wiring that
+is 14 saved activities, near the 16-activity limit. Activities are ordered by
+owner and adapter, so a sweep covers shared-equipment handoffs, changes of
+adapter on one owner and changes of owner, rotating actual UI clicks,
 authenticated API selections, Matter and HomeKit input selections across every
 activity. Both accessories' published inputs are checked against saved slots;
-HomeKit identifiers use slot plus one. The phase keeps one HomeKit controller
+HomeKit identifiers use slot plus one. The run keeps one HomeKit controller
 paired until cleanup, which removes only that controller.
 The main pairs the Pi-emulated BLE remote
 through the normal Remote UI operations before the workload timer starts.
@@ -1401,7 +1394,7 @@ Every activity repeats rotating Matter and HomeKit playback/mute commands,
 including HomeKit Play/Pause against the source's observed playback state.
 Once per sweep for each accessory, unsupported keys and an invalid input must
 leave control working and emit no CEC control frames, followed by a proven
-supported key. Those checks rotate through all eight activities. Standby rotates
+supported key. Those checks rotate through every activity. Standby rotates
 among the UI, Matter and HomeKit; HomeKit power/input readback must agree after
 every selection, key sequence and standby. Each path and its rejection/standby
 checks have separate counters.
@@ -1416,8 +1409,8 @@ busy checking physical commands. Failed actions, HTTP/page errors, other network
 errors and failed recovery still fail the run; actions are never replayed.
 No heap metrics
 are collected: functional failures, boot changes, lost members and timeouts
-fail the run. Each phase lasts at least two hours after setup and completes
-its final eight-activity sweep before cleanup. Accessory command time counts toward
+fail the run. The run lasts at least two hours after setup and completes
+its final sweep before cleanup. Accessory command time counts toward
 the workload; activity dwell and the five-second input schedule may run longer
 while waiting for physical command evidence. Evidence includes elapsed time,
 sweep/activity/key counts and browser checks. Failures retain DUT configuration

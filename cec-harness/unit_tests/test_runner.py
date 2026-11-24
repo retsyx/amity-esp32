@@ -479,8 +479,7 @@ class RunnerTests(unittest.TestCase):
                     runpy.run_path(str(Path(__file__).resolve().parents[1] / "run.py"), run_name="__main__")
                 self.assertEqual(exited.exception.code, 0)
                 self.assertEqual(called,
-                    [(name, "amity-dut") for name in ("prepare_main", "test_soak", "reset_main")]
-                    + [(name, "amity-dut-4") for name in ("prepare_main", "test_soak_main4", "reset_main")])
+                    [(name, "amity-dut") for name in ("prepare_main", "test_soak", "reset_main")])
 
     def test_dual_display_can_be_selected_without_other_scenarios(self):
         called = []
