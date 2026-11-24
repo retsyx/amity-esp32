@@ -1,12 +1,15 @@
 """Two CEC displays sharing one AVR with only one CEC-capable output."""
 
+from contextlib import nullcontext
+
 from amity_harness import DUT, TestBed, TvComponent, AvrComponent, PlaybackComponent, PowerState
 from amity_harness.transitions import ActivityHandoff
 
 
-def test_dual_display():
-    main, secondary = DUT("amity-dut"), DUT("amity-dut-2")
-    tv_connection, projector_connection = secondary.tentacle(1), secondary.tentacle(2)
+def _dual_display(*, remote):
+    main = DUT("amity-dut")
+    owner = DUT("amity-dut-2") if remote else main
+    tv_connection, projector_connection = owner.tentacle(1), owner.tentacle(2)
     tv = TvComponent(tv_connection.front, "Dual TV")
     avr = AvrComponent(tv_connection.back, "Dual AVR")
     player = PlaybackComponent(avr, "Dual Player", port=1)
@@ -15,9 +18,11 @@ def test_dual_display():
     # CEC support: no AVR/player responder or CEC bridge belongs on that wire.
     components = (tv, avr, player, projector)
 
-    with TestBed(main, secondary, *components, members=(secondary,)):
-        with main.add_amity(secondary) as member:
-            member.assert_connected()
+    duts = (main, owner) if remote else (main,)
+    with TestBed(*duts, *components, members=(owner,) if remote else ()):
+        with (main.add_amity(owner) if remote else nullcontext()) as member:
+            if remote:
+                member.assert_connected()
             scan = main.scan_hdmi()
             scan.assert_contains(*components)
             scan.assert_contains_only(*components)
@@ -61,4 +66,13 @@ def test_dual_display():
                             component.wait_for_power(PowerState.STANDBY, since=stopped, command="standby")
                         for component in components:
                             component.assert_power(PowerState.STANDBY)
-            member.assert_connected()
+            if remote:
+                member.assert_connected()
+
+
+def test_dual_display():
+    _dual_display(remote=True)
+
+
+def test_dual_display_local():
+    _dual_display(remote=False)

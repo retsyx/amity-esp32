@@ -16,7 +16,8 @@ def test_activity_main_reboot():
     tv = TvComponent(display.front, "Restart TV")
     # The AVR's output reaches the main's tentacle without CEC. Its inputs 2
     # and 3 attach to the member's tentacles 0 and 1, so the member alone
-    # controls the AVR and both sources, and the main owns only the TV.
+    # controls the AVR and both sources, and the main's only activity
+    # equipment is the TV.
     avr = AvrComponent(game_input.front, "Restart AVR", address=CecAddress(5, "1.0.0.0"))
     console = PlaybackComponent(game_input.back, "Game Console", address=CecAddress(4, "1.2.0.0"))
     avr_input = AvrAttachment(avr, movie_input.front)
@@ -27,7 +28,15 @@ def test_activity_main_reboot():
         connection = secondary.tentacle(index)
         spares.append((TvComponent(connection.front, f"Spare TV {index}"),
                        PlaybackComponent(connection.back, f"Spare Player {index}")))
-    components = (tv, avr, console, avr_input, player, *(component for pair in spares for component in pair))
+    # So does every other wired main adapter: the booting main must command
+    # none of its equipment on any adapter.
+    main_spares = []
+    for index in sorted({index for name, index, _ in main.wiring.cec if name == main.name} - {0}):
+        connection = main.tentacle(index)
+        main_spares.append((TvComponent(connection.front, f"Main TV {index}"),
+                            PlaybackComponent(connection.back, f"Main Player {index}")))
+    components = (tv, avr, console, avr_input, player,
+                  *(component for pair in (*spares, *main_spares) for component in pair))
 
     with TestBed(main, secondary, *components, members=(secondary,), preserve_dut_on_failure=True):
         member = main.add_amity(secondary)

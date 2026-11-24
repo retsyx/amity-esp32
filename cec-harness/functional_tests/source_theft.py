@@ -1,5 +1,7 @@
 """Suppress source theft on a shared AVR wire and an isolated source wire."""
 
+from contextlib import nullcontext
+
 from amity_harness import (
     DUT, TestBed, TvComponent, AvrComponent, AvrAttachment, PlaybackComponent,
     CecAddress, PowerState,
@@ -33,9 +35,12 @@ def test_source_theft():
                 activity.assert_active()
 
 
-def test_source_theft_isolated():
-    main, secondary = DUT("amity-dut"), DUT("amity-dut-2")
-    output, source_connection = secondary.tentacle(1), secondary.tentacle(2)
+def _source_theft_isolated(*, remote):
+    main = DUT("amity-dut")
+    owner = DUT("amity-dut-2") if remote else main
+    # The main-owned case uses the main's tentacles 2 and 3.
+    first = 1 if remote else 2
+    output, source_connection = owner.tentacle(first), owner.tentacle(first + 1)
     tv = TvComponent(output.front, "Isolated TV")
     avr = AvrComponent(output.back, "Isolated AVR")
     player = PlaybackComponent(avr, "Media Player", port=1)
@@ -47,12 +52,14 @@ def test_source_theft_isolated():
     observations = (tv, avr, player, avr_input, thief)
     equipment = (tv, avr, player, thief)
 
-    with TestBed(main, secondary, *observations, members=(secondary,)):
-        with main.add_amity(secondary) as member:
-            member.assert_connected()
+    duts = (main, owner) if remote else (main,)
+    with TestBed(*duts, *observations, members=(owner,) if remote else ()):
+        with (main.add_amity(owner) if remote else nullcontext(main)) as adapter_owner:
+            if remote:
+                adapter_owner.assert_connected()
             # No EDID fixture: use the ordinary UI setting for AVR input 2.
-            # Restore it after activities close and before removing the member.
-            with member.front_physical_address(2, "1.2.0.0"):
+            # Restore it after activities close and before removing any member.
+            with adapter_owner.front_physical_address(source_connection.index, "1.2.0.0"):
                 scan = main.scan_hdmi()
                 scan.assert_contains(*observations)
                 scan.assert_contains_only(*observations)
@@ -111,4 +118,13 @@ def test_source_theft_isolated():
                             component.wait_for_power(PowerState.STANDBY, since=stopped, command="standby")
                         for component in equipment:
                             component.assert_power(PowerState.STANDBY)
-            member.assert_connected()
+            if remote:
+                adapter_owner.assert_connected()
+
+
+def test_source_theft_isolated():
+    _source_theft_isolated(remote=True)
+
+
+def test_source_theft_isolated_local():
+    _source_theft_isolated(remote=False)

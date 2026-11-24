@@ -30,8 +30,9 @@ from functional_tests.member_reboot import test_activity_member_reboot
 from functional_tests.main_reboot import test_activity_main_reboot
 from functional_tests.hostname import test_hostname_local, test_hostname_consortium
 from functional_tests.firmware_upgrade import test_firmware_upgrade, test_firmware_upgrade_main4
-from functional_tests.source_theft import test_source_theft, test_source_theft_isolated
-from functional_tests.dual_display import test_dual_display
+from functional_tests.source_theft import (test_source_theft, test_source_theft_isolated,
+                                           test_source_theft_isolated_local)
+from functional_tests.dual_display import test_dual_display, test_dual_display_local
 from functional_tests.split_theater import test_split_theater_main_source, test_split_theater_member_source
 from functional_tests.soak import test_soak, test_soak_main4
 from functional_tests.consortium import (
@@ -61,9 +62,10 @@ if __name__ == "__main__":
                            "consortium_three_duts": test_consortium_three_duts,
                            "consortium_four_duts": test_consortium_four_duts,
                            "hostname": (test_hostname_local, test_hostname_consortium),
-                           "dual_display": test_dual_display,
+                           "dual_display": (test_dual_display, test_dual_display_local),
                            "split_theater": (test_split_theater_main_source, test_split_theater_member_source),
-                           "source_theft_isolated": test_source_theft_isolated,
+                           "source_theft_isolated": (test_source_theft_isolated,
+                                                     test_source_theft_isolated_local),
                            "qualified_names": test_qualified_names,
                            "missing_equipment": test_missing_equipment,
                            "removal_cascade": test_removal_cascade,

@@ -102,16 +102,18 @@ explicitly; see [Run functional tests](#run-functional-tests) and
   audio query must precede the next Standby.
 - `functional_tests/source_theft.py`: adds a second playback device on AVR
   input 2 and verifies that Amity restores the first player after source theft.
-  Its isolated-source case places the thief behind another tentacle and
-  requires suppression before its announcement reaches the AVR.
+  Its isolated-source cases place the thief behind another tentacle, on a
+  member and on the main, and require suppression before its announcement
+  reaches the AVR.
 - `functional_tests/add_amity.py`: adds the second bench board through the main
   Amity, verifies its membership, then removes and resets that added board.
 - `functional_tests/consortium.py`: scans equipment on the main and up to three
   headless members, then checks activity power and source-theft suppression in
   every ownership direction.
 - `functional_tests/dual_display.py`: switches between a TV and projector on
-  one headless member, checking command completion order and preserving shared
-  AVR/player power throughout both activity handoffs.
+  one headless member, and again on the main's own adapters, checking command
+  completion order and preserving shared AVR/player power throughout both
+  activity handoffs.
 - `functional_tests/qualified_names.py`: uses identical equipment names and
   addresses on two owners and requires control on only the selected owner.
 - `functional_tests/missing_equipment.py`: retains a missing source selection,
@@ -881,8 +883,9 @@ Claim failures remain explicit; the backend does not retry using another type.
 reaches that tentacle's back without CEC. AVR inputs 2 and 3 attach to the
 member's tentacles 0 and 1, selected as `1.2.0.0` and `1.3.0.0` through the
 adapter settings, with a game console and a movie player behind them. The
-member controls the AVR and both sources; the main owns only the TV. Every
-other wired member adapter holds a TV and a player that no activity uses.
+member controls the AVR and both sources; the TV is the main's only activity
+equipment. Every other wired adapter, on the member and on the main, holds a
+TV and a player that no activity uses.
 
 The movie activity must deliver fresh power and routing, and its player's own
 Active Source must cause no Standby. `MainReboot` then resets only the main
@@ -890,7 +893,8 @@ over USB. The main must return on a new boot with nothing current, the same
 roster and member boot, and unchanged configuration, activities and adapter
 settings. From the reset until three seconds after those checks, original
 frames on every member wire must contain nothing from the member, and the
-booting main must not command its TV. Every device keeps its power and input.
+booting main must not command its equipment on any of its adapters. Every
+device keeps its power and input.
 Only then does a fresh scan move the fixture's main boot proofs.
 
 With nothing current, a source announcing itself on each member adapter,
@@ -937,7 +941,9 @@ remove its CEC responder.
 
 Both activities and their fixture equipment are cleaned up before the newly
 added member is removed with acknowledged scheduled reset, while responders
-remain available. Select `--test dual_display`; it also runs in `--test all`.
+remain available. `test_dual_display_local` runs the same checks with the
+equipment on the main's own tentacles 1 and 2 and no member. Select
+`--test dual_display` for both; they also run in `--test all`.
 
 ## Source theft before the AVR
 
@@ -975,7 +981,11 @@ Active Source on tentacle 2/front. This positive control prevents a disconnected
 observation path from passing the suppression test. Both activities must also
 return their selected devices to Standby through fresh commands.
 
-Select `--test source_theft_isolated`; it also runs in `--test all`. Functional
+`test_source_theft_isolated_local` runs the same checks with the equipment on
+the main's own tentacles 2 and 3 and no member, using
+`main.front_physical_address(3, "1.2.0.0")` for AVR input 2.
+
+Select `--test source_theft_isolated` for both; they also run in `--test all`. Functional
 scenarios contain equipment and behavior only; the shared framework owns the
 settings, same-boot address proof, protocol monitoring and cleanup.
 
@@ -1027,10 +1037,11 @@ activity's Standby. Fixture configuration closes before member removal.
 Select `--test qualified_names`.
 
 The activity group's `test_activity_same_osd_locations` applies the same checks
-to three identical triples on `amity-dut` adapter 0 and `amity-dut-2` adapters
-0 and 1. Matching adapter numbers across owners and matching owners across
+to four identical triples on adapters 0 and 1 of both `amity-dut` and
+`amity-dut-2`. Matching adapter numbers across owners and matching owners across
 adapters independently exercise both parts of device location. Each activity
-must control only its selected triple; observations cover both inactive triples.
+must control only its selected triple; observations cover all three inactive
+triples.
 
 `functional_tests/missing_equipment.py` saves a local activity with a CEC source
 and explicit AVR input fallback. It electrically removes the source responder,
@@ -1329,7 +1340,7 @@ two remote-key sub-tests,
 `--test add_amity` for adding and removing the second board, `--test consortium`
 for the two-owner equipment scenario, `--test consortium_three_duts` for the
 three-owner scenario, `--test consortium_four_duts` for the four-owner scenario,
-`--test dual_display` for the TV/projector scenario on `amity-dut-2`,
+`--test dual_display` for the TV/projector scenario on a member and on the main,
 `--test split_theater` for independent owner progress through a shared AVR,
 `--test source_theft_isolated` for suppression ahead of the AVR,
 `--test qualified_names` for identical equipment identities on two owners,

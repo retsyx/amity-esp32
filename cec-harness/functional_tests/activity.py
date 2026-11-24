@@ -493,16 +493,17 @@ def test_activity_manual_component_secondary():
 
 def test_activity_same_osd_locations():
     main, secondary = DUT("amity-dut"), DUT("amity-dut-2")
-    # The first pair differs only by owner; the second only by adapter.
+    # Each owner has a pair that differs only by adapter, and each adapter
+    # number has a pair that differs only by owner.
     systems = (same_name_equipment(main), same_name_equipment(secondary),
-               same_name_equipment(secondary, 1))
+               same_name_equipment(secondary, 1), same_name_equipment(main, 1))
     components = tuple(component for system in systems for component in system)
     with TestBed(main, secondary, *components, members=(secondary,)):
         with main.pair_ble_keyboard() as keyboard, main.add_amity(secondary) as member:
             member.assert_connected()
             exercise_qualified_activities(main, keyboard, systems,
                                           ("Qualified main", "Qualified member adapter 1",
-                                           "Qualified member adapter 2"))
+                                           "Qualified member adapter 2", "Qualified main adapter 2"))
             member.assert_connected()
 
 

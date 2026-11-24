@@ -379,8 +379,10 @@ class RunnerTests(unittest.TestCase):
                     "test_source_theft", "test_add_amity",
                     "test_consortium", "test_consortium_three_duts", "test_consortium_four_duts",
                     "test_hostname_local", "test_hostname_consortium",
-                    "test_dual_display", "test_split_theater_main_source", "test_split_theater_member_source",
-                    "test_source_theft_isolated", "test_qualified_names", "test_missing_equipment",
+                    "test_dual_display", "test_dual_display_local",
+                    "test_split_theater_main_source", "test_split_theater_member_source",
+                    "test_source_theft_isolated", "test_source_theft_isolated_local",
+                    "test_qualified_names", "test_missing_equipment",
                     "test_removal_cascade", "test_removal_replacement", "test_amity_replacement",
                     "test_default_physical_address_local",
                     "test_default_physical_address_local_scanned", "test_default_physical_address_remote",
@@ -492,7 +494,7 @@ class RunnerTests(unittest.TestCase):
                 redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exited:
             runpy.run_path(str(Path(__file__).resolve().parents[1] / "run.py"), run_name="__main__")
         self.assertEqual(exited.exception.code, 0)
-        self.assertEqual(called, ["prepare_main", "test_dual_display", "reset_main"])
+        self.assertEqual(called, ["prepare_main", "test_dual_display", "test_dual_display_local", "reset_main"])
 
     def test_invalid_scenario_groups_are_rejected_before_execution(self):
         def scenario():
