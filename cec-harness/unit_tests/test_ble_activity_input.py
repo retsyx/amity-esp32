@@ -83,8 +83,11 @@ class TransitionKeyboard:
         # Normal simulated commit happens when routing finishes, before its
         # observation wakes the host. The late-commit fault keeps these apart.
         self.phase = "gate"
-        self.route_time = self.emit(f.avr, 0x86, f.next_player.address.physical.to_bytes(2, "big"),
-                                   before_observe=None if self.fault == "late_local_commit" else self._commit)
+        # The gate's fallback starts with routing. Record it before the frame:
+        # reports racing the routing frame's replies already see the gate.
+        self.route_time = time.monotonic_ns()
+        self.emit(f.avr, 0x86, f.next_player.address.physical.to_bytes(2, "big"),
+                  before_observe=None if self.fault == "late_local_commit" else self._commit)
         if self.fault == "late_local_commit":
             def commit_after_probe():
                 if self.fresh_probe_received.wait(.5):

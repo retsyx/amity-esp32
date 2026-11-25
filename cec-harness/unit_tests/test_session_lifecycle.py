@@ -15,7 +15,7 @@ from amity_harness import (
     AvrComponent, CecError, CecSession, DUT, Frame, Hooks, LinuxCecBackend,
     PlaybackComponent, PowerState, TvComponent, TxResult, assign_addresses,
 )
-from unit_tests.virtual_time import use_virtual_time
+from unit_tests.virtual_time import _VRLock, use_virtual_time
 
 
 class Backend:
@@ -55,21 +55,31 @@ class Backend:
             raise OSError("injected cleanup failure")
 
 
-class ObservedLock:
+class TimedBackend(Backend):
+    """A wire whose transmission lasts the frame's time on the bus."""
+
+    def __init__(self, gpio):
+        super().__init__(gpio)
+        self.transmissions = []
+
+    def transmit(self, frame):
+        started = time.monotonic_ns()
+        time.sleep(.0045 + .024 * len(frame.raw))
+        self.transmissions.append((started, time.monotonic_ns(), frame))
+        return super().transmit(frame)
+
+
+class ObservedLock(_VRLock):
     """Signal when a power-off thread actually reaches the shared session lock."""
 
-    def __init__(self):
-        self.lock = threading.RLock()
+    def __init__(self, clock):
+        super().__init__(clock)
         self.power_attempt = threading.Event()
 
-    def __enter__(self):
+    def acquire(self, *args, **kwargs):
         if threading.current_thread().name == "power-off-test":
             self.power_attempt.set()
-        self.lock.acquire()
-        return self
-
-    def __exit__(self, *args):
-        self.lock.release()
+        return super().acquire(*args, **kwargs)
 
 
 class SessionLifecycleTests(unittest.TestCase):
@@ -187,6 +197,32 @@ class SessionLifecycleTests(unittest.TestCase):
         self.assertTrue(any(frame.opcode == 0x47 for frame in self.backends[tv.gpio].sent))
         session.assert_healthy()
 
+    def test_a_wire_answers_while_another_wire_transmits(self):
+        # Each wire is its own bus. The TV's long name reply holds its wire for
+        # about 0.4 s; the AVR must answer its own query meanwhile, as a real
+        # device would within CEC's one-second reply time.
+        tv = TvComponent(self.dut, "A Long TV Name")
+        avr = AvrComponent(self.dut.tentacle(0).back, "Receiver")
+        wires = {}
+
+        def timed(gpio):
+            wires[gpio] = TimedBackend(gpio)
+            return wires[gpio]
+
+        with CecSession([tv, avr], backend_factory=timed):
+            for wire in wires.values():
+                wire.transmissions.clear()
+            wires[tv.gpio].frames.put(Frame(4, tv.address.logical, 0x46))
+            wires[avr.gpio].frames.put(Frame(0, avr.address.logical, 0x83))
+            replies = lambda: [entry for wire in wires.values() for entry in wire.transmissions
+                               if entry[2].opcode in (0x47, 0x84)]
+            deadline = time.monotonic() + 3
+            while len(replies()) < 2 and time.monotonic() < deadline:
+                time.sleep(.01)
+            (name_start, name_end, _), = [entry for entry in replies() if entry[2].opcode == 0x47]
+            (address_start, address_end, _), = [entry for entry in replies() if entry[2].opcode == 0x84]
+        self.assertLess(max(name_start, address_start), min(name_end, address_end))
+
     def test_power_off_is_atomic_with_an_inflight_reply(self):
         tv = TvComponent(self.dut, "Test TV", power=PowerState.ON)
         in_reply, release_reply = threading.Event(), threading.Event()
@@ -200,8 +236,8 @@ class SessionLifecycleTests(unittest.TestCase):
 
         tv.hooks = Hooks(before_tx=pause_reply)
         session = CecSession([tv], backend_factory=self.backend)
-        observed = ObservedLock()
-        session._lock = observed
+        observed = ObservedLock(self.clock)
+        session._lock, session._condition = observed, threading.Condition(observed)
         errors = []
 
         def power_off():

@@ -7,6 +7,7 @@ responses in exclusive passthrough mode. No cec-follower process is used.
 """
 
 from collections import deque
+from contextlib import contextmanager
 import ctypes
 from dataclasses import dataclass
 from contextvars import copy_context
@@ -369,13 +370,23 @@ class CecSession:
             raise ValueError("max_records must be positive")
         self._records = deque(maxlen=max_records)
         self._lock = threading.RLock()
+        # Each wire is its own bus. A physical transmission waits on this
+        # condition, which releases the lock while the kernel sends the frame,
+        # so other wires keep receiving and answering within CEC's reply time.
+        self._condition = threading.Condition(self._lock)
         self._stop = threading.Event()
+        self._closing = False
         self._backends = {}
         self._threads = []
         self._wire_idle_since_ns = {}
-        # When the latest physical transmission returned. Transmissions hold
-        # the session lock, so no worker records an empty receive poll while
-        # one is in progress.
+        # Each wire sends one frame at a time, in request order: per-wire
+        # tickets and the ticket now allowed to use the wire.
+        self._wire_tickets = {}
+        self._wire_turn = {}
+        self._wire_owner = {}
+        # Received frames whose handling, including replies, is in progress.
+        self._handling = 0
+        # When the latest physical transmission returned.
         self._transmitted_ns = 0
         self._error = None
         self._started = False
@@ -483,20 +494,83 @@ class CecSession:
                         self._wire_idle_since_ns[gpio] = polled_ns
                     continue
                 with self._lock:
-                    # close() sets the stop flag under this lock. A frame read
-                    # after that point arrived during teardown: components
-                    # can no longer reply, so it is not delivered.
-                    if self._stop.is_set():
+                    # close() marks the session closing under this lock. A
+                    # frame read after that point arrived during teardown:
+                    # components can no longer reply, so it is not delivered.
+                    if self._closing or self._stop.is_set():
                         break
-                    for component in self.components:
-                        if component.gpio == gpio:
-                            component.receive(frame)
+                    self._handling += 1
+                    try:
+                        for component in self.components:
+                            if component.gpio == gpio:
+                                component.receive(frame)
+                    finally:
+                        self._handling -= 1
+                        self._condition.notify_all()
         except BaseException as exc:
             with self._lock:
                 self._error = exc
                 self._stop.set()
                 event("cec.worker.failed", level=logging.ERROR, gpio=gpio,
                       error_type=type(exc).__name__)
+
+    def _wires_busy(self):
+        return any(self._wire_turn.get(gpio, 0) != ticket for gpio, ticket in self._wire_tickets.items())
+
+    @contextmanager
+    def _wire(self, gpio):
+        """Use ``gpio`` alone, after the work it already queued. Holds the lock.
+
+        Re-entrant: what the using thread sends while it reconfigures the
+        wire runs at once.
+        """
+        me = threading.current_thread()
+        if self._wire_owner.get(gpio) is me:
+            yield
+            return
+        ticket = self._wire_tickets.get(gpio, 0)
+        self._wire_tickets[gpio] = ticket + 1
+        try:
+            self._condition.wait_for(lambda: self._wire_turn.get(gpio, 0) == ticket)
+            self._wire_owner[gpio] = me
+            yield
+        finally:
+            self._wire_owner.pop(gpio, None)
+            self._wire_turn[gpio] = ticket + 1
+            self._condition.notify_all()
+
+    def _send_on_wire(self, gpio, frame):
+        """Send one frame while other wires keep working. Holds the lock.
+
+        The kernel's transmission blocks until the frame and its ACK are on the
+        wire, up to hundreds of milliseconds. It runs on a helper thread while
+        this thread waits on the condition, which releases the lock even when a
+        frame handler holds it. Other wires then keep receiving and answering.
+        """
+        backend = self._backends[gpio]
+        with self._wire(gpio):
+            caller, outcome = threading.current_thread(), {}
+
+            def send():
+                # The helper uses the wire for its caller, so whatever the
+                # backend sends from inside the transmission runs at once.
+                with self._condition:
+                    self._wire_owner[gpio] = threading.current_thread()
+                try:
+                    outcome["result"] = backend.transmit(frame)
+                except BaseException as exc:
+                    outcome["error"] = exc
+                with self._condition:
+                    self._wire_owner[gpio] = caller
+                    outcome["done"] = True
+                    self._condition.notify_all()
+
+            threading.Thread(target=copy_context().run, args=(send,), daemon=True,
+                             name=f"cec-tx@{gpio}").start()
+            self._condition.wait_for(lambda: "done" in outcome)
+        if "error" in outcome:
+            raise outcome["error"]
+        return outcome["result"]
 
     def assert_healthy(self):
         with self._lock:
@@ -560,7 +634,7 @@ class CecSession:
             # adapter. Preserve wire ordering before peer replies, but make
             # internal broadcast delivery independent of wire success.
             try:
-                result = self._backends[component.gpio].transmit(frame)
+                result = self._send_on_wire(component.gpio, frame)
             except Exception as wire_error:
                 event("cec.transmit.failed", level=logging.ERROR,
                       dut=getattr(getattr(component, "dut", None), "name", None), component=component.name,
@@ -593,7 +667,8 @@ class CecSession:
                     view._active_since_ns = time.monotonic_ns()
                 try:
                     for gpio in dict.fromkeys(view.gpio for view in views):
-                        self._configure(gpio)
+                        with self._wire(gpio):
+                            self._configure(gpio)
                 except BaseException as exc:
                     # A failed reconfiguration may have cleared the old ACK
                     # mask. Fence the session instead of continuing with a
@@ -608,12 +683,15 @@ class CecSession:
     def close(self):
         event("cec.session.close", wires=sorted(self._backends))
         with self._lock:
-            # Wait for any frame a worker is handling, including its reply.
+            # Deliver no new frame, then wait for frames being handled,
+            # including replies whose transmission released the lock.
+            self._closing = True
+            self._condition.wait_for(lambda: not self._handling and not self._wires_busy(), timeout=10)
             self._stop.set()
         for thread in self._threads:
-            # Frame handling finished under the lock above; a worker now only
-            # completes its 50 ms receive poll. The bound catches a wedged
-            # kernel call before its descriptor would be closed underneath it.
+            # Frame handling has finished; a worker now only completes its
+            # 50 ms receive poll. The bound catches a wedged kernel call
+            # before its descriptor would be closed underneath it.
             thread.join(5)
             if thread.is_alive():
                 event("cec.worker.stop_failed", level=logging.ERROR, worker=thread.name)

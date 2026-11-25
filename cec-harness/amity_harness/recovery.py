@@ -146,11 +146,9 @@ class LookupScans:
         """Require an empty receive poll begun at or after ``through`` on every witness wire.
 
         Responders answer queued identity requests with synchronous wire
-        transmissions under the session lock. Until those answers are sent,
-        their wire cannot poll empty and other workers may be unable to
-        record empty polls. The CEC timeout therefore runs from the later of
-        this call and the latest physical transmission, within the operation
-        timeout.
+        transmissions. Until those answers are sent, their wire cannot poll
+        empty. The CEC timeout therefore runs from the later of this call and
+        the latest physical transmission, within the operation timeout.
         """
         runtime = self.scan.dut._runtime
         started = time.monotonic_ns()
