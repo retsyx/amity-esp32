@@ -274,22 +274,6 @@ class DistributedScanTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "unsolicited"):
             result.assert_contains(self.components[0])
 
-    def test_identity_still_arriving_after_the_scan_is_awaited_not_failed(self):
-        result = self.scan()
-        pending = self.system["observations"][3]
-        pending["resolved"] = False
-        # The scripted wait polls once, so still waiting surfaces as a timeout.
-        with self.assertRaises(TimeoutError):
-            result.assert_contains(*self.components)
-        pending["resolved"] = True
-        result.assert_contains_only(*self.components)
-
-    def test_ambiguous_identity_still_fails_at_once(self):
-        result = self.scan()
-        self.system["observations"].append(deepcopy(self.system["observations"][3]))
-        with self.assertRaisesRegex(AssertionError, "missing or ambiguous"):
-            result.assert_contains(*self.components)
-
     def test_misreported_owner_cannot_use_same_labels_addresses_and_type(self):
         result = self.scan()
         for observation in self.system["observations"][3:]:

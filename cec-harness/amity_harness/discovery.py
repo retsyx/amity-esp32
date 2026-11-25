@@ -148,8 +148,7 @@ class _ObservedEquipment:
             raise AssertionError("Saved equipment has no qualified name")
         return name
 
-    def resolve(self, row, *, pending=False):
-        """Return a row's typed identity; ``pending`` yields None while it is still arriving."""
+    def resolve(self, row):
         if not isinstance(row, dict) or not isinstance(row.get("name"), str):
             raise AssertionError("Equipment row has no typed selector")
         selector = row["name"]
@@ -170,8 +169,6 @@ class _ObservedEquipment:
                 continue
             if (name == selected_name if selected_name is not None else _native_selector(name) == selector):
                 observations.append((observation, name))
-        if pending and not observations:
-            return None
         if len(observations) != 1:
             raise AssertionError("Equipment observation is missing or ambiguous")
         observation, name = observations[0]
@@ -504,9 +501,7 @@ class ScanResult:
         catalog = _ObservedEquipment(self.dut, self.status)
         if distributed:
             self.validate_owners(_system=catalog.system)
-        # A completed scan can still be adding identities to its rows. A row
-        # with no current observation yet matches nothing until it has one.
-        resolved = [item for item in (catalog.resolve(row, pending=True) for row in rows) if item is not None]
+        resolved = [catalog.resolve(row) for row in rows]
         if distributed and any(name["octopus_id"] not in self.owner_boots for _, name, _ in resolved):
             raise AssertionError("The HDMI scan contains an unsolicited equipment owner")
         matches = []
