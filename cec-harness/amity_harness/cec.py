@@ -440,11 +440,13 @@ class CecSession:
                     event("cec.adapter.open", dut=getattr(getattr(component, "dut", None), "name", None),
                           gpio=component.gpio, tentacle=getattr(component, "tentacle", None),
                           side=getattr(component, "direction", None))
-            for gpio in self._backends:
-                self._configure(gpio)
             for gpio, backend in self._backends.items():
-                # Retain the originating test label even if cleanup fails and
-                # a delayed worker logs after the runner advances.
+                self._configure(gpio)
+                # Answer on this wire while the next one is configured: the
+                # DUT queries each component as soon as it announces itself.
+                # The thread retains the originating test label even if
+                # cleanup fails and a delayed worker logs after the runner
+                # advances.
                 thread = threading.Thread(target=copy_context().run,
                                           args=(self._run, gpio, backend), daemon=True,
                                           name=f"cec@{gpio}")
@@ -465,21 +467,25 @@ class CecSession:
         backend.configure(active)
         version = getattr(backend, "cec_version", None)
         version = version if type(version) is int and version in (5, 6) else 6
-        for component in self.components:
-            if component.gpio == gpio:
-                component.cec_version = version
-        event("cec.adapter.configured", gpio=gpio, cec_version=version,
-              components=[{"dut": getattr(getattr(component, "dut", None), "name", None),
-                           "component": getattr(component, "name", None),
-                           "tentacle": getattr(component, "tentacle", None),
-                           "side": getattr(component, "direction", None),
-                           "logical_address": getattr(getattr(component, "address", None), "logical", None),
-                           "physical_address": getattr(getattr(component, "address", None), "physical", None)}
-                          for component in active])
-        # Kernel-generated announcements carry the adapter's shared PA. Correct
-        # each component's identity before beginning a scan or other scenario.
-        for component in active:
-            component.announce()
+        # Wires configured earlier already answer, so component state changes
+        # under the lock. Only the kernel's address claim above runs outside.
+        with self._lock:
+            for component in self.components:
+                if component.gpio == gpio:
+                    component.cec_version = version
+            event("cec.adapter.configured", gpio=gpio, cec_version=version,
+                  components=[{"dut": getattr(getattr(component, "dut", None), "name", None),
+                               "component": getattr(component, "name", None),
+                               "tentacle": getattr(component, "tentacle", None),
+                               "side": getattr(component, "direction", None),
+                               "logical_address": getattr(getattr(component, "address", None), "logical", None),
+                               "physical_address": getattr(getattr(component, "address", None), "physical", None)}
+                              for component in active])
+            # Kernel-generated announcements carry the adapter's shared PA.
+            # Correct each component's identity before beginning a scan or
+            # other scenario.
+            for component in active:
+                component.announce()
 
     def _run(self, gpio, backend):
         try:

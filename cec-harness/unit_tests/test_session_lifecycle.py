@@ -223,6 +223,32 @@ class SessionLifecycleTests(unittest.TestCase):
             (address_start, address_end, _), = [entry for entry in replies() if entry[2].opcode == 0x84]
         self.assertLess(max(name_start, address_start), min(name_end, address_end))
 
+    def test_a_configured_wire_answers_while_the_next_wire_configures(self):
+        # Claiming addresses takes about a second per adapter. The DUT asks a
+        # component for its identity as soon as it announces itself, so its
+        # wire answers before the session has configured every other wire.
+        tv = TvComponent(self.dut, "Early TV")
+        avr = AvrComponent(self.dut.tentacle(0).back, "Late AVR")
+        wires, configured = {}, {}
+
+        class ClaimingWire(TimedBackend):
+            def configure(self, components):
+                super().configure(components)
+                if self.gpio == avr.gpio:
+                    time.sleep(1)
+                else:
+                    self.frames.put(Frame(4, tv.address.logical, 0x46))
+                configured[self.gpio] = time.monotonic_ns()
+
+        def claiming(gpio):
+            wires[gpio] = ClaimingWire(gpio)
+            return wires[gpio]
+
+        with CecSession([tv, avr], backend_factory=claiming):
+            replies = [started for started, _, frame in wires[tv.gpio].transmissions if frame.opcode == 0x47]
+        self.assertEqual(len(replies), 1)
+        self.assertLess(replies[0], configured[avr.gpio])
+
     def test_power_off_is_atomic_with_an_inflight_reply(self):
         tv = TvComponent(self.dut, "Test TV", power=PowerState.ON)
         in_reply, release_reply = threading.Event(), threading.Event()
