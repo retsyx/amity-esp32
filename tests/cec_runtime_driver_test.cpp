@@ -14,7 +14,7 @@
 #include <string>
 
 // Each wire's transmit FIFO holds this many queued+active frames.
-constexpr unsigned fifo_capacity = 24;
+constexpr unsigned fifo_capacity = 16;
 constexpr unsigned fifo_drain_passes = 500 * fifo_capacity;
 struct Object { virtual ~Object() = default; };
 struct Queue : Object { size_t capacity, item_size; std::deque<std::vector<uint8_t>> items; };

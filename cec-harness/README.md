@@ -1130,7 +1130,7 @@ pairing changed or a remote would have to be replaced.
 The two input cases scan a TV, AVR and two sources, then save both activities before
 sending input. The local case first sends one ten-key HID report: seven
 navigation keys, Mute and both volume keys. A report carries at most ten keys,
-so the 24-slot CEC FIFO admits every press: the first ten physical frames must
+so the 16-slot CEC FIFO admits every press: the first ten physical frames must
 be those presses in report order, and fresh main-owner logs must show no FIFO
 drop. The firmware host tests cover full-FIFO drops and their logs. Two
 navigation holds are then released while the other eight, including both volume

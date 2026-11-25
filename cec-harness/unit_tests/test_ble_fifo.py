@@ -20,7 +20,7 @@ _HELD_SOURCE_KEYS = tuple(key for key in _KEYS if key not in (Key.DOWN, Key.UP))
 
 
 class TenKeyKeyboard(input_fixture.Keyboard):
-    """The 24-slot FIFO admits every press of one report; holds repeat in turn."""
+    """The 16-slot FIFO admits every press of one report; holds repeat in turn."""
 
     def __init__(self, fixture, *, clock, fault=None):
         super().__init__(fixture)

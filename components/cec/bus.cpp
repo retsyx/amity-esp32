@@ -27,7 +27,7 @@ static_assert(TIMER_LL_GPTIMERS_TOTAL == 4, "Review target timer capabilities");
 #endif
 
 namespace cec {
-constexpr unsigned tx_capacity = 24;
+constexpr unsigned tx_capacity = 16;
 struct Bus::Impl {
     struct Runtime;
     static Runtime &runtime();
