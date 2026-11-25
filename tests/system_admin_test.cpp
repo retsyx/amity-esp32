@@ -14,7 +14,9 @@
 // consortium runtime, system services and the NVS journal entry points are
 // strict seams, scripted below.
 #include "../components/web_admin/system_admin.cpp"
+#include "activity_editor.hpp"
 #include "core_fakes.hpp"
+#include "esp_wifi.h"
 #include "httpd_fake.hpp"
 #include "intent_configuration_fixture.hpp"
 #include "seams.hpp"
@@ -1293,6 +1295,69 @@ void system_peers() {
     CHECK(!field(second, "wifi_rssi") && !field(second, "wifi_channel") && cJSON_GetArraySize(second) == 10);
 }
 
+// GET /api/activity-editor/status reads the scan state before the equipment
+// it lists. When a scan ends while the equipment is being read, the reply
+// says the scan is still running. It never says the scan finished while it
+// lists equipment from before the scan.
+void editor_status_scan_order() {
+    System system;
+    system.save(direct_configuration());
+    system.boot();
+    install<&esp_get_free_heap_size>([] { return uint32_t(200000); });
+    install<&heap_caps_get_free_size>([](uint32_t) { return size_t(100000); });
+    install<&esp_wifi_sta_get_ap_info>([](wifi_ap_record_t *) { return ESP_ERR_WIFI_NOT_CONNECT; });
+    const auto observed = [](m::Side side, uint8_t address, uint16_t physical, uint8_t type, const char *name) {
+        m::OwnedDeviceObservation device;
+        device.side = side;
+        device.logical_address = address;
+        device.physical_address = physical;
+        device.device_type = type;
+        device.osd_name = name;
+        device.resolved = true;
+        return device;
+    };
+    // This Amity's adapter cache. Before the scan it still holds a player that
+    // the scan drops.
+    m::OwnedAdapterSnapshot before;
+    before.owner = system.control.octopus_id();
+    before.discovering = true;
+    before.devices = {observed(m::Side::front, 0, 0x0000, 0, "Scan TV"),
+                      observed(m::Side::back, 4, 0x1100, 4, "Gone Player")};
+    auto after = before;
+    after.discovering = false;
+    after.devices.pop_back();
+    system.hub.discovering = true;
+    system.hub.discovery_generation = 1;
+    bool finished = false;
+    install<&amity::HubService::owned_snapshots>([&](const amity::HubService &) {
+        // The scan finishes just after the first read of the cache.
+        const std::vector<m::OwnedAdapterSnapshot> reports{finished ? after : before};
+        if (!finished) {
+            finished = true;
+            system.hub.discovering = false;
+            system.hub.discovery_generation = 2;
+        }
+        return reports;
+    });
+    HttpRequest req(HTTP_GET, "/api/activity-editor/status");
+    esp_err_t result = ESP_FAIL;
+    CHECK(web_admin::activity_editor_request(system.control, &req, "/api/activity-editor/status", result));
+    CHECK(result == ESP_OK && req.response->status == "200 OK");
+    Json body(cJSON_Parse(req.response->body.c_str()), cJSON_Delete);
+    const auto *devices = cJSON_GetObjectItemCaseSensitive(body.get(), "devices");
+    CHECK(cJSON_IsArray(devices));
+    const auto listed = [devices](const char *name) {
+        const cJSON *device = nullptr;
+        cJSON_ArrayForEach(device, devices) {
+            const auto *title = cJSON_GetObjectItemCaseSensitive(device, "title");
+            if (cJSON_IsString(title) && std::string(title->valuestring) == name) return true;
+        }
+        return false;
+    };
+    CHECK(listed("Scan TV"));
+    CHECK(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(body.get(), "discovering")) || !listed("Gone Player"));
+}
+
 // The harness consumes what it scripts: a request body read to its end
 // under its deadline, the saved record loaded and published, the
 // synchronization task created and one response sent.
@@ -1366,6 +1431,7 @@ int main(int argc, char **argv) {
                                {"update-cohort", update_cohort},
                                {"system-snapshot", system_snapshot},
                                {"system-peers", system_peers},
+                               {"editor-status-scan-order", editor_status_scan_order},
                                {"sanity", sanity},
                            });
 }

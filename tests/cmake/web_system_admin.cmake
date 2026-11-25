@@ -21,6 +21,16 @@ if(AMITY_TEST_TIER STREQUAL sdk)
         INCLUDES ${system_admin_includes}
         DEFINES serialize_configuration=actual_serialize_configuration)
     target_link_libraries(system_admin_configuration PRIVATE OpenSSL::Crypto)
+    # The activity editor, over the same control, hub and runtime seams. Its
+    # Wi-Fi read uses the HomeKit fake header, after tests/fakes.
+    set(activity_editor_includes ${system_admin_includes} "${C}/web_admin" "${T}" "${T}/fakes" "${T}/homekit_fakes")
+    amity_host_compile(system_admin_activity_editor
+        SOURCES "${C}/web_admin/activity_editor.cpp" "${C}/web_admin/activity_editor_model.cpp"
+        INCLUDES ${activity_editor_includes})
+    add_library(activity_editor_seams_for_admin OBJECT "${T}/system_admin_fakes/activity_editor_seams.cpp")
+    target_include_directories(activity_editor_seams_for_admin PRIVATE ${activity_editor_includes})
+    target_compile_options(activity_editor_seams_for_admin PRIVATE ${amity_seam_warnings})
+    target_link_libraries(activity_editor_seams_for_admin PRIVATE strict)
     add_library(system_admin_seams OBJECT "${T}/system_admin_fakes/system_admin_seams.cpp")
     target_include_directories(system_admin_seams PRIVATE ${system_admin_includes} "${T}" "${T}/fakes")
     target_compile_options(system_admin_seams PRIVATE ${amity_seam_warnings})
@@ -29,8 +39,8 @@ if(AMITY_TEST_TIER STREQUAL sdk)
         SOURCES "${T}/system_admin_test.cpp" "${C}/web/request.cpp" "${C}/device_settings/device_settings.cpp"
             "${C}/system_sync/system_sync.cpp" "${C}/amity_hub/system_control.cpp" "${C}/amity_hub/remote_control.cpp"
             "${C}/config_store/configuration_journal.cpp" "${C}/config_store/configuration_replacement.cpp"
-        INCLUDES ${system_admin_includes} "${T}"
-        LIBS system_admin_configuration system_admin_seams consortium_runtime_seams system_services_seams
+        INCLUDES ${system_admin_includes} "${T}" "${C}/web_admin" "${T}/fakes" "${T}/homekit_fakes"
+        LIBS system_admin_configuration system_admin_seams system_admin_activity_editor activity_editor_seams_for_admin consortium_runtime_seams system_services_seams
             adapter_settings_seams group_firmware_update_seams config_store_nvs_seams hub_service_seams core_fakes
             httpd_fake amity_model amity_consortium cjson OpenSSL::Crypto
         REGISTRY
@@ -41,5 +51,5 @@ if(AMITY_TEST_TIER STREQUAL sdk)
             admission-failure admission-status scan-refusals removal-review removal-reservation-failure
             removal-update-required removal-marker-failure removal-success removal-forget-failure removal-saved-only
             removal-metadata-only replacement replacement-review request-fields administrative-paths unknown-change
-            update-cohort system-snapshot system-peers sanity)
+            update-cohort system-snapshot system-peers editor-status-scan-order sanity)
 endif()
