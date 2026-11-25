@@ -63,7 +63,7 @@ with no selected equipment.
   waiting for ACK, completion or first edge. A last-key TX failure may likewise
   cause a final release attempt.
 - Do not buffer outgoing messages in the executor. The CEC layer contains the
-  only transmit FIFO, with 24 slots per CEC wire counting queued and active
+  only transmit FIFO, with 16 slots per CEC wire counting queued and active
   messages together. Full-FIFO submissions are dropped, and every TX dropped because the FIFO is full must be logged.
   The executor validates/translates and submits directly; admission failure is reported without a second frame queue or a hidden repeat backlog.
 - CEC is a mechanical transmitter. It queues and sends exactly the frames and
